@@ -2,7 +2,7 @@ package supervisor
 
 import "strconv"
 
-// Fixed runtime-container constants (contract: m0-contract.md).
+// Fixed runtime-container identities and paths.
 const (
 	supervisorUID = 10000
 	supervisorGID = 10000
@@ -53,7 +53,7 @@ func ChromiumArgv() []string {
 		"--remote-debugging-port=" + strconv.Itoa(cdpPort),
 		"--no-first-run",
 		"--no-default-browser-check",
-		"--lang=zh-TW",
+		"--lang=en-US",
 		"--ozone-platform=x11",
 		"--window-position=0,0",
 		"--window-size=1920,1080",
@@ -72,12 +72,9 @@ func childEnv() []string {
 		"HOME=/home/browser",
 		"XDG_RUNTIME_DIR=" + xdgRuntimeDir,
 		"DBUS_SESSION_BUS_ADDRESS=" + dbusAddress,
-		"LANG=zh_TW.UTF-8",
-		// FC_LANG=en keeps fontconfig's default language out of generic family
-		// resolution. Without it, LANG=zh_TW makes "sans-serif" resolve to Noto
-		// Sans CJK TC, which covers every CJK glyph, so Blink never reaches its
-		// per-element lang fallback and ja/zh-Hans/ko text renders with TC forms
-		// (TX-01). Unlabelled text still falls back via the zh-TW UI locale.
+		"LANG=en_US.UTF-8",
+		// Keep generic families Latin so CJK glyphs fall back by element lang.
+		// A CJK generic default can swallow Japanese and Korean glyph selection.
 		"FC_LANG=en",
 		"TZ=Asia/Taipei",
 	}

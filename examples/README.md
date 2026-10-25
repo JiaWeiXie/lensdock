@@ -1,5 +1,7 @@
-# 範例用途
+# Examples
 
-`feedback.example.json` 是人工編寫的合成資料，符合已發布 Feedback Revision Schema，且仍然有效：它是 `schemaVersion` `0.1.0`、`page-viewport` 來源、只用矩形／Pin／遮蔽標註、並填了描述與預期／實際結果的 Revision，Schema 繼續接受這種舊版形狀，所以沒有改動。圖片大小、Hash、Target、時間與 Browser 版本欄位只是契約測試值，不代表曾經擷取真實網頁；本包沒有對應 PNG。`drawing` 來源、橢圓、菱形、直線標註，或沒有描述（純視覺回饋）的任務需要 `0.2.0`，這些變體由 `tools/validate_spec.py` 從本範例衍生並測試，沒有另外存成範例檔。
+`feedback.example.json` is hand-written synthetic data that validates against the published feedback revision schema. It is a `schemaVersion` `0.1.0` revision with a `page-viewport` source, only rectangle, pin and redaction annotations, and a description with expected and actual results. The schema still accepts this older shape, so the example stays as it is. Image sizes, hashes, targets, timestamps and browser version fields are contract-test values. They do not mean a real page was captured, and no matching PNG exists.
 
-`task-template.md` 提供中文任務表單，可手動填寫。真實分享包內的 `task.md` 由 Gateway 在發布時產生，會把人類撰寫的欄位放進 Code Fence 並明示為不受信任的資料；不要用範本取代它。真實分享包需要通過圖像去識別化、Hash／檔案大小驗證、存取控制與發布流程；不得直接使用本範例的 Human Approval 欄位代替人類確認。
+A `drawing` source, ellipse, diamond or line annotations, or a task with no description (purely visual feedback) need `0.2.0`. `tools/validate_contracts.py` derives and tests those variants from this example instead of storing them as separate files.
+
+`task-template.md` is a task form you can fill in by hand. In a real share bundle, the Gateway generates `task.md` at publication, puts the human-written fields in code fences and labels them untrusted data. Do not use the template instead of it. A real bundle must pass image redaction, hash and size checks, access control and the publication flow. Never use this example's human approval fields in place of a real human confirmation.

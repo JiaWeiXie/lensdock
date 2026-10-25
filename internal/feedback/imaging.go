@@ -10,7 +10,7 @@ import (
 	"math"
 )
 
-// Image limits from SPEC §18 and schemas/feedback.schema.json.
+// Image limits match schemas/feedback.schema.json.
 const (
 	defaultMaxImageBytes = 32 << 20
 	defaultMaxPixels     = 24_000_000

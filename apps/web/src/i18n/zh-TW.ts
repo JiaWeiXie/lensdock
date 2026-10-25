@@ -1,5 +1,5 @@
 /**
- * zh-TW strings (default UI language). English lives in en-US.ts with exactly
+ * Traditional Chinese strings. English lives in en-US.ts with exactly
  * the same key set: `MessageKey` is derived from this object, so a missing
  * en-US key fails the type check.
  */
@@ -24,7 +24,7 @@ export const zhTW = {
 
   'login.tagline': '看見、圈出、交接。',
   'login.token': '配對權杖',
-  'login.tokenHint': '執行 lensdock admin product-init 後，從主機的 .lensdock/product/human-token 或 admin-token 私密檔案取得。權杖只用來換取 HttpOnly Session，不會保存在瀏覽器。',
+  'login.tokenHint': '從部署狀態目錄讀取 product/human-token 或 product/admin-token。安裝程式預設使用 ~/.local/share/lensdock；原始碼開發使用 .lensdock。權杖只用來換取 HttpOnly Session，不會保存在瀏覽器。',
   'login.pair': '配對並登入',
   'login.note': '此介面需要有效的 Workspace Session。Agent 請使用 CLI 或 MCP；角色 viewer 只能觀察。',
   'login.unreachable': 'Gateway 無法連線',

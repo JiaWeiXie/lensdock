@@ -212,7 +212,7 @@ func NewHandler(d Deps) http.Handler {
 // rejectUnsafePaths answers 400 before ServeMux can clean or redirect a path
 // that contains a dot segment or an encoded separator. ServeMux would answer
 // 301/307 for "..", and a client that follows it would resend a request that
-// must never be interpreted as a file name (SPEC: no path traversal).
+// must never be interpreted as a file name because it could traverse directories.
 func rejectUnsafePaths(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		escaped := r.URL.EscapedPath()

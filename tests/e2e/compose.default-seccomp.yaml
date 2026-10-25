@@ -1,4 +1,4 @@
-# SPIKE-01 sandbox-matrix cell 2 (tests/e2e/sandbox-matrix.sh): the userns image under Docker's
+# Sandbox matrix cell 2 (tests/e2e/sandbox-matrix.sh): the userns image under Docker's
 # DEFAULT seccomp profile. The custom chromium.json is dropped but no-new-privileges stays.
 # Expected: the namespace preflight fails, readyz stays false with SANDBOX_PREFLIGHT_FAILED and
 # Chromium is never started (and never with --no-sandbox).

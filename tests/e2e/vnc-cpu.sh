@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPIKE-02 VNC CPU measurement. Scenarios, DURATION seconds each (default 60):
+# VNC CPU measurement. Scenarios, DURATION seconds each (default 60):
 #   S0 idle           static page, no viewer
 #   S1 one viewer     static page, one RFB viewer on 5901
 #   S2 animation      full-viewport animation fixture, one viewer on 5900 and one on 5901

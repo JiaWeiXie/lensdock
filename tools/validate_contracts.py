@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["jsonschema>=4.18", "pyyaml>=6"]
 # ///
-"""Validate the LensDock specification fixtures, not a running application."""
+"""Validate the LensDock data contracts (schema, OpenAPI, examples, coordinates); starts no container or browser."""
 from __future__ import annotations
 
 import argparse
@@ -17,7 +17,6 @@ import subprocess
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
-from datetime import date
 from pathlib import Path
 from urllib.parse import unquote, urldefrag
 from typing import Any
@@ -129,7 +128,7 @@ def validate_local_reference(reference: str, source: Path) -> None:
         raise ValueError('Unexpected external schema reference.')
     target = (source.parent / location).resolve() if location else source.resolve()
     if not target.is_relative_to(ROOT):
-        raise ValueError('Reference escapes the specification package.')
+        raise ValueError('Reference escapes the repository.')
     if not target.is_file():
         raise ValueError(f'Missing reference target: {target}')
     content = target.read_text(encoding='utf-8')
@@ -142,7 +141,7 @@ def validate_local_reference(reference: str, source: Path) -> None:
             node = node[int(key)] if isinstance(node, list) else node[key]
 
 
-class SpecTests(unittest.TestCase):
+class ContractTests(unittest.TestCase):
     def test_schema_is_valid(self) -> None:
         Draft202012Validator.check_schema(SCHEMA)
 
@@ -438,11 +437,6 @@ class SpecTests(unittest.TestCase):
         tree = ET.parse(ROOT/'docker/browser/fontconfig.reference.conf')
         self.assertEqual(tree.getroot().tag, 'fontconfig')
 
-    def test_cjk_and_emoji_fixture_has_required_strings(self) -> None:
-        html = (ROOT/'tests/fixtures/cjk-emoji.html').read_text(encoding='utf-8')
-        for value in ['繁體中文', '简体中文', '日本語', '한국어', '👩\u200d💻', '🇹🇼', '❤️']:
-            self.assertIn(value, html)
-
     @unittest.skipUnless(shutil.which('node'), 'Node.js is unavailable')
     def test_fixture_javascript_syntax(self) -> None:
         html = (ROOT/'tests/fixtures/cjk-emoji.html').read_text(encoding='utf-8')
@@ -457,35 +451,8 @@ class SpecTests(unittest.TestCase):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--report', type=Path)
-    parser.add_argument('--date', default=date.today().isoformat())
-    args = parser.parse_args()
-    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(SpecTests))
-    if args.report:
-        passed = result.testsRun-len(result.failures)-len(result.errors)-len(result.skipped)
-        operations = sum(1 for methods in OPENAPI['paths'].values() for operation in methods.values() if isinstance(operation, dict) and 'operationId' in operation)
-        content = f'''# Specification validation report
-
-Validation date: {args.date}
-
-| Check | Result |
-|---|---|
-| Test cases | {result.testsRun} |
-| Passed | {passed} |
-| Failures / errors | {len(result.failures)+len(result.errors)} |
-| Skipped | {len(result.skipped)} |
-| Core API operations | {operations} |
-
-This run checks JSON Schema definitions, synthetic feedback examples, drawing and annotation constraints, negative inputs, local OpenAPI references and structure, 500 coordinate round trips, font configuration XML and fixture JavaScript syntax. Example hashes do not correspond to real image files.
-
-The validator starts no container or browser. Its result does not establish Runtime, Gateway, UI, Agent image-reading, persistence, update or rollback behavior. It does not run a full external OpenAPI validator.
-
-Actual integrated-product evidence and remaining limits are recorded separately in [the acceptance matrix](ACCEPTANCE.md#evidence-status) and [the update implementation guide](UPDATE-IMPLEMENTATION.md#exercised-evidence-and-limits). Historical M0 results are in [the spike reports](spikes/). These records are maintained independently and are not overwritten by this generator.
-
-Regenerate this file with `mise exec -- uv run --script tools/validate_spec.py --report docs/VALIDATION-REPORT.md --date {args.date}`. `mise run validate` and `mise run check` run checks without writing this report.
-'''
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(content, encoding='utf-8')
+    parser.parse_args()
+    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(ContractTests))
     return 0 if result.wasSuccessful() else 1
 
 

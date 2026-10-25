@@ -7,7 +7,7 @@ Usage: e2e_tool.py <command> [args]
   cpu-delta BEFORE AFTER T0 T1 CLK [CG0_USEC CG1_USEC]
                                      per-unit CPU as % of one vCPU between two readyz?detail=1 samples
   vnc-summary ARCH S0.json S1.json S2.json S3.json
-                                     apply the pre-registered SPIKE-02 rule, print the verdict JSON
+                                     apply the VNC CPU thresholds, print the verdict JSON
   matrix-cell DIR NAME EXPECT RT02_RC  summarise one sandbox-matrix cell directory as JSON
   matrix-merge CELL.json...          merge cell summaries into matrix.json on stdout
   strip-token FILE                   print the JSON document of FILE without any capabilityToken member

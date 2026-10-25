@@ -1,6 +1,6 @@
 // Package update implements the host-side release verification, update
 // planning, clean checkpointing, candidate verification, paired rollback and
-// release tooling of LensDock (SPEC section 15, docs/UPDATE-RUNBOOK.md).
+// release tooling of LensDock (see docs/UPDATE-RUNBOOK.md).
 //
 // Everything here runs on the host with Docker access. No part of it is
 // reachable from the Gateway or the browser runtime, neither of which mounts a

@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	// MaxImageBytes and MaxImagePixels are the screenshot limits of SPEC §18.
+	// MaxImageBytes and MaxImagePixels bound screenshot resource use.
 	MaxImageBytes  = 32 << 20
 	MaxImagePixels = 24_000_000
 

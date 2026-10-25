@@ -1,35 +1,35 @@
-# 問題／任務交接
+# Issue / task handoff
 
-**回饋 ID：** `<feedback-id>`　**版本：** `<revision>`
+**Feedback ID:** `<feedback-id>`  **Revision:** `<revision>`
 
-**Workspace：** `<workspace-id>`　**圖片來源：** `<desktop | page-viewport | drawing>`（`drawing` 是空白畫布上的說明圖，沒有瀏覽器頁面）
+**Workspace:** `<workspace-id>`  **Image source:** `<desktop | page-viewport | drawing>` (`drawing` is an explanatory image on a blank canvas and has no browser page)
 
-## 要做什麼
+## What to do
 
-<只分析／協助重現／修改並驗證，以及本次允許的操作範圍。>
+<Analyze only, help reproduce, or change and verify, plus the operations allowed this time.>
 
-## 問題描述
+## Problem description
 
-<指出哪一個編號或框選區域，以及目前看到的狀況。>
+<Name the numbered or boxed region and what is currently visible.>
 
-## 預期結果
+## Expected result
 
-<描述正確行為或畫面，不只說「修好」。>
+<Describe the correct behavior or screen, not just "fix it".>
 
-## 實際結果
+## Actual result
 
-<描述錯誤行為、畫面及是否可以穩定重現。>
+<Describe the wrong behavior or screen and whether it reproduces reliably.>
 
-## 重現步驟
+## Steps to reproduce
 
-1. <起始頁面與必要前置狀態。>
-2. <造成問題的操作。>
-3. <觀察到的錯誤。>
+1. <Starting page and required prior state.>
+2. <The action that causes the problem.>
+3. <The error observed.>
 
-## 分享附件
+## Shared attachments
 
-<填入經核准且可實際讀取的圖片／Bundle，不使用只有伺服器自己能讀的絕對路徑。>
+<Add approved images or bundles that the Agent can actually read. Do not use absolute paths that only the server can read.>
 
-## Agent 執行要求
+## Agent instructions
 
-請先讀取圖片及回饋，說明你理解的問題，並以自己的身分明確 ACK（讀取與排隊都不是 ACK）。需要操作 Browser 時，用 `lensdock lease acquire <workspace-id> --mode agent --feedback-id <feedback-id> --operator-token-file <agent-token-file> --output <lease-file>` 取得租約，確認目前 Target 並重新觀察；不要直接使用舊截圖座標點擊，`drawing` 圖片更沒有可點擊的頁面座標。不要讀取未授權原始截圖、Cookies 或 Profile。完成後回報修改摘要、驗證步驟及新的驗證截圖，等待人工確認。
+Read the image and the feedback first, state the problem as you understand it, and acknowledge under your own identity (reading and queueing are not an acknowledgment). When the browser must be operated, acquire a lease with `lensdock lease acquire <workspace-id> --mode agent --feedback-id <feedback-id> --operator-token-file <agent-token-file> --output <lease-file>`, confirm the current target and observe it again. Do not click using coordinates from an old screenshot, and a `drawing` image has no clickable page coordinates at all. Do not read unauthorized original screenshots, cookies or the Profile. When finished, report a summary of the changes, the verification steps and a new verification screenshot, then wait for human confirmation.

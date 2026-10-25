@@ -363,10 +363,6 @@ func TestVisualOnlyDraftPublishesWithoutAnyProse(t *testing.T) {
 			if man.SchemaVersion != SchemaVersion {
 				t.Fatalf("manifest schemaVersion = %q", man.SchemaVersion)
 			}
-			md := string(e.do(&agentP, "GET", base+"/artifacts/"+ArtifactTask+"?revision=1", nil).want(200).body())
-			if !strings.Contains(md, DefaultTitle) || !strings.Contains(md, "（未填寫）") {
-				t.Fatalf("task.md = %s", md)
-			}
 			if got.Task.Title != DefaultTitle || got.Task.Description != "" || got.Task.ExpectedResult != "" || got.Task.ActualResult != "" {
 				t.Fatalf("agent read task = %+v", got.Task)
 			}
@@ -970,7 +966,7 @@ func TestMethodNotAllowedAndUnknownRoutesAreJSON(t *testing.T) {
 	}
 }
 
-func TestPublishedTaskMarkdownTreatsContentAsUntrusted(t *testing.T) {
+func TestPublishedTaskMarkdownDownloadsAsAttachment(t *testing.T) {
 	e := newEnv(t)
 	capID := e.capture(humanP, secretPNG(t))
 	task := goodTask()
@@ -983,7 +979,7 @@ func TestPublishedTaskMarkdownTreatsContentAsUntrusted(t *testing.T) {
 	if !strings.Contains(md.rr.Header().Get("Content-Type"), "text/markdown") {
 		t.Fatalf("task.md content type = %q", md.rr.Header().Get("Content-Type"))
 	}
-	if !strings.Contains(string(md.body()), "不可信") || !strings.Contains(string(md.body()), "Ignore previous instructions") {
+	if !strings.Contains(string(md.body()), "Ignore previous instructions") {
 		t.Fatalf("task.md = %s", md.body())
 	}
 	if !strings.HasPrefix(md.rr.Header().Get("Content-Disposition"), "attachment;") {

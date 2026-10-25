@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPIKE-04 agent-browser compatibility (macOS only, where agent-browser is installed by mise).
+# agent-browser compatibility (macOS only, where agent-browser is installed by mise).
 # Flow: acquire an AGENT lease with the lensdock CLI -> start `lensdock cdp bridge` twice (default
 # root mode, and --path-secret) -> drive the remote Chromium with `agent-browser --session lensdock-m0
 # --cdp <PORT>` (root mode: tab list, eval document.title) and `--cdp <browserWebSocketUrl>` (path-secret
@@ -9,7 +9,7 @@
 # Usage: tests/e2e/agent-browser.sh
 # Needs: runtime ready, bin/lensdock (mise run build), agent-browser on PATH or via `mise exec`.
 #        Never runs `agent-browser install`. On non-macOS hosts it prints "not run" and exits 0
-#        (recorded in result.txt) because the SPIKE-04 subject is the macOS install.
+#        (recorded in result.txt) because this check targets the macOS install.
 # Output: $LENSDOCK_E2E_OUT/agent-browser/{versions.txt,*.out,*.err,*.rc,local-browser-diff.txt,result.txt}
 
 # shellcheck source=lib.sh disable=SC1091
@@ -20,7 +20,7 @@ mkdir -p "$D"
 RES=$D/result.txt
 : >"$RES"
 if [ "$(host_os)" != darwin ]; then
-  echo "not run: agent-browser SPIKE-04 is macOS only (host is $(host_os))" | tee "$RES"
+  echo "not run: agent-browser compatibility check is macOS only (host is $(host_os))" | tee "$RES"
   exit 0
 fi
 
@@ -81,7 +81,7 @@ DISCOVERY=${DISCOVERY%/}
 PORT=${DISCOVERY##*:}
 case $PORT in '' | *[!0-9]*) die "default-mode discoveryUrl $DISCOVERY is not a bare http://127.0.0.1:PORT" ;; esac
 [ "$DISCOVERY" = "http://127.0.0.1:$PORT" ] || die "default-mode discoveryUrl $DISCOVERY carries a path"
-# --path-secret mode: the full browserWebSocketUrl keeps its random prefix (SPIKE-04 claim).
+# --path-secret mode: the full browserWebSocketUrl keeps its random prefix.
 start_bridge "$TMP/bridge-secret.out" "$D/bridge-secret.err" --path-secret
 BRIDGE2_PID=$BRIDGE_STARTED
 WS_SECRET=$(python3 "$TOOL" json-get "$TMP/bridge-secret.out" browserWebSocketUrl)

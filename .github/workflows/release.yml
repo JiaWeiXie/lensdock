@@ -1,0 +1,435 @@
+name: Release
+
+# Every push to main is checked by CI. When the commits since the last release
+# call for a new version (cliff.toml, Conventional Commits), the same run builds
+# the release assets and both container images natively on amd64 and arm64,
+# scans and smoke-tests them, and only then publishes. Nothing is visible to
+# users until every gate has passed:
+#
+#   ci + version -> bundles, images -> scan, smoke -> publish-images (version tags)
+#                                                  -> release (tag + GitHub release)
+#                                                  -> latest (image tag `latest`)
+#
+# Images are first pushed untagged, by digest. Only the final jobs give them
+# names, and `latest` moves last. A failed run leaves no tag and no release; the
+# next push to main recomputes the same version and tries again. No personal
+# access token is used: the tag and the release are created through the API with
+# the workflow token, which does not trigger further workflows.
+#
+# Repository variables (optional): LENSDOCK_AMD64_RUNNER and LENSDOCK_ARM64_RUNNER
+# replace the default runner labels, for example with a larger-runner label.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      should_release: ${{ steps.next.outputs.should_release }}
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: git-cliff@2.13.1
+      - name: Compute the next version
+        id: next
+        run: tools/release/version.sh
+      - name: Summary
+        env:
+          REASON: ${{ steps.next.outputs.reason }}
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          if [ -n "$VERSION" ]; then
+            echo "Releasing **$VERSION**: $REASON" >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "No release: $REASON" >>"$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Changelog
+        if: steps.next.outputs.should_release == 'true'
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          mkdir changelog
+          tools/release/notes.sh changelog --version "$VERSION" >changelog/changelog.md
+      - name: Upload changelog
+        if: steps.next.outputs.should_release == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-changelog
+          path: changelog/changelog.md
+          if-no-files-found: error
+          retention-days: 7
+
+  bundles:
+    name: Release assets
+    needs: [version, ci]
+    if: needs.version.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      MISE_ENABLE_TOOLS: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+        with:
+          version: 2026.10.8
+          cache_key_prefix: mise-package
+      - name: Build and verify the archives, SHA256SUMS and install.sh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: tools/release/package.sh --strict --version "$VERSION" --commit "$GITHUB_SHA" --out dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
+
+  images:
+    name: Images (${{ matrix.arch }})
+    needs: [version, ci]
+    if: needs.version.outputs.should_release == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ${{ vars.LENSDOCK_AMD64_RUNNER || 'ubuntu-24.04' }}
+          - arch: arm64
+            runner: ${{ vars.LENSDOCK_ARM64_RUNNER || 'ubuntu-24.04-arm' }}
+    steps:
+      - name: The runner must be natively ${{ matrix.arch }}
+        env:
+          WANT: ${{ matrix.arch }}
+        run: |
+          case "$(uname -m)" in
+            x86_64) have=amd64 ;;
+            aarch64) have=arm64 ;;
+            *) have=$(uname -m) ;;
+          esac
+          if [ "$have" != "$WANT" ]; then
+            echo "::error::this job builds linux/$WANT natively but the runner is $have; check the LENSDOCK_*_RUNNER variables"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image repository
+        id: names
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: echo "base=${REGISTRY}/${REPOSITORY,,}" >>"$GITHUB_OUTPUT"
+      - name: Build and push the runtime image by digest
+        id: runtime
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/browser/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            REVISION=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          provenance: mode=max,version=v1
+          sbom: true
+          outputs: type=image,name=${{ steps.names.outputs.base }}/runtime,push-by-digest=true,name-canonical=true,push=true
+      - name: Build and push the gateway image by digest
+        id: gateway
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/gateway/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            REVISION=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          provenance: mode=max,version=v1
+          sbom: true
+          outputs: type=image,name=${{ steps.names.outputs.base }}/gateway,push-by-digest=true,name-canonical=true,push=true
+      - name: Record the pushed digests
+        env:
+          ARCH: ${{ matrix.arch }}
+          RUNTIME_DIGEST: ${{ steps.runtime.outputs.digest }}
+          GATEWAY_DIGEST: ${{ steps.gateway.outputs.digest }}
+        run: |
+          mkdir digests
+          jq -n --arg arch "$ARCH" --arg runtime "$RUNTIME_DIGEST" --arg gateway "$GATEWAY_DIGEST" \
+            '{arch: $arch, runtime: $runtime, gateway: $gateway}
+             | if (.runtime | test("^sha256:[0-9a-f]{64}$")) and (.gateway | test("^sha256:[0-9a-f]{64}$")) then . else error("missing image digest") end' \
+            >"digests/digests-$ARCH.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digests-${{ matrix.arch }}
+          path: digests/digests-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  scan:
+    name: Evidence and scan (${{ matrix.arch }})
+    needs: [version, images]
+    if: needs.version.outputs.should_release == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ${{ vars.LENSDOCK_AMD64_RUNNER || 'ubuntu-24.04' }}
+          - arch: arm64
+            runner: ${{ vars.LENSDOCK_ARM64_RUNNER || 'ubuntu-24.04-arm' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: digests-${{ matrix.arch }}
+          path: digests
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.76.1
+      - name: SBOM, provenance and vulnerability gate
+        env:
+          ARCH: ${{ matrix.arch }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          base="${REGISTRY}/${REPOSITORY,,}"
+          for name in runtime gateway; do
+            digest=$(jq -er --arg name "$name" '.[$name]' "digests/digests-$ARCH.json")
+            tools/release/image-evidence.sh "$name" "$base/$name@$digest" evidence
+          done
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: evidence-${{ matrix.arch }}
+          path: evidence
+          if-no-files-found: ignore
+          retention-days: 90
+
+  smoke:
+    name: Fresh-install smoke (${{ matrix.arch }})
+    needs: [version, bundles, images]
+    if: needs.version.outputs.should_release == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ${{ vars.LENSDOCK_AMD64_RUNNER || 'ubuntu-24.04' }}
+          - arch: arm64
+            runner: ${{ vars.LENSDOCK_ARM64_RUNNER || 'ubuntu-24.04-arm' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: digests-${{ matrix.arch }}
+          path: digests
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor, which the
+      # Chromium sandbox inside the container needs. This only relaxes the throwaway runner
+      # host; the container keeps its seccomp profile, capability drop and no-new-privileges,
+      # and the smoke test fails if Chromium would run without its sandbox.
+      - name: Allow user namespaces on the runner host
+        run: |
+          knob=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [ -r "$knob" ] && [ "$(cat "$knob")" = 1 ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Install the release in an isolated project and exercise it
+        env:
+          ARCH: ${{ matrix.arch }}
+          REPOSITORY: ${{ github.repository }}
+          SMOKE_DIST: dist
+          SMOKE_VERSION: ${{ needs.version.outputs.version }}
+          SMOKE_LOG_DIR: smoke-logs
+        run: |
+          base="${REGISTRY}/${REPOSITORY,,}"
+          SMOKE_RUNTIME_IMAGE="$base/runtime@$(jq -er .runtime "digests/digests-$ARCH.json")" \
+          SMOKE_GATEWAY_IMAGE="$base/gateway@$(jq -er .gateway "digests/digests-$ARCH.json")" \
+            tools/release/smoke.sh
+      - name: Upload the container logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: smoke-logs-${{ matrix.arch }}
+          path: smoke-logs
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish-images:
+    name: Publish image tags
+    needs: [version, ci, bundles, images, scan, smoke]
+    if: needs.version.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-*
+          merge-multiple: true
+          path: digests
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create the multi-platform images and their version tags
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tools/release/publish-images.sh tags --version "$VERSION" --repository "$GITHUB_REPOSITORY" \
+            --sha "$GITHUB_SHA" --digests digests --out images.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: images-json
+          path: images.json
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: GitHub release
+    needs: [version, bundles, publish-images]
+    if: needs.version.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-changelog
+          path: changelog
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: images-json
+          path: images
+      - name: Compose the release notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tools/release/notes.sh compose --version "$VERSION" \
+            --changelog changelog/changelog.md --images images/images.json >release-notes.md
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tools/release/publish-release.sh --version "$VERSION" --sha "$GITHUB_SHA" \
+            --assets dist --notes release-notes.md
+
+  latest:
+    name: Move latest
+    needs: [version, publish-images, release]
+    if: needs.version.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: images-json
+          path: images
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Reject a stale retry before moving latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          newest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          if [ "$newest" != "v$VERSION" ]; then
+            echo "::error::refusing to replace latest with v$VERSION; the newest release is $newest"
+            exit 1
+          fi
+      - name: Point latest at the released digests
+        run: tools/release/publish-images.sh latest --images images/images.json

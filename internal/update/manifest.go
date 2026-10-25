@@ -34,7 +34,7 @@ const (
 )
 
 // ErrIncompleteRelease wraps every manifest rejection: an image tag or a
-// partial manifest is not a release (ACCEPTANCE UP-07).
+// partial manifest is not a release.
 var ErrIncompleteRelease = errors.New("release manifest is incomplete or invalid")
 
 var (
@@ -48,7 +48,7 @@ var (
 	placeholderValues = []string{"", "unknown", "unspecified", "n/a", "none", "dev", "latest", "todo"}
 )
 
-// Manifest is the immutable record of one release (SPEC 15.2). It lives at
+// Manifest is the immutable record of one release. It lives at
 // <releasesDir>/<releaseId>/manifest.json together with its evidence files.
 type Manifest struct {
 	SchemaVersion int                   `json:"schemaVersion"`

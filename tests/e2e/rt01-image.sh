@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RT-01 (SPIKE-01): the runtime image is the approved Debian slim base with an identifiable
+# RT-01: the runtime image is the approved Debian slim base with an identifiable
 # package list, and no Alpine layer.
 #
 # Usage: tests/e2e/rt01-image.sh [IMAGE]       IMAGE defaults to lensdock/runtime:dev

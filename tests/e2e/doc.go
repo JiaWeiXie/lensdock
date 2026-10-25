@@ -1,4 +1,4 @@
-// Package e2e holds the LensDock M0 end-to-end tests (SPIKE-01..04).
+// Package e2e holds the LensDock runtime end-to-end tests.
 //
 // Every test file carries the `e2e` build tag, so a plain `go test ./...` never
 // touches a runtime. Build the test binary with

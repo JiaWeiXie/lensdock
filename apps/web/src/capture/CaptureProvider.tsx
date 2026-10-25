@@ -14,7 +14,7 @@ import { newKey } from '@/util/async';
 import type { CapturedFrame } from '@/vnc/controller';
 import { useRfb, useRfbController } from '@/vnc/DesktopProvider';
 
-/** Product limits from SPEC section 18; the server enforces them again. */
+/** Screenshot resource limits; the server enforces them again. */
 export const MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
 export const MAX_CAPTURE_PIXELS = 24_000_000;
 /** A workspace read older than this means the Gateway is not answering: frames cannot be called current. */

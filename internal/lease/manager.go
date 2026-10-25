@@ -22,7 +22,7 @@ const (
 	defaultTTL = 30 * time.Second
 
 	// DefaultDrainTimeout bounds how long a takeover or maintenance entry
-	// waits for the connections of a fenced lease to close (SPEC §18).
+	// waits for the connections of a fenced lease to close.
 	DefaultDrainTimeout = 5 * time.Second
 	// DefaultHandoffTTL is how long a takeover reservation lives before the
 	// workspace returns to IDLE.

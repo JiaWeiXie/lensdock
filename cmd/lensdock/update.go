@@ -58,10 +58,7 @@ type deploymentFlags struct {
 }
 
 func (c *cli) addDeploymentFlags(fs *flag.FlagSet) deploymentFlags {
-	stateDefault := c.getenv(envStateDir)
-	if stateDefault == "" {
-		stateDefault = ".lensdock"
-	}
+	stateDefault := c.defaultStateDir()
 	depDefault := c.getenv(envDeployment)
 	return deploymentFlags{
 		deployment: fs.String("deployment", depDefault, "deployment.json (default $LENSDOCK_DEPLOYMENT or <state-dir>/deployment.json)"),
@@ -95,7 +92,7 @@ func (c *cli) engine(fs *flag.FlagSet, args []string, min, max int) (*update.Eng
 	if err != nil {
 		return nil, nil, err
 	}
-	return update.NewEngine(dep, update.Docker{Run: update.ExecRunner{}}, c.stderr), pos, nil
+	return update.NewEngine(dep, c.deploymentDocker(dep), c.stderr), pos, nil
 }
 
 func (c *cli) updateInit(ctx context.Context, args []string) error {
@@ -160,7 +157,7 @@ func (c *cli) updateInit(ctx context.Context, args []string) error {
 	} else {
 		fmt.Fprintf(c.stdout, "backup key exists (key id %s)\n", id)
 	}
-	eng := update.NewEngine(dep, update.Docker{Run: update.ExecRunner{}}, c.stderr)
+	eng := update.NewEngine(dep, c.deploymentDocker(dep), c.stderr)
 	if err := eng.PublishStatus(ctx); err != nil {
 		fmt.Fprintf(c.stderr, "warning: publish status: %v\n", err)
 	}
@@ -462,13 +459,17 @@ func (c *cli) updateCompose(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	eng := update.NewEngine(dep, update.Docker{Run: update.ExecRunner{}}, c.stderr)
+	eng := update.NewEngine(dep, c.deploymentDocker(dep), c.stderr)
 	name, argv, err := eng.ComposeCommand(pos)
 	if err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, name, argv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = c.stdin, c.stdout, c.stderr
+	if env := composeEnv(dep); len(env) > 0 {
+		// The deployment's recorded variables win over the caller's environment.
+		cmd.Env = append(os.Environ(), env...)
+	}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("docker compose: %w", err)
 	}

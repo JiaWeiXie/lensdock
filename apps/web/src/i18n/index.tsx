@@ -26,7 +26,7 @@ export function translate(lang: Lang, key: MessageKey, params?: MessageParams): 
 function initialLang(): Lang {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved === 'zh-TW' || saved === 'en-US') return saved;
-  return 'zh-TW';
+  return 'en-US';
 }
 
 interface I18n {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/JiaWeiXie/lensdock/internal/apiclient"
 	"github.com/JiaWeiXie/lensdock/internal/auth"
+	"github.com/JiaWeiXie/lensdock/internal/update"
 )
 
 // Exit codes.
@@ -31,7 +32,10 @@ const (
 	envAPI     = "LENSDOCK_API"
 	usageText  = `usage:
   lensdock admin init --state-dir DIR
-  lensdock admin product-init [--state-dir DIR] [--origin http://127.0.0.1:18081] [--mode NOVNC|AGENT]
+  lensdock admin product-init [--state-dir DIR] [--origin http://127.0.0.1:18081] [--mode NOVNC|AGENT] [--project NAME]
+      [--runtime-image REF] [--gateway-image REF] [--bundle-dir DIR]
+  lensdock admin product-start [--state-dir DIR | --deployment FILE] [--pull always|missing|never]
+  lensdock version
   lensdock lease acquire <ws> --mode agent|human [--ttl 30] [--api URL] --operator-token-file F --output LEASEFILE
       --ttl is in seconds, 10 to 120; --output's directory must exist
       [--feedback-id ID --feedback-revision N] binds an agent lease to that acknowledged revision
@@ -53,6 +57,11 @@ type cli struct {
 	stdout io.Writer
 	stderr io.Writer
 	getenv func(string) string
+	// executable returns the path of the running executable (default
+	// os.Executable); tests replace it.
+	executable func() (string, error)
+	// runner starts docker (default update.ExecRunner); tests replace it.
+	runner update.Runner
 }
 
 // exitError carries an explicit exit code. An empty message means the cause
@@ -121,7 +130,7 @@ func (c *cli) dispatch(ctx context.Context, args []string) error {
 	sub := args[1:]
 	switch args[0] {
 	case "admin":
-		return c.subcommand(sub, "admin", map[string]func([]string) error{"init": c.adminInit, "product-init": c.productInit})
+		return c.subcommand(sub, "admin", map[string]func([]string) error{"init": c.adminInit, "product-init": c.productInit, "product-start": func(a []string) error { return c.productStart(ctx, a) }})
 	case "lease":
 		return c.subcommand(sub, "lease", map[string]func([]string) error{
 			"acquire": c.leaseAcquire,
@@ -147,6 +156,9 @@ func (c *cli) dispatch(ctx context.Context, args []string) error {
 		return c.feedbackCommand(ctx, sub)
 	case "mcp":
 		return c.mcpCommand(ctx, sub)
+	case "version", "-version", "--version":
+		fmt.Fprint(c.stdout, versionText())
+		return nil
 	case "help", "-h", "--help":
 		fmt.Fprint(c.stdout, usageText)
 		return nil

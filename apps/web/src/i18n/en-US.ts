@@ -22,7 +22,7 @@ export const enUS: Record<MessageKey, string> = {
 
   'login.tagline': 'See it, mark it, hand it over.',
   'login.token': 'Pairing token',
-  'login.tokenHint': 'After running lensdock admin product-init, use the private .lensdock/product/human-token or admin-token file on the host. The token is exchanged for an HttpOnly session and is never stored by the browser.',
+  'login.tokenHint': 'Use product/human-token or product/admin-token from your deployment state directory. The default installer uses ~/.local/share/lensdock; source development uses .lensdock. The token is exchanged for an HttpOnly session and is never stored by the browser.',
   'login.pair': 'Pair and sign in',
   'login.note': 'This interface needs a valid workspace session. Agents use the CLI or MCP; viewers can only watch.',
   'login.unreachable': 'Gateway unreachable',

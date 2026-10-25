@@ -1,0 +1,8 @@
+# Accepted vulnerability exceptions for the release image scan
+# (tools/release/image-evidence.sh). The scan already ignores findings that have no fix.
+#
+# One finding per line, with the reason on the line above and an expiry so it cannot be
+# forgotten:
+#
+# Not reachable here because <reason>.
+# CVE-2026-12345 exp:2027-01-31

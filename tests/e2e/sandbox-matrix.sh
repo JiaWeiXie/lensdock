@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPIKE-01 sandbox matrix. Two cells, each started through docker compose:
+# Sandbox matrix. Two cells, each started through docker compose:
 #   1 userns-custom-seccomp  userns image + docker/browser/seccomp/chromium.json + no-new-privileges   expect: ready
 #   2 userns-default-seccomp same image, Docker default seccomp (compose.default-seccomp.yaml)          expect: SANDBOX_PREFLIGHT_FAILED,
 #                            runtime not ready, no Chromium process, never --no-sandbox

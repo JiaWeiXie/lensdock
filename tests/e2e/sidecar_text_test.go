@@ -90,7 +90,7 @@ func (s *sidecar) vncPasteRightAfter(t *testing.T, port int, put func()) {
 	settle()
 }
 
-// TestTX01 (SPIKE-03, TX-01): CJK text renders with the language-matched Noto
+// TestTX01: CJK text renders with the language-matched Noto
 // Sans CJK face, checked through CSS.getPlatformFontsForNode. Browser and VNC
 // captures are stored as evidence for the visual no-tofu review.
 func TestTX01(t *testing.T) {
@@ -190,7 +190,7 @@ func codepointsOf(s string) string {
 	return strings.Join(parts, " ")
 }
 
-// TestTX02 (SPIKE-03, TX-02): every emoji sequence of the fixture is shaped into a
+// TestTX02: every emoji sequence of the fixture is shaped into a
 // single Noto Color Emoji glyph (skin tone, flag, ZWJ and variation selector).
 func TestTX02(t *testing.T) {
 	s := newSidecar(t)
@@ -261,7 +261,7 @@ func TestTX02(t *testing.T) {
 	s.ev.Save(t, "TestTX02/emoji-screenshot.png", shot)
 }
 
-// TestTX03 (SPIKE-03, TX-03 data path): text written by a HUMAN lease through
+// TestTX03: text written by a HUMAN lease through
 // PUT /clipboard and pasted with Ctrl+V over the control VNC arrives in the page
 // byte for byte, for astral code points, NFD, ZWJ sequences and newlines. After the
 // HUMAN lease ends the selection is empty (run-sidecar.sh additionally checks the
@@ -336,9 +336,9 @@ func TestTX03(t *testing.T) {
 	s.ev.SaveJSON(t, "TestTX03/results.json", results)
 }
 
-// TestSpike03CutText (SPIKE-03): records what RFB ClientCutText delivers to
+// TestSpike03CutText records what RFB ClientCutText delivers to
 // Chromium via x11vnc on the control port. Nothing is asserted: this is the
-// spike's evidence. Observed with x11vnc 0.9.17: the text lands in CUT_BUFFER0
+// compatibility probe's evidence. Observed with x11vnc 0.9.17: the text lands in CUT_BUFFER0
 // but neither PRIMARY nor CLIPBOARD yields it to xclip, so Ctrl+V in Chromium
 // pastes nothing, and the protocol is Latin-1 only anyway. Both justify
 // PUT /clipboard (xclip owns the selection) as the only text path.

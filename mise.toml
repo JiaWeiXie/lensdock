@@ -9,7 +9,7 @@ pnpm = "11.28.8"
 python = "3.13.17"
 uv = "0.13.5"
 shellcheck = "0.11.0"
-# SPIKE-04 compatibility subject; never run `agent-browser install` (it would download a local browser).
+# agent-browser compatibility subject for e2e:agent-browser; never run `agent-browser install` (it would download a local browser).
 "npm:agent-browser" = "0.39.2"
 
 [env]
@@ -19,10 +19,14 @@ LENSDOCK_API = "http://127.0.0.1:18081"
 LENSDOCK_STATE_DIR = "{{config_root}}/.lensdock"
 # Defaults to the host architecture (the Docker engine's on Docker Desktop and OrbStack); override with LENSDOCK_ARCH.
 LENSDOCK_ARCH = "{{ get_env(name='LENSDOCK_ARCH', default=arch(x64='amd64', arm64='arm64')) }}"
+# Source checkouts run the locally built :dev images. The compose default for a release install is the
+# published ghcr.io/jiaweixie/lensdock/*:latest, so these must stay explicit here.
+LENSDOCK_RUNTIME_IMAGE = "lensdock/runtime:dev"
+LENSDOCK_GATEWAY_IMAGE = "lensdock/gateway:dev"
 
 [tasks.validate]
-description = "Validate the specification package (not a running application)"
-run = "uv run --script tools/validate_spec.py"
+description = "Validate data contracts (schema, OpenAPI, examples); starts no container or browser"
+run = "uv run --script tools/validate_contracts.py"
 
 [tasks."go:fmt"]
 description = "Fail (listing the offending files) when Go sources are not gofmt-clean"
@@ -41,8 +45,8 @@ description = "Unit tests"
 run = "go test -race -count=1 ./..."
 
 [tasks."lint:sh"]
-description = "shellcheck the e2e orchestration scripts"
-run = "shellcheck tests/e2e/*.sh tests/e2e/internal/harness/procsnap.sh"
+description = "shellcheck the installer and the e2e orchestration scripts"
+run = "shellcheck install.sh tests/e2e/*.sh tests/e2e/internal/harness/procsnap.sh"
 
 [tasks."check:pins"]
 description = "Go version pins must agree across mise.toml, go.mod and the Dockerfile"
@@ -88,36 +92,36 @@ description = "Host e2e test binary (macOS/Linux host tests)"
 run = "go test -c -tags e2e -o bin/e2e.test ./tests/e2e"
 
 [tasks."e2e:host"]
-description = "Host-side M0 acceptance tests (RT-02/03, CT-03, CT-10) against the running runtime"
+description = "Host-side runtime acceptance tests (sandbox, desktop and CDP isolation) against the running runtime"
 depends = ["build", "e2e:build-host"]
 run = "tests/e2e/run-host.sh"
 
 [tasks."e2e:sidecar"]
-description = "Sidecar tests sharing the runtime netns (CT-04, TX-01..03, RT-03 viewers, cut-text)"
+description = "Sidecar tests sharing the runtime netns (CDP, transfer, viewers, cut-text)"
 depends = ["build:linux"]
 run = "tests/e2e/run-sidecar.sh"
 
 [tasks."e2e:version-matrix"]
-description = "Record OS/kernel/Docker/arch/image/Browser versions for spike reports"
+description = "Record OS/kernel/Docker/arch/image/Browser versions for compatibility reports"
 run = "tests/e2e/version-matrix.sh"
 
 [tasks."e2e:rt01"]
-description = "RT-01 image checks"
+description = "Runtime image checks"
 depends = ["image:build"]
 run = "tests/e2e/rt01-image.sh"
 
 [tasks."e2e:sandbox-matrix"]
-description = "SPIKE-01 sandbox matrix (custom seccomp vs default seccomp)"
+description = "Sandbox matrix (custom seccomp vs default seccomp)"
 depends = ["build", "e2e:build-host", "image:build"]
 run = "tests/e2e/sandbox-matrix.sh"
 
 [tasks."e2e:vnc-cpu"]
-description = "SPIKE-02 marginal CPU of the view-only VNC server"
+description = "Marginal CPU of the view-only VNC server"
 depends = ["build:linux"]
 run = "tests/e2e/vnc-cpu.sh"
 
 [tasks."e2e:agent-browser"]
-description = "SPIKE-04 agent-browser through the lensdock CDP bridge (root and --path-secret modes)"
+description = "agent-browser through the lensdock CDP bridge (root and --path-secret modes)"
 depends = ["build"]
 run = "tests/e2e/agent-browser.sh"
 

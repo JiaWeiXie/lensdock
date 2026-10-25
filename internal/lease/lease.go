@@ -4,7 +4,7 @@
 // closed.
 //
 // Besides HUMAN and AGENT leases the manager owns the transient control
-// states of SPEC §9: HANDOFF_PENDING (takeover), CAPTURE (page-viewport
+// states: HANDOFF_PENDING (takeover), CAPTURE (page-viewport
 // capture with restoration of the prior holder at a new epoch) and
 // MAINTENANCE (host operations).
 package lease
@@ -48,7 +48,7 @@ const (
 	EndExpired    EndReason = "EXPIRED"
 	EndGeneration EndReason = "GENERATION"
 	EndShutdown   EndReason = "SHUTDOWN"
-	// EndLocked means the workspace entered ERROR_LOCKED (SPEC §8) while the
+	// EndLocked means the workspace entered ERROR_LOCKED while the
 	// lease was held.
 	EndLocked EndReason = "LOCKED"
 	// EndTakeover means a human takeover fenced the lease.
@@ -108,7 +108,7 @@ type Handoff struct {
 	Forced bool
 	// UncertainEffects is true when an AGENT lease was fenced: ending the
 	// connections cannot undo browser or server side effects already
-	// started (SPEC §9.3).
+	// started.
 	UncertainEffects bool
 	Prior            *PriorLease
 	ExpiresAt        time.Time

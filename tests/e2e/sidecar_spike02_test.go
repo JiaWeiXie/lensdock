@@ -17,7 +17,7 @@ import (
 	"github.com/JiaWeiXie/lensdock/tests/e2e/internal/harness"
 )
 
-// Environment of the SPIKE-02 helpers driven by tests/e2e/vnc-cpu.sh.
+// Environment of the VNC load helpers driven by tests/e2e/vnc-cpu.sh.
 const (
 	envPage      = "LENSDOCK_E2E_PAGE"         // static | animation
 	envLoadPorts = "LENSDOCK_E2E_LOAD_PORTS"   // comma separated viewer ports, one RFB client each

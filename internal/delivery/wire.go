@@ -102,7 +102,7 @@ func ValidateID(kind, s string) error {
 	return nil
 }
 
-// Delivery states of the feedback state machine (SPEC 12.2).
+// Delivery states of the feedback state machine.
 const (
 	StateReady        = "READY"
 	StateQueued       = "QUEUED"

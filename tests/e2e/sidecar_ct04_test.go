@@ -24,7 +24,7 @@ type recordedEvent struct {
 	Data *string `json:"data"`
 }
 
-// TestCT04 (SPIKE-02, CT-04): the view-only VNC port (5901) ignores forged RFB
+// TestCT04: the view-only VNC port (5901) ignores forged RFB
 // KeyEvent, PointerEvent and ClientCutText messages, while the control port (5900)
 // delivers the same messages to the page. The positive control proves the
 // injection path works, so "zero events" on 5901 is meaningful.

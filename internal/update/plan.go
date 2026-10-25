@@ -236,7 +236,7 @@ func (e *Engine) currentRelease(st State) *Release {
 }
 
 // BuildPlan checks everything that can be checked without changing the
-// deployment (SPEC 15.3, runbook steps 01 and 02): release manifest and
+// deployment: release manifest and
 // signature, exact digests, schema and Chromium compatibility, disk space,
 // backup location and key, and the maintenance impact. The Browser is not
 // touched. A manifest that is incomplete or invalid yields an error, not a

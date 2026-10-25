@@ -9,13 +9,14 @@ import (
 )
 
 func TestProductModeFlagOverridesEnvironment(t *testing.T) {
+	bundle := writeBundle(t, "1.0.0")
 	for _, tc := range []struct{ env, flag, want string }{
 		{"NOVNC", "AGENT", "AGENT"},
 		{"novnc", "", "NOVNC"},
 		{"", "novnc", "NOVNC"},
 	} {
 		dir := filepath.Join(t.TempDir(), "deployment")
-		args := []string{"admin", "product-init", "--state-dir", dir}
+		args := []string{"admin", "product-init", "--state-dir", dir, "--bundle-dir", bundle}
 		if tc.flag != "" {
 			args = append(args, "--mode", tc.flag)
 		}

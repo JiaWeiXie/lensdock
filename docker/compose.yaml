@@ -1,8 +1,14 @@
+# LensDock product Compose file. Operate it through `lensdock admin product-start` and
+# `lensdock update compose`, never with a bare `docker compose`: the deployment adds its
+# env file, the pinned image override and the update generation override.
+# LENSDOCK_RUNTIME_IMAGE and LENSDOCK_GATEWAY_IMAGE select the images of a new installation
+# (default: the published `latest`); `product-init` records them and the first
+# `product-start` pins their digests. Source checkouts set them to the local :dev images.
 name: lensdock-product
 
 services:
   config-init:
-    image: lensdock/gateway:dev
+    image: ${LENSDOCK_GATEWAY_IMAGE:-ghcr.io/jiaweixie/lensdock/gateway:latest}
     profiles: [setup]
     command: [prepare-config]
     read_only: true
@@ -18,7 +24,7 @@ services:
       disable: true
 
   runtime:
-    image: lensdock/runtime:dev
+    image: ${LENSDOCK_RUNTIME_IMAGE:-ghcr.io/jiaweixie/lensdock/runtime:latest}
     hostname: runtime
     init: false
     read_only: true
@@ -53,7 +59,7 @@ services:
     stop_grace_period: 30s
 
   gateway:
-    image: lensdock/gateway:dev
+    image: ${LENSDOCK_GATEWAY_IMAGE:-ghcr.io/jiaweixie/lensdock/gateway:latest}
     read_only: true
     tmpfs:
       - /tmp:mode=1777

@@ -1,12 +1,16 @@
-# 更新與回退 Runbook
+# Update and rollback runbook
 
-狀態：已實作。實際命令、參數與復原步驟以 [UPDATE-IMPLEMENTATION.md](UPDATE-IMPLEMENTATION.md) 為準。目前只以開發版 Release（未簽署，無 BuildKit Provenance 與掃描報告）在 macOS arm64／OrbStack 本機實測；已實測與未實測的項目列在本文最後一節。正式簽署 Release 通道與整合版 amd64 尚未驗證。
+Host updates are implemented in the `lensdock update` CLI. This runbook states the policy, the order of operations and what has actually been verified. Exact flags, deployment file fields and recovery procedures are in [UPDATE-IMPLEMENTATION.md](UPDATE-IMPLEMENTATION.md).
 
-## 1. 責任切割
+## Responsibilities
 
-Browser／Debian userspace 更新透過新 Runtime Image；Gateway／noVNC／UI 更新透過新 App Image；主機 Kernel／Docker Engine 由主機管理者處理。Browser Runtime 與 Gateway 不掛 Docker Socket。CI 檢查與建置更新候選不等於可以任意重啟正在工作的 Browser。
+- Browser and Debian userspace change through a new Runtime image.
+- Gateway, noVNC and the UI change through a new Gateway (app) image.
+- The host kernel and Docker Engine belong to the host administrator.
+- The Runtime and Gateway containers never mount the Docker socket. Only the host CLI applies or rolls back an update, and only with Host Admin authority. An Agent token cannot call it.
+- Building or testing an update candidate never restarts a browser that someone is working in.
 
-## 2. 更新命令契約
+## Command contract
 
 ```text
 lensdock update check [--workspace <id>]
@@ -19,78 +23,80 @@ lensdock update status | checkpoints list|verify|prune | branches list|delete
 lensdock update compose -- <up|down|stop|start|restart|ps|logs|config> ...
 ```
 
-每個命令都接受 `--deployment <file>`。
+Every command accepts `--deployment <file>`.
 
-`check` 只顯示資訊；`plan` 檢查 Image Digest、簽章、相容性、磁碟、Backup 位置及維護影響，不改動 Browser。`apply` 必須在 Host Admin 執行並確認，不能由一般 Agent Token 呼叫。命令與 Log 不顯示 Token、Profile 內容或 Secret。Gateway 與 UI 沒有 Docker Socket，也沒有套用或回退的端點；它們只讀取唯讀的 `deployment-status.json`。
+- `check` only reports. `plan` verifies image digests, signature, compatibility, disk space, backup location and maintenance impact without touching the browser.
+- `apply` asks for confirmation. Commands and logs never print tokens, Profile content or secrets.
+- The Gateway and UI have no apply or rollback endpoint. They read only `deployment-status.json`, which holds release, update and checkpoint summaries.
 
-## 3. 安全更新順序
+## Update sequence
 
-| 步驟 | 必做動作 | 失敗時 |
+| Step | Action | On failure |
 |---|---|---|
-| 01 | 驗證 Release Manifest、簽章／來源、Digest、Schema 相容性；在停止任何服務之前，以同一 Repository 的 `lensdock-keep-<完整 Digest>` Tag 保留目前執行中的映像 | 停止，不覆蓋現有映像或資料；映像無法保留時尚未停止任何服務 |
-| 02 | 確認既有 Profile、DB、Keyring、附件配額與備份空間 | 空間不足拒絕進入更新 |
-| 03 | 先停 Gateway（排空 SSE、VNC、CDP 連線後關閉 DB），Workspace 進 MAINTENANCE，拒絕新租約，告知使用者 | 無法鎖定則停止 |
-| 04 | 既有控制權排空或明確取消，關閉 CDP／VNC 寫入路徑 | 不繼續發新控制權 |
-| 05 | 正常關閉 Chromium（先 `Browser.close`，再訊號），確認 Runtime 與 Gateway Exit Code 為 0、無 `Singleton*` Lock、`profile.exit_type` 為 Normal 或 SessionEnded、SQLite Journal 已清空或為已提交的 PERSIST 標頭 | Crash Snapshot 需另外標示，不能當乾淨備份 |
-| 06 | 產生 Profile／Keyring／Gateway DB 的一致性 Checkpoint | 備份失敗則恢復舊服務，或維持鎖定等待處理 |
-| 07 | 從 Checkpoint 建立候選 Volume；不與舊 Browser 共寫 | Copy 失敗刪除候選，不刪原資料 |
-| 08 | 先在複製的 DB 上以無網路容器執行 Gateway Migration，再讓新映像執行 Sandbox、Font、CDP、UTF-8／PNG Fixture Smoke Test | 不切換，保留測試結果 |
-| 09 | 預設禁止候選對外；只測本機 Fixture | 真實帳號測試需人工授權，避免雙發請求 |
-| 10 | 經確認才切到新映像與候選 Volume，產生新 Generation | 保留舊 Checkpoint 供成對回退 |
-| 11 | 重新取得健康狀態，使用者／Agent 重新申請租約；Gateway 重啟後瀏覽器 Session 失效，需重新配對 | 不自動續跑上次破壞性動作 |
+| 01 | Verify the release manifest, signature or provenance, digests and schema compatibility. Before stopping anything, keep the running images under a `lensdock-keep-<full digest>` tag in their own repository | Stop. Nothing has been stopped or overwritten |
+| 02 | Check Profile, database, keyring, attachment quota and backup space | Refuse the update if space is short |
+| 03 | Stop the Gateway after draining SSE, VNC and CDP connections and closing the database. Put the workspace in `MAINTENANCE`, refuse new leases and tell users | Stop if the workspace cannot be locked |
+| 04 | Drain or explicitly cancel the current control lease and close the CDP and VNC write paths | Do not issue new control |
+| 05 | Close Chromium cleanly (`Browser.close`, then signals). Require exit code 0 from Runtime and Gateway, no `Singleton*` lock, `profile.exit_type` of `Normal` or `SessionEnded`, and no unflushed SQLite journal | A snapshot taken otherwise is a crash snapshot and must be labeled as such |
+| 06 | Write one consistent encrypted checkpoint of Profile, keyring and Gateway database | Restore the old services, or stay locked for an operator |
+| 07 | Create candidate volumes from the checkpoint. Never share writes with the old browser | Delete the candidate, never the original data |
+| 08 | Run the Gateway migration on the cloned database in a container with no network, then start the candidate Runtime and run sandbox, font, CDP and UTF-8/PNG fixture smoke checks | Do not switch. Keep the results |
+| 09 | Keep the candidate off the network. Test only local fixtures | Tests with real accounts need explicit human authorization to avoid duplicate requests |
+| 10 | After approval, switch to the new images and candidate volumes as a new generation | Keep the old checkpoint for a paired rollback |
+| 11 | Re-check health. Humans and Agents request new leases. Browser sessions in the Gateway are gone after a restart and need pairing again | Never resume the last destructive action automatically |
 
-回饋 Artifact 可獨立持久化，但對應 DB Migration 的版本要能指回相同附件。跨 DB 版本回復時不得留下「列得到但讀不到」的分享包。實作上 Artifact 屬於 Retained Volume，不隨回退還原；回退還原的 DB 沒有更新後新增的 Feedback，讀取回 404，檔案仍保留。
+Feedback artifacts live in a retained volume and are not rolled back. After a rollback, the restored database has no feedback created after the checkpoint, so reading it returns 404 while its files remain.
 
-The usage mode and pause live in the retained `lensdock-runtime-policy` volume,
-separate from Chromium's Profile. Candidates use an empty scratch policy in
-AGENT mode; production keeps its saved policy through the switch. Existing
-installations must add the mount, dataset declaration and empty volume before
-planning this update. See [Adding the runtime policy volume](UPDATE-IMPLEMENTATION.md#adding-the-runtime-policy-volume).
+## Rollback rules
 
-## 4. 回退規則
+A rollback restores the old images, the Profile from before the update, the keyring if needed, and the compatible database checkpoint. Never let an old Chromium open a Profile that a newer release has migrated. The faulty or newer volumes are kept so post-update data can be recovered.
 
-回退前保留目前故障／新版本 Volume，便於取回更新後新增資料。預設恢復舊映像、更新前 Profile、必要 Keyring 與相容 DB Checkpoint；不要讓舊 Chromium 直接打開已被新版本遷移的 Profile。
+- Show the user the checkpoint time, the state that may be lost, and which artifacts a rollback does not affect. Without a compatible checkpoint, rollback is not guaranteed and the UI must say so. It must not offer a one-click button that looks safe.
+- An old Gateway never reads a newer database schema. Rollback restores the older-schema database from the checkpoint and starts the old Gateway on it. A plan is refused when the running database schema is newer than the new release's Gateway schema, unless `--allow-downgrade` is given (still with a paired checkpoint).
+- Before a rollback, the CLI keeps both the checkpoint's old images and the currently running images under keep tags. If any is unavailable, nothing is stopped.
+- The retained usage policy is not rewound by a compatible rollback. A Runtime release from before usage modes cannot enforce it: do not assume that a saved `NOVNC` mode or a pause protects a workspace running such a Runtime.
 
-必須向使用者顯示 Checkpoint 時間、可能遺失的更新後狀態，以及哪些 Artifact 不受回退影響。沒有相容 Checkpoint 時不保證可回退，UI 必須明示，不提供看似安全的一鍵按鈕。
+## Version and security update policy
 
-DB Schema 跨版本時，回退還原 Checkpoint 內的舊 Schema DB，並以舊 Gateway 啟動；舊 Gateway 絕不讀取較新 Schema 的 DB。執行中 DB Schema 高於新 Release 的 Gateway Schema 時，Plan 會拒絕，除非明確加 `--allow-downgrade`（仍使用成對 Checkpoint）。回退前會再次以同 Repository 的 Keep Tag 保留 Checkpoint 內的舊映像與目前執行中的映像，任一不可用時不停止任何服務。
+Releases pin images by digest and never depend on `latest`. CI may propose Debian security and upstream candidates with package lists and reproducible sources. A major Chromium or Debian upgrade needs a full Profile compatibility and rollback test. An urgent patch still gets the sandbox, persistence and handoff smoke checks, and still takes a backup.
 
-The retained usage policy is not rewound with a compatible rollback. Releases
-that predate usage modes cannot enforce it: do not assume that a saved NOVNC
-mode or pause protects a workspace running such an old Runtime.
-
-## 5. 版本與安全更新政策
-
-固定 Release 使用 Digest，不依賴 `latest`。CI 定期取得新的 Debian Security／上游相依候選並產生測試提案，保存套件清單與可重現來源。重大 Chromium／Debian 升版需完整 Profile 相容與回退測試；緊急修補仍至少做 Sandbox、持久化與交接 Smoke Test，不跳過備份。
-
-目前的釘選點與更新方式：
-
-| 項目 | 位置 | 更新時一併做 |
+| Item | Location | Also do when updating |
 |---|---|---|
-| Debian 基底、Go 建置映像 Digest | `docker/browser/Dockerfile` 的 `ARG` | Go 版本須同時改 `mise.toml`、`go.mod`，`mise run check:pins` 必須通過 |
-| 開發工具版本 | `mise.toml`、`mise.lock` | `mise install`、`mise run check` |
-| Chromium Seccomp Profile | `tools/gen_seccomp.py` 釘選的 moby commit 與 sha256 | `mise run seccomp:generate` 重產，重跑 `mise run e2e:sandbox-matrix`（自訂 Profile 必須 Ready，Docker 預設必須 `SANDBOX_PREFLIGHT_FAILED`） |
-| 套件實際版本 | 建置時寫入 `/usr/share/lensdock/dpkg-manifest.tsv` | `mise run e2e:version-matrix` 保存版本矩陣 |
-| Gateway 映像基底與前端相依 | `docker/gateway/Dockerfile` 的 `ARG`（Node、Go、Debian Digest）、`apps/web/pnpm-lock.yaml` | `mise run web:build`、`mise run gateway:image`；字型與 noVNC 授權檔在 `apps/web/public/licenses/` |
+| Debian base and Go build image digests | `ARG` lines in `docker/browser/Dockerfile` | Change the Go version in `mise.toml` and `go.mod` too. `mise run check:pins` must pass |
+| Development tool versions | `mise.toml`, `mise.lock` | `mise install`, `mise run check` |
+| Chromium seccomp profile | moby commit and sha256 pinned in `tools/gen_seccomp.py` | `mise run seccomp:generate`, then `mise run e2e:sandbox-matrix` (the custom profile must reach Ready, the Docker default must give `SANDBOX_PREFLIGHT_FAILED`) |
+| Installed package versions | written to `/usr/share/lensdock/dpkg-manifest.tsv` at build time | `mise run e2e:version-matrix` to record the matrix |
+| Gateway image base and frontend dependencies | `ARG` lines in `docker/gateway/Dockerfile` (Node, Go, Debian digests) and `apps/web/pnpm-lock.yaml` | `mise run web:build`, `mise run gateway:image`. Font and noVNC licenses live in `apps/web/public/licenses/` |
 
-預設保留最近三個已驗證 Checkpoint（部署檔的 `retainCheckpoints`）；部署檔目前只有數量與最小可用空間（`minFreeBytes`）兩項設定，沒有依時間到期的清理。`update checkpoints prune` 只在沒有有效更新／回退作業引用時才清理。敏感備份必須加密，金鑰不與備份混放。保留策略的到期刪除需涵蓋私有截圖與其備份；一般檔案刪除不宣稱能在所有儲存媒體上完成不可回復抹除。
+The deployment file keeps the latest three verified checkpoints by default (`retainCheckpoints`) and sets a minimum free space (`minFreeBytes`). There is no time-based expiry. `update checkpoints prune` removes only checkpoints that no active update or rollback references. Encrypt sensitive backups and keep the key apart from them. Retention expiry must cover private screenshots and their backups. Ordinary file deletion does not promise unrecoverable erasure on every storage medium.
 
-## 6. 需要實測的失敗案例
+## Adding the runtime policy volume
 
-更新下載中斷、磁碟滿、Chromium 不正常退出、備份不完整、新版 Sandbox 失敗、字型缺失、DB Migration 失敗、Profile 不相容、舊 Gateway 讀新 Schema、Host 重啟與候選網路外洩。每一種都必須有明確狀態、不可重複副作用與恢復步驟。
+The usage mode and Agent pause live in the retained `lensdock-runtime-policy` volume, separate from Chromium's Profile. Candidates use an empty scratch policy in `AGENT` mode, while production keeps its saved policy through the switch.
 
-### Exercised status (2026-10-25, local macOS arm64 with OrbStack)
+An installation that predates this volume must add the mount, the dataset declaration and an empty volume before planning an update. Follow [Adding the runtime policy volume](UPDATE-IMPLEMENTATION.md#adding-the-runtime-policy-volume).
 
-Only the cases marked exercised were run against the real deployment, with development releases. The others have an implemented check or guard, but no injected run is recorded; do not read them as verified. Evidence file names are in [UPDATE-IMPLEMENTATION.md](UPDATE-IMPLEMENTATION.md#exercised-evidence-and-limits).
+## Failure cases and verification status
+
+Every failure case needs a defined state, no repeated side effects and a recovery step. Only the first four rows below were run against a real deployment. The rest have implemented checks or guards, but no injected failure has been recorded, so do not read them as verified.
 
 | Case | Status |
 |---|---|
-| Candidate Runtime never becomes ready (entrypoint `/bin/false`) with a live VNC session and SSE stream open | Exercised. The previous healthy release and its schema 2 database were restored, published feedback was unchanged, the browser reconnected |
-| Gateway schema upgrade 1 to 2 and paired rollback to schema 1 | Exercised. The old Gateway ran only on the restored schema 1 database |
-| Profile markers and retained artifacts across update and paired rollback | Exercised. Pre-update markers restored, post-update markers absent, retained artifact hashes unchanged |
-| Chromium unclean exit, incomplete backup, Sandbox or font failure in the candidate, Profile incompatibility | Guards exist (exit code, lock, `profile.exit_type` and journal checks; decrypt and tar walk before publishing a checkpoint; candidate probe checks). No injected failure was run |
-| Disk full, interrupted download | The plan checks free space for the checkpoint and the candidates. Images are local, so there is no pull step. No injected failure was run |
+| Candidate Runtime never becomes ready (entrypoint `/bin/false`) while a VNC session and an SSE stream are open | Exercised. The previous healthy release and its database were restored, published feedback was unchanged, the browser reconnected |
+| Gateway schema upgrade 1 to 2, then paired rollback to schema 1 | Exercised. The old Gateway ran only on the restored schema 1 database |
+| Profile markers and retained artifacts across an update and a paired rollback | Exercised. Pre-update markers were restored, post-update markers were absent, artifact hashes were unchanged |
+| Update while the Agent is paused | Exercised. The candidate used its own scratch policy and production stayed paused with the same revision |
+| Chromium unclean exit, incomplete backup, sandbox or font failure in the candidate, incompatible Profile | Guards exist (exit code, lock, `profile.exit_type` and journal checks, decrypt and tar walk before a checkpoint is published, candidate probe). Not injected |
+| Disk full, interrupted download | The plan checks free space for the checkpoint and candidates. Images are local, so there is no pull step. Not injected |
 | Failed Gateway migration on the clone | Not injected. The successful migration was exercised |
 | Host restart during an update | Journals persist and `abort` rebuilds the run from them. Not exercised |
-| Candidate network leak | The probe's egress check and the internal-network check passed for the real candidates. A deliberate leak was not injected |
-| Old Gateway reading a newer schema | Prevented by plan and by rollback ordering. Starting an old Gateway against schema 2 on purpose was not run |
+| Candidate network leak | The probe's egress check and the internal-network check passed for the real candidates. A leak was not injected |
+| Old Gateway reading a newer schema | Prevented by the plan and by rollback ordering. Not run on purpose |
+
+Limits of everything above:
+
+- Runs used unsigned development releases (no BuildKit provenance, no scanner output) on one macOS arm64 host with OrbStack. There is no integrated amd64 run and no run of the signed release channel. Native release smoke checks do not establish full product E2E on a platform.
+- No real account was used. Profile persistence was proven with `tests/fixtures/handoff.html` markers.
+- No exercised release changed the Chromium version, so a rollback after a Chromium upgrade has not been demonstrated, although the Profile is restored from the checkpoint either way.
+- Runtime mutual-TLS certificates written by `product-init` expire after 365 days. No rotation procedure is documented or exercised.
+- Gateway browser sessions are process-local, so every Gateway restart requires pairing again.

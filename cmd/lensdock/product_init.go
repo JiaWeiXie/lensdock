@@ -24,12 +24,45 @@ import (
 	"github.com/JiaWeiXie/lensdock/internal/update"
 )
 
+const (
+	defaultProject = "lensdock-product"
+	defaultOrigin  = "http://127.0.0.1:18081"
+
+	envPublicOrigin   = "LENSDOCK_PUBLIC_ORIGIN"
+	envComposeProject = "LENSDOCK_COMPOSE_PROJECT"
+	envRuntimeImage   = "LENSDOCK_RUNTIME_IMAGE"
+	envGatewayImage   = "LENSDOCK_GATEWAY_IMAGE"
+
+	// A release bundle starts on the published images; a source checkout on
+	// the images `mise run image:build` and `gateway:image` build locally.
+	releaseRuntimeImage = "ghcr.io/jiaweixie/lensdock/runtime:latest"
+	releaseGatewayImage = "ghcr.io/jiaweixie/lensdock/gateway:latest"
+	sourceRuntimeImage  = "lensdock/runtime:dev"
+	sourceGatewayImage  = "lensdock/gateway:dev"
+
+	// releaseDir holds the private copy of the bundle files and pinFile the
+	// Compose override that product-start fills with the exact images of the
+	// first start. Both live in the product directory.
+	releaseDir = "release"
+	pinFile    = "images.pin.yaml"
+	// pinPlaceholder is the pin file until the first start. It changes nothing.
+	pinPlaceholder = "# LensDock pins the exact Runtime and Gateway images in this file at the first start\n# (lensdock admin product-start). Until then it changes nothing.\nservices: {}\n"
+)
+
 func (c *cli) productInit(args []string) error {
 	fs := c.newFlagSet("admin product-init")
-	state := fs.String("state-dir", c.getenv("LENSDOCK_STATE_DIR"), "private deployment state directory")
-	origin := fs.String("origin", "http://127.0.0.1:18081", "exact public Gateway origin")
+	state := fs.String("state-dir", c.defaultStateDir(), "private deployment state directory (default $LENSDOCK_STATE_DIR, $HOME/.local/share/lensdock for a release, else .lensdock)")
+	originDefault := c.getenv(envPublicOrigin)
+	if originDefault == "" {
+		originDefault = defaultOrigin
+	}
+	origin := fs.String("origin", originDefault, "exact public Gateway origin (default $"+envPublicOrigin+" or "+defaultOrigin+")")
 	ws := fs.String("workspace", "default", "workspace ID")
 	mode := fs.String("mode", c.getenv("LENSDOCK_MODE"), "initial usage mode: NOVNC or AGENT (default AGENT)")
+	project := fs.String("project", c.getenv(envComposeProject), "Compose project name; its Docker volumes hold the data (default $"+envComposeProject+" or "+defaultProject+")")
+	runtimeImage := fs.String("runtime-image", c.getenv(envRuntimeImage), "Runtime image (default $"+envRuntimeImage+", else "+releaseRuntimeImage+" for a release)")
+	gatewayImage := fs.String("gateway-image", c.getenv(envGatewayImage), "Gateway image (default $"+envGatewayImage+", else "+releaseGatewayImage+" for a release)")
+	bundleDir := fs.String("bundle-dir", "", "release bundle to copy the Compose file and helpers from (default: the bundle of the running executable)")
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
 	}
@@ -39,9 +72,6 @@ func (c *cli) productInit(args []string) error {
 	}
 	if initialMode != "AGENT" && initialMode != "NOVNC" {
 		return usageErrorf("--mode / LENSDOCK_MODE must be NOVNC or AGENT")
-	}
-	if *state == "" {
-		*state = ".lensdock"
 	}
 	u, err := url.Parse(*origin)
 	if err != nil || u.Host == "" || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Path != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -63,9 +93,54 @@ func (c *cli) productInit(args []string) error {
 			return usageErrorf("invalid workspace ID")
 		}
 	}
+	if *project == "" {
+		*project = defaultProject
+	}
+	if err := update.CheckComposeProject(*project); err != nil {
+		return usageErrorf("--project: %v", err)
+	}
+	bundle, err := c.findBundle(*bundleDir)
+	if err != nil {
+		return err
+	}
+	// Without a bundle this is a source checkout: the deployment points at the
+	// checkout's own files and local :dev images, as before.
+	var cwd string
+	if bundle == nil {
+		if cwd, err = os.Getwd(); err != nil {
+			return err
+		}
+		if fi, err := os.Stat(filepath.Join(cwd, "docker", "compose.yaml")); err != nil || !fi.Mode().IsRegular() {
+			return usageErrorf("no release bundle found for this executable and %s does not exist: run product-init from a source checkout, from an installed release, or pass --bundle-dir", filepath.Join(cwd, "docker", "compose.yaml"))
+		}
+	}
+	if *runtimeImage == "" {
+		*runtimeImage = sourceRuntimeImage
+		if bundle != nil {
+			*runtimeImage = releaseRuntimeImage
+		}
+	}
+	if *gatewayImage == "" {
+		*gatewayImage = sourceGatewayImage
+		if bundle != nil {
+			*gatewayImage = releaseGatewayImage
+		}
+	}
+	for flagName, ref := range map[string]string{"--runtime-image": *runtimeImage, "--gateway-image": *gatewayImage} {
+		if err := update.CheckImageRef(ref); err != nil {
+			return usageErrorf("%s: %v", flagName, err)
+		}
+	}
 	root, err := filepath.Abs(*state)
 	if err != nil {
 		return err
+	}
+	for _, name := range []string{"deployment.json", "product"} {
+		if _, err := os.Lstat(filepath.Join(root, name)); err == nil {
+			return fmt.Errorf("%s already exists: product-init never overwrites or upgrades a deployment (operate it with `lensdock update compose`, change images with `lensdock update`)", filepath.Join(root, name))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	if _, err := os.Stat(filepath.Join(root, operatorTokenFile)); errors.Is(err, os.ErrNotExist) {
 		if err := c.adminInit([]string{"--state-dir", root}); err != nil {
@@ -120,30 +195,44 @@ func (c *cli) productInit(args []string) error {
 	if err := auth.WritePrivateFile(filepath.Join(dir, "gateway.json"), append(b, '\n')); err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
+	// The host-run Gateway of `mise run gateway:dev` exists only in a source checkout.
+	if bundle == nil {
+		cfg.Listen = u.Host
+		cfg.DataDir = filepath.Join(root, "gateway-data")
+		cfg.WebDir = filepath.Join(cwd, "apps/web/dist")
+		cfg.StatusFile = filepath.Join(dir, "public", "deployment-status.json")
+		cfg.Runtimes = []gateway.RuntimeConfig{{WorkspaceID: *ws, URL: "http://127.0.0.1:18080", OperatorTokenFile: filepath.Join(root, operatorTokenFile)}}
+		b, err = json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := auth.WritePrivateFile(filepath.Join(dir, "gateway-host.json"), append(b, '\n')); err != nil {
+			return err
+		}
 	}
-	cfg.Listen = u.Host
-	cfg.DataDir = filepath.Join(root, "gateway-data")
-	cfg.WebDir = filepath.Join(cwd, "apps/web/dist")
-	cfg.StatusFile = filepath.Join(dir, "public", "deployment-status.json")
-	cfg.Runtimes = []gateway.RuntimeConfig{{WorkspaceID: *ws, URL: "http://127.0.0.1:18080", OperatorTokenFile: filepath.Join(root, operatorTokenFile)}}
-	b, err = json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := auth.WritePrivateFile(filepath.Join(dir, "gateway-host.json"), append(b, '\n')); err != nil {
-		return err
-	}
-	env := fmt.Sprintf("LENSDOCK_WORKSPACE_ID=%s\nLENSDOCK_MODE=%s\nLENSDOCK_STATE_DIR=%s\nLENSDOCK_HOST_PORT=%s\nLENSDOCK_PUBLIC_ORIGIN=%s\n", *ws, initialMode, composeEnvValue(root), port, composeEnvValue(*origin))
+	env := fmt.Sprintf("LENSDOCK_WORKSPACE_ID=%s\nLENSDOCK_MODE=%s\nLENSDOCK_STATE_DIR=%s\nLENSDOCK_HOST_PORT=%s\nLENSDOCK_PUBLIC_ORIGIN=%s\n%s=%s\n%s=%s\n", *ws, initialMode, composeEnvValue(root), port, composeEnvValue(*origin), envRuntimeImage, composeEnvValue(*runtimeImage), envGatewayImage, composeEnvValue(*gatewayImage))
 	if err := auth.WritePrivateFile(filepath.Join(dir, "compose.env"), []byte(env)); err != nil {
 		return err
 	}
+	composeFiles := []string{filepath.Join(cwd, "docker", "compose.yaml")}
+	linuxCLI := map[string]string{"arm64": filepath.Join(cwd, "bin", "linux-arm64", "lensdock"), "amd64": filepath.Join(cwd, "bin", "linux-amd64", "lensdock")}
+	if bundle != nil {
+		// A private copy keeps the deployment independent of the bundle's
+		// location, so reinstalling or upgrading the CLI cannot break it.
+		rel := filepath.Join(dir, releaseDir)
+		if err := bundle.snapshot(rel); err != nil {
+			return err
+		}
+		if err := auth.WritePrivateFile(filepath.Join(dir, pinFile), []byte(pinPlaceholder)); err != nil {
+			return err
+		}
+		composeFiles = []string{filepath.Join(rel, "docker", "compose.yaml"), filepath.Join(dir, pinFile)}
+		linuxCLI = map[string]string{"arm64": filepath.Join(rel, "bin", "linux-arm64", "lensdock"), "amd64": filepath.Join(rel, "bin", "linux-amd64", "lensdock")}
+	}
 	dep := update.Deployment{
 		Version: 1, StateDir: dir, PublicStatusFile: filepath.Join(dir, "public", "deployment-status.json"),
-		Compose:  update.ComposeConfig{Project: "lensdock-product", Files: []string{filepath.Join(cwd, "docker", "compose.yaml")}, EnvFiles: []string{filepath.Join(dir, "compose.env")}},
-		LinuxCLI: map[string]string{"arm64": filepath.Join(cwd, "bin", "linux-arm64", "lensdock"), "amd64": filepath.Join(cwd, "bin", "linux-amd64", "lensdock")},
+		Compose:  update.ComposeConfig{Project: *project, Files: composeFiles, EnvFiles: []string{filepath.Join(dir, "compose.env")}},
+		LinuxCLI: linuxCLI,
 		Workspaces: map[string]update.WorkspaceConfig{*ws: {
 			RuntimeService: "runtime", OperatorTokenFile: filepath.Join(dir, "operator-token"),
 			Probe: update.ProbeConfig{URL: "https://127.0.0.1:8080", CAFile: filepath.Join(dir, "ca.crt"), CertFile: filepath.Join(dir, "gateway.crt"), KeyFile: filepath.Join(dir, "gateway.key")},
@@ -164,7 +253,12 @@ func (c *cli) productInit(args []string) error {
 		return err
 	}
 	complete = true
-	_, err = fmt.Fprintf(c.stdout, "Product configuration: %s\nPairing credentials: admin-token, human-token, viewer-token (private files; never put tokens in URLs).\nAgent credential: agent-token.\nGateway origin: %s\nRuntime mutual-TLS certificates expire in 365 days.\n", dir, *origin)
+	if _, err = fmt.Fprintf(c.stdout, "Product configuration: %s\nPairing credentials: admin-token, human-token, viewer-token (private files; never put tokens in URLs).\nAgent credential: agent-token.\nGateway origin: %s\nRuntime mutual-TLS certificates expire in 365 days.\n", dir, *origin); err != nil {
+		return err
+	}
+	if bundle != nil {
+		_, err = fmt.Fprintf(c.stdout, "Release %s: Compose file and helpers copied to %s.\nImages (resolved and pinned at the first start): runtime %s, gateway %s.\nNext: lensdock admin product-start --state-dir %s\n", bundle.Version, filepath.Join(dir, releaseDir), *runtimeImage, *gatewayImage, root)
+	}
 	return err
 }
 

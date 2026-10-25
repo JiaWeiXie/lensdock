@@ -6,13 +6,15 @@ drawing, a self-built annotation editor, feedback delivery, file transfer and
 diagnostics. The Gateway serves `apps/web/dist` and every call is same-origin
 under `/api/v1`.
 
+The interface defaults to English (`en-US`). Traditional Chinese (`zh-TW`) is a complete translation, selectable in Settings; the choice is saved in `localStorage` (`lensdock.lang`). Source identifiers and comments are English.
+
 ## Run
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm dev          # http://127.0.0.1:5173, proxies /api (incl. WS) to LENSDOCK_GATEWAY
 pnpm build        # tsc -p both configs --noEmit, then vite build -> dist/
-pnpm test         # vitest, 195 tests in the current suite (coordinate contract, selection and alignment, history, graphemes, effects, palette, mode and pause UI)
+pnpm test         # vitest (coordinate contract, selection and alignment, history, graphemes, effects, palette, mode and pause UI)
 pnpm typecheck
 ```
 
@@ -20,7 +22,7 @@ pnpm typecheck
 
 ## Dependency pins (exact)
 
-| Package | Version | Licence |
+| Package | Version | License |
 |---|---|---|
 | react, react-dom | 19.3.1 | MIT |
 | @novnc/novnc | 1.7.0 | MPL-2.0 (core) |
@@ -40,7 +42,7 @@ pnpm typecheck
 
 Fonts are bundled from `@fontsource` WOFF2 chunks only (a Vite plugin drops the
 WOFF1 fallback), so the UI and the PNG export render identically offline with
-no CDN. Notices and licence texts: `public/licenses/NOTICE.txt`,
+no CDN. Notices and license texts: `public/licenses/NOTICE.txt`,
 `OFL-*.txt`, `noVNC-LICENSE.txt`, `MPL-2.0.txt`.
 
 ## API assumptions (Gateway public surface)
@@ -71,7 +73,7 @@ accepted. Every optional field the Gateway may omit renders as “unknown”; th
 UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
 `resolution.supported`, `/system` sections).
 
-## Feature map (SPEC 8–12)
+## Feature map
 
 - **Login & session**: normal token pairing → HttpOnly cookie, CSRF on mutations,
   eight-hour session lifetime, no credential in URL/storage. Explicit local
@@ -119,11 +121,11 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
   over, and the UI warns before cropping. Copy image and Download PNG export a
   flattened PNG with redactions burned in and no editable data. Geometry is
   normalized to the real image content rectangle; export waits for font
-  readiness and rasterises with the same primitives as the SVG layer, and
+  readiness and rasterizes with the same primitives as the SVG layer, and
   solid redactions are painted last.
 - **Advanced annotation tools** (feedback schema 0.3.0): highlighter, spotlight,
   blur and pixelate are rectangle kinds. The highlighter is a plain alpha fill
-  (colour `#f2a900` by default, opacity 0.1 to 0.8, default 0.35). The spotlight
+  (color `#f2a900` by default, opacity 0.1 to 0.8, default 0.35). The spotlight
   dims everything outside the union of all spotlights once at a fixed 0.6.
   Blur (radius) and pixelate (block edge) take 2 to 64 source pixels (defaults
   12 and 16). Arrows can be filled, open, double or curved (a draggable handle
@@ -135,8 +137,8 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
   image. Solid redactions are blackened before any effect samples the base and
   repainted last, so an overlapping blur cannot reveal what they hide. Highlight,
   spotlight, blur and pixelate are not redaction, and the panel says so.
-- **Colour palette**: built-in swatches plus a custom palette. Add the current
-  picked colour, reuse it for stroke and fill, and remove it. The palette lives
+- **Color palette**: built-in swatches plus a custom palette. Add the current
+  picked color, reuse it for stroke and fill, and remove it. The palette lives
   only in `localStorage` (`lensdock.editor.palette.v1`), holds at most 12
   validated `#RRGGBB` values and ignores anything else it reads back. There is
   no screen eyedropper.
@@ -177,7 +179,7 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
   disk free/total with unknown≠0, feedback queue/latency/artifact failures,
   live events, admin-only audit, release manifest verification state, update
   candidates/plans/rollback as copyable host commands (never applied by the
-  UI), storage usage, language, shortcut toggle, licence links.
+  UI), storage usage, language, shortcut toggle, license links.
 - **Usage mode and pause** (`src/agent/`): Settings has a Mode panel to switch
   between `NOVNC` (browser only) and `AGENT` (collaboration), enabled for human
   and admin roles and read-only for viewers. The state comes only from the
@@ -209,14 +211,13 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
 
 ## Compact layout, font size and responsive behavior
 
-The annotation editor is draw-first, using CleanShot's compact horizontal
-toolbar as an interaction reference. Tools sit in five groups: Select and pan;
+The annotation editor is draw-first, with a compact horizontal toolbar. Tools sit in five groups: Select and pan;
 Shapes and lines (rectangle, filled rectangle, ellipse, diamond, line, arrow,
 freehand); Text and steps; Emphasis and hiding (highlighter, spotlight, blur,
 pixelate, solid redact); and Crop. Arrow is selected initially. At 900 px and
 below the Shapes, Text and Emphasis groups fold into grouped overflow menus
 instead of opening a large side panel. Style controls follow the tool or the
-selection: colour, width, fill, text size, opacity, effect size, arrow style,
+selection: color, width, fill, text size, opacity, effect size, arrow style,
 text style and smoothing, each shown only where it changes the saved result.
 The browser rail is hidden while editing an image; a held human lease still
 produces the explicit release warning. No inspector or task form opens by
@@ -254,23 +255,16 @@ portal on `body`, stay inside the viewport and scroll internally. A native
 single-line text input keeps a long value inside the bounded input and scrolls
 it there by design, so not every editable value is shown in full.
 
-These layouts were checked in the running UI at widths 1600, 1280, 1024, 768,
-390 and 320 px. Settings and the feedback form were checked at all five font
-sizes in zh-TW and en-US, with no overflow or misaligned controls. The dock
-panels, diagnostics tabs, editor, share preview and drawing dialog were
-checked at the largest font size, and the editor in both languages. Those are
-the tested combinations, not a claim for every browser or device. At 1280×800
-and 14 px the remote canvas fills about 75% of the viewport, and a 16:9 source
-is letterboxed rather than cropped or distorted.
-
-The expanded toolbar and mode UI were checked on `local-toolbar-modes-18`
-(generation 15): 140 cases at 320, 390, 768, 900, 1024, 1280 and 1600 px, both
-languages, and 14/20 px fonts. Paused `AGENT` settings, workspace and editor,
-plus `NOVNC` settings and workspace, had no horizontal overflow or overlapping
-controls. All 14 grouped tools were selected at 320 px/20 px in both languages;
-each menu and selected tool's style controls fit. The open custom palette fit
-all seven widths in both languages at 20 px. Representative screenshots were
-visually inspected. Private measurements are in `mode18-rwd.json` (CA-14).
+These layouts were checked in the running UI at widths 320, 390, 768, 900, 1024,
+1280 and 1600 px in both languages. Settings and the feedback form were checked at
+all five font sizes with no overflow or misaligned controls. The dock panels,
+diagnostics tabs, editor, share preview, drawing dialog and custom palette were
+checked at the largest font size. Paused `AGENT` and `NOVNC` settings and
+workspace views had no horizontal overflow or overlapping controls, and all 14
+grouped tools fit at 320 px and 20 px. These are the tested combinations, not a
+claim for every browser or device. At 1280×800 and 14 px the remote canvas fills
+about 75% of the viewport, and a 16:9 source is letterboxed rather than cropped
+or distorted.
 
 ## Backend assumptions for mode and toolbar
 

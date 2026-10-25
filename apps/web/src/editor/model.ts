@@ -2,7 +2,7 @@
  * Annotation model and geometry. Pure functions only (no DOM) so the
  * coordinate contract can be unit-tested.
  *
- * Coordinate contract (SPEC 11.3): every geometry is normalized 0..1 with the
+ * Coordinate contract: every geometry is normalized 0..1 with the
  * origin at the top-left of the *actual image content*; pixel positions come
  * from `ImageSize` (the capture's real width/height). Rectangles satisfy
  * x+width <= 1 and y+height <= 1 exactly, after rounding to COORD_DECIMALS.

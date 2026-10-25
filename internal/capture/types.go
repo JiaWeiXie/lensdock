@@ -64,7 +64,7 @@ type Image struct {
 	ContentType string `json:"contentType"`
 }
 
-// Scale converts image pixels to the viewport's CSS pixels (SPEC §11.3):
+// Scale converts image pixels to the viewport's CSS pixels:
 // pixelsPerCssX = image width / viewport CSS width. It is not the DPR.
 type Scale struct {
 	PixelsPerCSSX float64 `json:"pixelsPerCssX"`

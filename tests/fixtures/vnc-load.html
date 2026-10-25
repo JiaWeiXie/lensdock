@@ -12,7 +12,7 @@
   <canvas id="c"></canvas>
   <script>
     // Continuously changing full-viewport content so x11vnc always has dirty tiles to encode.
-    // Used by SPIKE-02 (tests/e2e/vnc-cpu.sh); the animation itself costs the browser, never the VNC path.
+    // Used by tests/e2e/vnc-cpu.sh; the animation itself costs the browser, never the VNC path.
     const canvas = document.getElementById("c");
     const ctx = canvas.getContext("2d", { alpha: false });
     function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }

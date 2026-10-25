@@ -49,7 +49,7 @@ if [[ -n $(git status --porcelain --untracked-files=normal) ]]; then
 fi
 mkdir -p "$OUT/evidence" "$OUT/bin"
 if [[ $(uname -s) != Linux ]]; then
-  printf 'platform evidence must run on native Linux CI runners (current OS: %s)\n' \"$(uname -s)\" >&2
+  printf 'platform evidence must run on native Linux CI runners (current OS: %s)\n' "$(uname -s)" >&2
   exit 2
 fi
 HOST_ARCH=$(uname -m)

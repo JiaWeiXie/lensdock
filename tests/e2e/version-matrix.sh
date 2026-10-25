@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Record the version matrix every e2e run must be attributed to (docs/ACCEPTANCE.md header):
+# Record the version matrix every e2e run must be attributed to:
 # host OS/kernel/arch, Docker engine and security options, user-namespace sysctls, AppArmor,
 # image id/digest/base digest, package versions inside the image, Chromium version, Go and
 # agent-browser versions when present, and the exact source state of the test commit.

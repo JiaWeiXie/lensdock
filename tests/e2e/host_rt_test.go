@@ -15,7 +15,7 @@ import (
 	"github.com/JiaWeiXie/lensdock/tests/e2e/internal/harness"
 )
 
-// TestRT02 (SPIKE-01, RT-02): the non-root Chromium is sandboxed and the runtime
+// TestRT02: the non-root Chromium is sandboxed and the runtime
 // never fell back to --no-sandbox. Evidence is the readyz sandbox report, the
 // container process table and the text of chrome://sandbox read over CDP.
 func TestRT02(t *testing.T) {
@@ -120,7 +120,7 @@ func TestRT02(t *testing.T) {
 	release(t, api, g)
 }
 
-// TestRT03 (SPIKE-01, RT-03): closing the CLI bridge, the CDP client and the
+// TestRT03: closing the CLI bridge, the CDP client and the
 // lease must leave Chromium and its page state untouched: same browser process,
 // same runtime generation, same unsaved form input. The VNC half of RT-03 is
 // TestRT03Viewers in the sidecar.
