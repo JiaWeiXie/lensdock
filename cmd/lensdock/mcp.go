@@ -8,9 +8,10 @@ import (
 )
 
 // mcpUsageText is appended to the CLI usage text.
-const mcpUsageText = `  lensdock mcp serve --workspace W [--token-file F] [--api URL]
+const mcpUsageText = `  lensdock mcp serve (--workspace W [--token-file F] [--api URL] | --project PATH)
       MCP server on stdio (stdout carries only the protocol): feedback_list, feedback_get,
       feedback_image, feedback_ack, feedback_resolve; token as for "feedback"
+      --project PATH binds to that managed project's workspace and credential; it never starts the project
 `
 
 // mcpCommand dispatches "lensdock mcp ...".
@@ -23,14 +24,19 @@ func (c *cli) mcpCommand(ctx context.Context, args []string) error {
 // mcpServe runs the stdio MCP server. It is bound to one workspace and reads
 // the bearer token from a private file on every request; nothing but MCP
 // frames is written to stdout, diagnostics go to stderr via the error return.
+// With --project the connection is resolved once, before the client exists,
+// so a later change of any default cannot retarget a running server.
 func (c *cli) mcpServe(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("mcp serve")
 	ff := c.addFeedbackFlags(fs, true, false)
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
 	}
+	if err := c.useProject(ctx, ff); err != nil {
+		return err
+	}
 	if ff.workspace == "" {
-		return usageErrorf("--workspace is required")
+		return usageErrorf("--workspace or --project is required")
 	}
 	if err := delivery.ValidateID("workspace ID", ff.workspace); err != nil {
 		return usageErrorf("%v", err)

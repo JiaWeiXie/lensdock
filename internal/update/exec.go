@@ -20,12 +20,16 @@ import (
 // Cmd describes one external command. It is always executed from an argv; no
 // shell is involved and no argument is ever interpreted.
 type Cmd struct {
-	Name   string
-	Args   []string
-	Dir    string
-	Env    []string // appended to the process environment
-	Stdin  io.Reader
-	Stdout io.Writer
+	Name string
+	Args []string
+	Dir  string
+	Env  []string // appended to the process environment
+	// EnvExact uses only Env, allowing a managed Docker target to ignore caller overrides.
+	EnvExact bool
+	// ExtraFiles retain lifecycle locks in children if their worker is interrupted.
+	ExtraFiles []*os.File
+	Stdin      io.Reader
+	Stdout     io.Writer
 	// Stderr receives the command's standard error. When nil the last bytes
 	// are captured into ExitError.
 	Stderr io.Writer
@@ -78,9 +82,12 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 func (ExecRunner) Run(ctx context.Context, c Cmd) error {
 	cmd := exec.CommandContext(ctx, c.Name, c.Args...)
 	cmd.Dir = c.Dir
-	if len(c.Env) > 0 {
+	if c.EnvExact {
+		cmd.Env = c.Env
+	} else if len(c.Env) > 0 {
 		cmd.Env = append(os.Environ(), c.Env...)
 	}
+	cmd.ExtraFiles = c.ExtraFiles
 	cmd.Stdin = c.Stdin
 	cmd.Stdout = c.Stdout
 	var tail *tailBuffer

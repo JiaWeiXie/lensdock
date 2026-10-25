@@ -22,6 +22,46 @@ Token handling is the same for every command:
 - Lease files must be `0600`; the bridge refuses to start if group or others can read one.
 - Never print a token, lease file or session cookie to a log, chat or command line. The CLI does not interpret shell text found in feedback.
 
+## Project-scoped local Agents
+
+For projects authorized by a local host manager, use `--project` instead of supplying a workspace, API origin and token path separately. A human first runs `admin manager init` and `admin project authorize`; an Agent cannot create its own grant. `LENSDOCK_MANAGER_DIR` selects a custom manager directory and must match in the shell and MCP client environment.
+
+```bash
+unset LENSDOCK_API LENSDOCK_TOKEN_FILE
+PROJECT="$HOME/code/site-a"
+lensdock project up --project "$PROJECT" --wait 10m
+lensdock workspace watch --project "$PROJECT"
+# Run the watcher separately, then use the same explicit project:
+lensdock feedback list --project "$PROJECT"
+lensdock mcp serve --project "$PROJECT"
+```
+
+Each invocation resolves one exact authorized directory and pins its connection. The manager verifies container ownership, the reserved port, Runtime readiness and Gateway deployment identity before returning the Agent credential path. A symlink alias resolves to the same project. Worktrees have separate grants; parent-directory access does not authorize children. Missing, replaced, moved or revoked directories fail closed.
+
+Do not combine `--project` with `--api`, `--workspace`, token-file overrides or nonempty `LENSDOCK_API` / `LENSDOCK_TOKEN_FILE`. Lease commands also check that a supplied lease file belongs to this project's exact API origin and workspace. Project mode acquires only AGENT leases.
+
+Use an absolute project root in each MCP registration. For example, the server command and arguments can be:
+
+```json
+{
+  "type": "stdio",
+  "command": "/Users/alice/.local/bin/lensdock",
+  "args": ["mcp", "serve", "--project", "/Users/alice/code/site-a"]
+}
+```
+
+Name or scope the registration for that project rather than reusing one fixed-project server for unrelated work. The explicit URL/token examples below remain the standalone and remote-workspace workflow. A project-scoped MCP server still does not auto-start a deployment; run `project up` first. Do not pass the host manager's admin token or Docker socket to the Agent.
+
+Browser control uses the same project selection:
+
+```bash
+lensdock lease acquire --project "$PROJECT" --mode agent --output /private/path/new-lease.json
+lensdock cdp bridge --project "$PROJECT" --lease-file /private/path/new-lease.json
+lensdock lease release --project "$PROJECT" --lease-file /private/path/new-lease.json
+```
+
+When working on published feedback, acknowledge the image first and add `--feedback-id` to lease acquisition as described below. Releasing a lease leaves the page and its background work running. `project stop --project "$PROJECT" --discard-page-state` explicitly discards live page state, preserves persistent data and refuses an active lease. A timeout or cancellation of `project up` affects only that caller's wait, never an admitted worker or browser.
+
 ## Connect an MCP client
 
 Every client below registers the same thing: a stdio server running
@@ -32,7 +72,7 @@ lensdock mcp serve --workspace default --api http://127.0.0.1:18081 --token-file
 
 The server is bound to one workspace, writes only MCP frames to stdout and sends errors to stderr. It offers the five feedback tools in [MCP tools](#mcp-tools) and the `handle_feedback` prompt. It does not open a browser, acquire a lease or run `workspace watch`. Browser control is a separate step ([Browser control](#browser-control)), and the full onboarding text is the Settings prompt ([Initial setup for an Agent](#initial-setup-for-an-agent)).
 
-Pass `--workspace`, `--api` and `--token-file` explicitly. A client started from a GUI or service manager may not see your shell's `PATH`, `$LENSDOCK_API` or `$LENSDOCK_TOKEN_FILE`, and Codex starts stdio servers with a reduced environment (its `env_vars` setting lists extra variable names to forward). Write absolute paths in config files and do not rely on `~` or `$HOME` being expanded there.
+For standalone or remote workspaces, pass `--workspace`, `--api` and `--token-file` explicitly. For managed local projects, pass the absolute `--project` path instead. A client started from a GUI or service manager may not see your shell's `PATH`, `$LENSDOCK_API` or `$LENSDOCK_TOKEN_FILE`, and Codex starts stdio servers with a reduced environment (its `env_vars` setting lists extra variable names to forward). Write absolute paths in config files and do not rely on `~` or `$HOME` being expanded there.
 
 ### Find absolute paths
 

@@ -24,8 +24,6 @@ type Identity struct {
 }
 
 const (
-	sessionCookie   = "lensdock-session"
-	demoOffCookie   = "lensdock-demo-off"
 	demoActorID     = "demo-human"
 	sessionTTL      = 8 * time.Hour
 	maxSessions     = 1024
@@ -41,14 +39,19 @@ type session struct {
 	Demo    bool
 }
 
+// identities holds sessions. sessionCookie and demoOffCookie are namespaced by
+// origin and deployment ID so same-host Gateways on other ports do not clobber
+// each other's cookies.
 type identities struct {
-	mu       sync.Mutex
-	users    []Identity
-	sessions map[string]session
-	origin   string
-	host     string
-	secure   bool
-	demo     *Identity
+	mu            sync.Mutex
+	users         []Identity
+	sessions      map[string]session
+	origin        string
+	host          string
+	secure        bool
+	sessionCookie string
+	demoOffCookie string
+	demo          *Identity
 }
 
 func randomToken() (string, error) {
@@ -60,7 +63,22 @@ func randomToken() (string, error) {
 }
 func digest(s string) string { b := sha256.Sum256([]byte(s)); return hex.EncodeToString(b[:]) }
 func equal(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
-func newIdentities(users []Identity, origin string) (*identities, error) {
+
+// cookieNames derives the session and demo-signout cookie names from the exact
+// configured origin and deployment ID. Cookies are shared across ports of one
+// host, so Gateways on the same hostname must not use the same names. Hashing
+// keeps the names stable, valid cookie tokens and free of configuration text.
+// An empty deploymentID yields an origin-only namespace.
+func cookieNames(origin, deploymentID string) (sessionName, demoOffName string) {
+	sum := sha256.Sum256([]byte("lensdock-cookie-namespace-v1\x00" + origin + "\x00" + deploymentID))
+	ns := hex.EncodeToString(sum[:16])
+	return "lensdock-session-" + ns, "lensdock-demo-off-" + ns
+}
+
+func newIdentities(users []Identity, origin, deploymentID string) (*identities, error) {
+	if err := ValidateDeploymentID(deploymentID); err != nil {
+		return nil, err
+	}
 	u, err := url.Parse(origin)
 	if err != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 		return nil, errors.New("gateway: origin must be an exact HTTP(S) origin")
@@ -85,7 +103,8 @@ func newIdentities(users []Identity, origin string) (*identities, error) {
 	if len(users) == 0 {
 		return nil, errors.New("gateway: at least one identity required")
 	}
-	return &identities{users: users, sessions: make(map[string]session), origin: origin, secure: u.Scheme == "https"}, nil
+	sessionCookie, demoOffCookie := cookieNames(origin, deploymentID)
+	return &identities{users: users, sessions: make(map[string]session), origin: origin, secure: u.Scheme == "https", sessionCookie: sessionCookie, demoOffCookie: demoOffCookie}, nil
 }
 func (a *identities) bearer(token string) (Identity, bool) {
 	h := digest(token)
@@ -121,7 +140,7 @@ func (a *identities) authenticate(r *http.Request) (Identity, bool) {
 	return s.Actor, true
 }
 func (a *identities) lookup(r *http.Request) (session, bool) {
-	c, err := r.Cookie(sessionCookie)
+	c, err := r.Cookie(a.sessionCookie)
 	if err != nil {
 		return session{}, false
 	}
@@ -252,7 +271,7 @@ func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 		if a.demo != nil && a.demoFetch(r) {
 			// A demo logout leaves a marker so a reload does not silently re-enter;
 			// only the explicit POST above does, and it clears the marker.
-			if _, err := r.Cookie(demoOffCookie); err == nil {
+			if _, err := r.Cookie(a.demoOffCookie); err == nil {
 				fail(w, 401, "DEMO_SIGNED_OUT", "demo sign-in is available")
 				return
 			}
@@ -266,13 +285,13 @@ func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 			fail(w, 403, "FORBIDDEN", "valid session and CSRF required")
 			return
 		}
-		c, _ := r.Cookie(sessionCookie)
+		c, _ := r.Cookie(a.sessionCookie)
 		a.mu.Lock()
 		delete(a.sessions, digest(c.Value))
 		a.mu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+		http.SetCookie(w, &http.Cookie{Name: a.sessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 		if s.Demo {
-			http.SetCookie(w, &http.Cookie{Name: demoOffCookie, Value: "1", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
+			http.SetCookie(w, &http.Cookie{Name: a.demoOffCookie, Value: "1", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
 		}
 		w.WriteHeader(204)
 	default:
@@ -324,14 +343,14 @@ func (a *identities) issue(w http.ResponseWriter, actor Identity, demo bool) {
 	}
 	a.sessions[digest(token)] = s
 	a.mu.Unlock()
-	cookie := &http.Cookie{Name: sessionCookie, Value: token, Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode}
+	cookie := &http.Cookie{Name: a.sessionCookie, Value: token, Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode}
 	if !demo {
 		cookie.MaxAge = int(sessionTTL / time.Second)
 	}
 	http.SetCookie(w, cookie)
 	reply := map[string]any{"actor": actor, "csrfToken": csrf}
 	if demo {
-		http.SetCookie(w, &http.Cookie{Name: demoOffCookie, Value: "", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+		http.SetCookie(w, &http.Cookie{Name: a.demoOffCookie, Value: "", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 		reply["demo"] = true
 	}
 	jsonReply(w, 200, reply)

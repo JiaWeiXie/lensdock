@@ -15,11 +15,7 @@ import (
 	"github.com/JiaWeiXie/lensdock/internal/auth"
 	"github.com/JiaWeiXie/lensdock/internal/clipboard"
 	"github.com/JiaWeiXie/lensdock/internal/lease"
-)
-
-const (
-	operatorTokenFile = "operator-token"
-	runtimeEnvFile    = "runtime.env"
+	"github.com/JiaWeiXie/lensdock/internal/product"
 )
 
 func (c *cli) adminInit(args []string) error {
@@ -31,11 +27,10 @@ func (c *cli) adminInit(args []string) error {
 	if *dir == "" {
 		return usageErrorf("--state-dir is required")
 	}
-	if err := os.MkdirAll(*dir, 0o700); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
-	}
-	tokenPath := filepath.Join(*dir, operatorTokenFile)
-	envPath := filepath.Join(*dir, runtimeEnvFile)
+	tokenPath := filepath.Join(*dir, product.OperatorTokenFile)
+	envPath := filepath.Join(*dir, product.RuntimeEnvFile)
+	// Explicit initialization never adopts credentials; product-init reuses
+	// them through product.EnsureOperatorCredentials directly.
 	for _, p := range []string{tokenPath, envPath} {
 		if _, err := os.Lstat(p); err == nil {
 			return fmt.Errorf("%s already exists; refusing to overwrite", p)
@@ -43,17 +38,8 @@ func (c *cli) adminInit(args []string) error {
 			return fmt.Errorf("inspect %s: %w", p, err)
 		}
 	}
-	tok, err := auth.NewSecret("ldo_")
-	if err != nil {
-		return fmt.Errorf("generate operator token: %w", err)
-	}
-	if err := auth.WritePrivateFile(tokenPath, []byte(tok.Reveal()+"\n")); err != nil {
-		return fmt.Errorf("write operator token: %w", err)
-	}
-	envLine := "LENSDOCK_OPERATOR_TOKEN_SHA256=" + auth.DigestOf(tok.Reveal()).Hex() + "\n"
-	if err := auth.WritePrivateFile(envPath, []byte(envLine)); err != nil {
-		_ = os.Remove(tokenPath) // do not leave a token without its runtime.env
-		return fmt.Errorf("write runtime.env: %w", err)
+	if _, err := product.EnsureOperatorCredentials(*dir); err != nil {
+		return err
 	}
 	fmt.Fprintf(c.stdout, "wrote %s and %s (mode 0600)\n", tokenPath, envPath)
 	return nil
@@ -86,7 +72,7 @@ func (c *cli) writeJSONLine(v any) error {
 	return err
 }
 
-func (c *cli) leaseAcquire(args []string) error {
+func (c *cli) leaseAcquire(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("lease acquire")
 	mode := fs.String("mode", "", "agent or human")
 	ttl := fs.Int("ttl", 30, "lease TTL in seconds (10-120)")
@@ -95,13 +81,21 @@ func (c *cli) leaseAcquire(args []string) error {
 	feedbackID := fs.String("feedback-id", "", "acknowledged feedback to begin working on (Gateway AGENT lease only)")
 	feedbackRevision := fs.Int("feedback-revision", 0, "feedback revision to claim; required when several revisions are active")
 	api := c.addAPIFlag(fs)
-	pos, err := parse(fs, args, 1, 1)
+	pf := addProjectFlag(fs)
+	pos, err := parse(fs, args, 0, 1)
+	if err != nil {
+		return err
+	}
+	ws, err := projectWorkspaceArg(pf, pos)
 	if err != nil {
 		return err
 	}
 	m, err := parseMode(*mode)
 	if err != nil {
 		return err
+	}
+	if pf.set && m != lease.ModeAgent {
+		return usageErrorf("--project acquires with the project's Agent identity; only --mode agent is available")
 	}
 	if *feedbackRevision < 0 || (*feedbackRevision != 0 && *feedbackID == "") {
 		return usageErrorf("--feedback-revision must be positive and requires --feedback-id")
@@ -125,26 +119,37 @@ func (c *cli) leaseAcquire(args []string) error {
 	if fi, err := os.Stat(filepath.Dir(*output)); err != nil || !fi.IsDir() {
 		return usageErrorf("--output directory %s does not exist", filepath.Dir(*output))
 	}
-	ws := pos[0]
-	client, err := c.newClient(api.value)
-	if err != nil {
-		return err
-	}
-	op, err := readTokenFile(*tokenFile)
-	if err != nil {
-		return err
-	}
 	// Fail before acquiring if the lease file cannot be created.
 	if _, err := os.Lstat(*output); err == nil {
 		return fmt.Errorf("%s already exists; refusing to overwrite", *output)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect %s: %w", *output, err)
 	}
+	conn, err := c.resolveProjectFlag(ctx, fs, pf)
+	if err != nil {
+		return err
+	}
+	base := api.value
+	if conn != nil {
+		base, ws = conn.API, conn.Workspace
+	}
+	client, err := c.newClient(base)
+	if err != nil {
+		return err
+	}
+	var op auth.Secret
+	if conn != nil {
+		op, err = readIdentityTokenFile(conn.TokenFile)
+	} else {
+		op, err = readTokenFile(*tokenFile)
+	}
+	if err != nil {
+		return err
+	}
 	key, err := idempotencyKey()
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
 	grant, err := client.AcquireLease(ctx, ws, op, m, time.Duration(*ttl)*time.Second, key, *feedbackID, *feedbackRevision)
 	if err != nil {
 		return err
@@ -158,8 +163,9 @@ func (c *cli) leaseAcquire(args []string) error {
 		CapabilityToken: token,
 	})
 	if werr != nil {
-		// The token would be lost: do not strand the lease.
-		_ = client.ReleaseLease(ctx, ws, grant.Lease.LeaseID, token)
+		// The token would be lost: do not strand the lease, even when the
+		// command was interrupted meanwhile.
+		_ = client.ReleaseLease(context.WithoutCancel(ctx), ws, grant.Lease.LeaseID, token)
 		return fmt.Errorf("write lease file: %w", werr)
 	}
 	return c.writeJSONLine(map[string]any{
@@ -171,10 +177,11 @@ func (c *cli) leaseAcquire(args []string) error {
 	})
 }
 
-func (c *cli) leaseRefresh(args []string) error {
+func (c *cli) leaseRefresh(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("lease refresh")
 	input := fs.String("lease-file", "", "existing private lease file")
 	output := fs.String("output", "", "new private lease file; existing files are refused")
+	pf := addProjectFlag(fs)
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
 	}
@@ -185,11 +192,14 @@ func (c *cli) leaseRefresh(args []string) error {
 	if err != nil {
 		return leaseErrorf("lease file: %v", err)
 	}
+	if err := c.checkLeaseFileProject(ctx, fs, pf, lf); err != nil {
+		return err
+	}
 	client, err := c.newClient(lf.APIBaseURL)
 	if err != nil {
 		return err
 	}
-	current, err := client.CurrentLease(context.Background(), lf.WorkspaceID, lf.CapabilityToken)
+	current, err := client.CurrentLease(ctx, lf.WorkspaceID, lf.CapabilityToken)
 	if err != nil {
 		return err
 	}
@@ -203,18 +213,18 @@ func (c *cli) leaseRefresh(args []string) error {
 	return c.writeJSONLine(current)
 }
 
-func (c *cli) leaseRelease(args []string) error {
+func (c *cli) leaseRelease(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("lease release")
 	leaseFile := fs.String("lease-file", "", "lease file (releases with the lease's own token)")
 	leaseID := fs.String("lease-id", "", "lease ID (operator release)")
 	tokenFile := fs.String("operator-token-file", "", "file holding the operator token")
 	api := c.addAPIFlag(fs)
+	pf := addProjectFlag(fs)
 	// The workspace is positional only in operator mode, so count it first.
 	pos, err := parse(fs, args, 0, 1)
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
 
 	if *leaseFile != "" {
 		if len(pos) != 0 || *leaseID != "" || *tokenFile != "" {
@@ -223,6 +233,9 @@ func (c *cli) leaseRelease(args []string) error {
 		lf, err := apiclient.ReadLeaseFile(*leaseFile)
 		if err != nil {
 			return leaseErrorf("lease file: %v", err)
+		}
+		if err := c.checkLeaseFileProject(ctx, fs, pf, lf); err != nil {
+			return err
 		}
 		base := lf.APIBaseURL
 		if api.set {
@@ -235,46 +248,82 @@ func (c *cli) leaseRelease(args []string) error {
 		return client.ReleaseLease(ctx, lf.WorkspaceID, lf.Lease.LeaseID, lf.CapabilityToken)
 	}
 
-	if len(pos) != 1 || *leaseID == "" {
-		return usageErrorf("lease release needs --lease-file, or <ws> with --lease-id and --operator-token-file")
+	if *leaseID == "" {
+		return usageErrorf("lease release needs --lease-file, or (<ws> or --project) with --lease-id and its credential")
 	}
-	client, err := c.newClient(api.value)
+	ws, err := projectWorkspaceArg(pf, pos)
 	if err != nil {
 		return err
 	}
-	op, err := readTokenFile(*tokenFile)
+	conn, err := c.resolveProjectFlag(ctx, fs, pf)
 	if err != nil {
 		return err
 	}
-	return client.ReleaseLease(ctx, pos[0], *leaseID, op)
+	base := api.value
+	if conn != nil {
+		base, ws = conn.API, conn.Workspace
+	}
+	client, err := c.newClient(base)
+	if err != nil {
+		return err
+	}
+	var op auth.Secret
+	if conn != nil {
+		op, err = readIdentityTokenFile(conn.TokenFile)
+	} else {
+		op, err = readTokenFile(*tokenFile)
+	}
+	if err != nil {
+		return err
+	}
+	return client.ReleaseLease(ctx, ws, *leaseID, op)
 }
 
-func (c *cli) workspaceStatus(args []string) error {
+func (c *cli) workspaceStatus(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("workspace status")
 	tokenFile := fs.String("operator-token-file", "", "file holding the operator token")
 	api := c.addAPIFlag(fs)
-	pos, err := parse(fs, args, 1, 1)
+	pf := addProjectFlag(fs)
+	pos, err := parse(fs, args, 0, 1)
 	if err != nil {
 		return err
 	}
-	client, err := c.newClient(api.value)
+	ws, err := projectWorkspaceArg(pf, pos)
 	if err != nil {
 		return err
 	}
-	op, err := readTokenFile(*tokenFile)
+	conn, err := c.resolveProjectFlag(ctx, fs, pf)
 	if err != nil {
 		return err
 	}
-	ws, err := client.Workspace(context.Background(), pos[0], op)
+	base := api.value
+	if conn != nil {
+		base, ws = conn.API, conn.Workspace
+	}
+	client, err := c.newClient(base)
 	if err != nil {
 		return err
 	}
-	return c.writeJSONLine(ws)
+	var op auth.Secret
+	if conn != nil {
+		op, err = readIdentityTokenFile(conn.TokenFile)
+	} else {
+		op, err = readTokenFile(*tokenFile)
+	}
+	if err != nil {
+		return err
+	}
+	state, err := client.Workspace(ctx, ws, op)
+	if err != nil {
+		return err
+	}
+	return c.writeJSONLine(state)
 }
 
-func (c *cli) clipboardSet(args []string) error {
+func (c *cli) clipboardSet(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("clipboard set")
 	leaseFile := fs.String("lease-file", "", "HUMAN lease file")
+	pf := addProjectFlag(fs)
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
 	}
@@ -292,9 +341,12 @@ func (c *cli) clipboardSet(args []string) error {
 	if len(text) > clipboard.DefaultMaxBytes {
 		return fmt.Errorf("clipboard text exceeds %d bytes", clipboard.DefaultMaxBytes)
 	}
+	if err := c.checkLeaseFileProject(ctx, fs, pf, lf); err != nil {
+		return err
+	}
 	client, err := c.newClient(lf.APIBaseURL)
 	if err != nil {
 		return err
 	}
-	return client.SetClipboard(context.Background(), lf.WorkspaceID, lf.CapabilityToken, text, lf.Lease.Epoch, lf.Lease.RuntimeGeneration)
+	return client.SetClipboard(ctx, lf.WorkspaceID, lf.CapabilityToken, text, lf.Lease.Epoch, lf.Lease.RuntimeGeneration)
 }

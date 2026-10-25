@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/JiaWeiXie/lensdock/internal/hostmanager"
+	"github.com/JiaWeiXie/lensdock/internal/product"
 	"github.com/JiaWeiXie/lensdock/internal/update"
 )
 
@@ -27,6 +29,9 @@ const updateUsageText = `  lensdock update init [--deployment FILE] [--state-dir
   lensdock update checkpoints list|verify|prune
   lensdock update branches list | delete VOLUME [--yes]
   lensdock update compose [--deployment FILE] -- up|down|stop|start|restart|ps|logs|config [ARGS...]
+      a deployment owned by a host manager runs mutations (apply, approve, abort, rollback,
+      checkpoints prune, branches delete) through that manager; compose allows only ps|logs|config;
+      check and plan default --workspace to the project's own workspace
 `
 
 const (
@@ -78,7 +83,15 @@ func (f deploymentFlags) path() (string, error) {
 	return abs, nil
 }
 
-func (c *cli) engine(fs *flag.FlagSet, args []string, min, max int) (*update.Engine, []string, error) {
+// updateTarget is the deployment an update command operates on. owner is nil
+// for a standalone deployment. For a managed one eng is read-only on the
+// manager's fixed Docker engine and mutations go through owner.
+type updateTarget struct {
+	eng   *update.Engine
+	owner *managedOwner
+}
+
+func (c *cli) target(fs *flag.FlagSet, args []string, min, max int) (*updateTarget, []string, error) {
 	df := c.addDeploymentFlags(fs)
 	pos, err := parse(fs, args, min, max)
 	if err != nil {
@@ -92,7 +105,27 @@ func (c *cli) engine(fs *flag.FlagSet, args []string, min, max int) (*update.Eng
 	if err != nil {
 		return nil, nil, err
 	}
-	return update.NewEngine(dep, c.deploymentDocker(dep), c.stderr), pos, nil
+	owner, err := resolveManagedOwner(dep)
+	if err != nil {
+		return nil, nil, err
+	}
+	if owner != nil {
+		return &updateTarget{eng: owner.engine(c), owner: owner}, pos, nil
+	}
+	return &updateTarget{eng: update.NewEngine(dep, c.deploymentDocker(dep), c.stderr)}, pos, nil
+}
+
+// workspace is the workspace check and plan act on: value, which is the
+// --workspace flag. A managed deployment has one workspace, named after its
+// project, so when the flag is absent that one is used. An explicit value is
+// never replaced, and a standalone deployment keeps the flag's default.
+func (t *updateTarget) workspace(fs *flag.FlagSet, value string) string {
+	explicit := false
+	fs.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "workspace" })
+	if explicit || t.owner == nil {
+		return value
+	}
+	return t.owner.projectID
 }
 
 func (c *cli) updateInit(ctx context.Context, args []string) error {
@@ -113,6 +146,9 @@ func (c *cli) updateInit(ctx context.Context, args []string) error {
 		dep, err = update.LoadDeployment(depFile)
 		if err != nil {
 			return err
+		}
+		if dep.ManagedBy != nil {
+			return errManagedInit(dep)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -166,12 +202,12 @@ func (c *cli) updateInit(ctx context.Context, args []string) error {
 
 func (c *cli) updateCheck(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("update check")
-	workspace := fs.String("workspace", "default", "workspace id")
-	eng, _, err := c.engine(fs, args, 0, 0)
+	workspace := fs.String("workspace", "default", "workspace id (a managed deployment uses its project's workspace unless this is given)")
+	t, _, err := c.target(fs, args, 0, 0)
 	if err != nil {
 		return err
 	}
-	status, err := eng.PublishCandidates(ctx, *workspace)
+	status, err := t.eng.PublishCandidates(ctx, t.workspace(fs, *workspace))
 	if err != nil {
 		return err
 	}
@@ -181,18 +217,18 @@ func (c *cli) updateCheck(ctx context.Context, args []string) error {
 func (c *cli) updatePlan(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("update plan")
 	release := fs.String("release", "", "release id or release directory")
-	workspace := fs.String("workspace", "default", "workspace id")
+	workspace := fs.String("workspace", "default", "workspace id (a managed deployment uses its project's workspace unless this is given)")
 	output := fs.String("output", "", "applicable plan file (default <state>/plans/<id>.json)")
 	allowDev := fs.Bool("allow-dev", false, "admit a dev-channel release")
 	allowDown := fs.Bool("allow-downgrade", false, "admit Chromium/schema downgrade (still uses a paired checkpoint)")
-	eng, _, err := c.engine(fs, args, 0, 0)
+	t, _, err := c.target(fs, args, 0, 0)
 	if err != nil {
 		return err
 	}
 	if *release == "" {
 		return usageErrorf("update plan: --release is required")
 	}
-	plan, err := eng.BuildPlan(ctx, update.PlanRequest{Release: *release, Workspace: *workspace, AllowDev: *allowDev, AllowDowngrade: *allowDown})
+	plan, err := t.eng.BuildPlan(ctx, update.PlanRequest{Release: *release, Workspace: t.workspace(fs, *workspace), AllowDev: *allowDev, AllowDowngrade: *allowDown})
 	if err != nil {
 		return err
 	}
@@ -202,12 +238,12 @@ func (c *cli) updatePlan(ctx context.Context, args []string) error {
 	if len(plan.Blockers) > 0 {
 		return fmt.Errorf("plan has %d blocker(s); no applicable plan file was written", len(plan.Blockers))
 	}
-	path, err := eng.SavePlan(plan, *output)
+	path, err := t.eng.SavePlan(plan, *output)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(c.stderr, "applicable plan: %s\n", path)
-	if err := eng.PublishStatus(ctx); err != nil {
+	if err := t.eng.PublishStatus(ctx); err != nil {
 		fmt.Fprintf(c.stderr, "warning: publish status: %v\n", err)
 	}
 	return nil
@@ -221,7 +257,7 @@ func (c *cli) updateApply(ctx context.Context, args []string) error {
 	revoke := fs.Bool("revoke-leases", false, "revoke a lease that does not drain before the timeout")
 	crash := fs.Bool("accept-crash-snapshot", false, "continue with a crash snapshot when clean stop checks fail")
 	dry := fs.Bool("dry-run", false, "re-verify the plan and print the steps without changing anything")
-	eng, _, err := c.engine(fs, args, 0, 0)
+	t, _, err := c.target(fs, args, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -238,6 +274,18 @@ func (c *cli) updateApply(ctx context.Context, args []string) error {
 			return update.ErrNotConfirmed
 		}
 	}
+	if t.owner != nil {
+		// The switch cannot be asked from the worker: without --approve-switch
+		// the update stops awaiting approval and is finished with approve/abort.
+		planFile, err := filepath.Abs(*plan)
+		if err != nil {
+			return err
+		}
+		return c.managedUpdate(ctx, t.owner, hostmanager.UpdateAction{
+			Kind: "apply", PlanFile: planFile, Confirmed: confirmed, DryRun: *dry, ApproveSwitch: *approve,
+			RevokeLeases: *revoke, AcceptCrashSnapshot: *crash,
+		})
+	}
 	var switchApproval func(string) (bool, error)
 	if !*approve && !*dry {
 		switchApproval = func(summary string) (bool, error) {
@@ -245,7 +293,7 @@ func (c *cli) updateApply(ctx context.Context, args []string) error {
 			return c.confirm("Approve the switch to the verified candidate?", false)
 		}
 	}
-	res, err := eng.Apply(ctx, update.ApplyOptions{
+	res, err := t.eng.Apply(ctx, update.ApplyOptions{
 		PlanFile: *plan, DryRun: *dry, Confirmed: confirmed, ApproveSwitch: *approve,
 		SwitchApproval: switchApproval, RevokeLeases: *revoke, AcceptCrashSnapshot: *crash,
 	})
@@ -262,7 +310,7 @@ func (c *cli) updateApprove(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("update approve")
 	id := fs.String("update", "", "update id")
 	yes := fs.Bool("yes", false, "confirm the switch without a prompt")
-	eng, _, err := c.engine(fs, args, 0, 0)
+	t, _, err := c.target(fs, args, 0, 0)
 	if err != nil {
 		return err
 	}
@@ -279,7 +327,10 @@ func (c *cli) updateApprove(ctx context.Context, args []string) error {
 			return update.ErrNotConfirmed
 		}
 	}
-	res, err := eng.Approve(ctx, update.ApproveOptions{UpdateID: *id, Confirmed: confirmed})
+	if t.owner != nil {
+		return c.managedUpdate(ctx, t.owner, hostmanager.UpdateAction{Kind: "approve", UpdateID: *id, Confirmed: confirmed})
+	}
+	res, err := t.eng.Approve(ctx, update.ApproveOptions{UpdateID: *id, Confirmed: confirmed})
 	if res != nil {
 		_ = c.writeJSONLine(res)
 	}
@@ -290,14 +341,17 @@ func (c *cli) updateAbort(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("update abort")
 	id := fs.String("update", "", "update id")
 	keep := fs.Bool("keep-candidate", false, "keep candidate volumes for diagnosis")
-	eng, _, err := c.engine(fs, args, 0, 0)
+	t, _, err := c.target(fs, args, 0, 0)
 	if err != nil {
 		return err
 	}
 	if *id == "" {
 		return usageErrorf("update abort: --update is required")
 	}
-	res, err := eng.Abort(ctx, update.AbortOptions{UpdateID: *id, KeepCandidate: *keep})
+	if t.owner != nil {
+		return c.managedUpdate(ctx, t.owner, hostmanager.UpdateAction{Kind: "abort", UpdateID: *id, KeepCandidate: *keep})
+	}
+	res, err := t.eng.Abort(ctx, update.AbortOptions{UpdateID: *id, KeepCandidate: *keep})
 	if res != nil {
 		_ = c.writeJSONLine(res)
 	}
@@ -311,12 +365,28 @@ func (c *cli) updateRollback(ctx context.Context, args []string) error {
 	revoke := fs.Bool("revoke-leases", false, "revoke a lease that does not drain")
 	allowCrash := fs.Bool("allow-crash-checkpoint", false, "admit a checkpoint marked crash")
 	dry := fs.Bool("dry-run", false, "verify and show the rollback effect without changing anything")
-	eng, _, err := c.engine(fs, args, 0, 0)
+	t, _, err := c.target(fs, args, 0, 0)
 	if err != nil {
 		return err
 	}
 	if *checkpoint == "" {
 		return usageErrorf("update rollback: --checkpoint is required")
+	}
+	if t.owner != nil {
+		confirmed := *yes || *dry
+		if !confirmed {
+			confirmed, err = c.confirm("Roll back managed deployment to checkpoint "+*checkpoint+"? Changes made after the checkpoint are lost (use --dry-run to verify first).", false)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
+				return update.ErrNotConfirmed
+			}
+		}
+		return c.managedUpdate(ctx, t.owner, hostmanager.UpdateAction{
+			Kind: "rollback", CheckpointID: *checkpoint, Confirmed: true, DryRun: *dry,
+			RevokeLeases: *revoke, AllowCrashCheckpoint: *allowCrash,
+		})
 	}
 	var confirm func(string) (bool, error)
 	if !*yes && !*dry {
@@ -325,7 +395,7 @@ func (c *cli) updateRollback(ctx context.Context, args []string) error {
 			return c.confirm("Proceed with this paired rollback?", false)
 		}
 	}
-	res, err := eng.Rollback(ctx, update.RollbackOptions{
+	res, err := t.eng.Rollback(ctx, update.RollbackOptions{
 		CheckpointID: *checkpoint, DryRun: *dry, Confirmed: *yes || *dry,
 		Confirm: confirm, RevokeLeases: *revoke, AllowCrashCheckpoint: *allowCrash,
 	})
@@ -341,16 +411,19 @@ func (c *cli) updateRollback(ctx context.Context, args []string) error {
 func (c *cli) updateStatus(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("update status")
 	publish := fs.Bool("publish", false, "atomically write the sanitized publicStatusFile")
-	eng, _, err := c.engine(fs, args, 0, 0)
+	t, _, err := c.target(fs, args, 0, 0)
 	if err != nil {
 		return err
 	}
-	status, err := eng.Status(ctx)
+	if *publish && t.owner != nil {
+		return errors.New("update status --publish is refused: the host manager publishes the status of a managed deployment")
+	}
+	status, err := t.eng.Status(ctx)
 	if err != nil {
 		return err
 	}
 	if *publish {
-		if err := eng.PublishStatus(ctx); err != nil {
+		if err := t.eng.PublishStatus(ctx); err != nil {
 			return err
 		}
 	}
@@ -363,7 +436,7 @@ func (c *cli) updateCheckpoints(ctx context.Context, args []string) error {
 	}
 	sub, rest := args[0], args[1:]
 	fs := c.newFlagSet("update checkpoints " + sub)
-	eng, pos, err := c.engine(fs, rest, 0, 1)
+	t, pos, err := c.target(fs, rest, 0, 1)
 	if err != nil {
 		return err
 	}
@@ -372,7 +445,7 @@ func (c *cli) updateCheckpoints(ctx context.Context, args []string) error {
 		if len(pos) != 0 {
 			return usageErrorf("update checkpoints list: no positional arguments")
 		}
-		status, err := eng.Status(ctx)
+		status, err := t.eng.Status(ctx)
 		if err != nil {
 			return err
 		}
@@ -381,7 +454,10 @@ func (c *cli) updateCheckpoints(ctx context.Context, args []string) error {
 		if len(pos) != 1 {
 			return usageErrorf("update checkpoints verify: checkpoint id is required")
 		}
-		cp, err := eng.VerifyCheckpoint(pos[0])
+		if t.owner != nil {
+			return c.managedUpdate(ctx, t.owner, hostmanager.UpdateAction{Kind: "verify", CheckpointID: pos[0]})
+		}
+		cp, err := t.eng.VerifyCheckpoint(pos[0])
 		if err != nil {
 			return err
 		}
@@ -390,7 +466,10 @@ func (c *cli) updateCheckpoints(ctx context.Context, args []string) error {
 		if len(pos) != 0 {
 			return usageErrorf("update checkpoints prune: no positional arguments")
 		}
-		removed, err := eng.PruneCheckpoints()
+		if t.owner != nil {
+			return c.managedUpdate(ctx, t.owner, hostmanager.UpdateAction{Kind: "prune"})
+		}
+		removed, err := t.eng.PruneCheckpoints()
 		if err != nil {
 			return err
 		}
@@ -407,7 +486,7 @@ func (c *cli) updateBranches(ctx context.Context, args []string) error {
 	sub, rest := args[0], args[1:]
 	fs := c.newFlagSet("update branches " + sub)
 	yes := fs.Bool("yes", false, "confirm deletion without a prompt")
-	eng, pos, err := c.engine(fs, rest, 0, 1)
+	t, pos, err := c.target(fs, rest, 0, 1)
 	if err != nil {
 		return err
 	}
@@ -416,7 +495,7 @@ func (c *cli) updateBranches(ctx context.Context, args []string) error {
 		if len(pos) != 0 {
 			return usageErrorf("update branches list: no positional arguments")
 		}
-		branches, err := eng.Branches(ctx)
+		branches, err := t.eng.Branches(ctx)
 		if err != nil {
 			return err
 		}
@@ -435,7 +514,10 @@ func (c *cli) updateBranches(ctx context.Context, args []string) error {
 		if !confirmed {
 			return update.ErrNotConfirmed
 		}
-		return eng.DeleteBranch(ctx, pos[0])
+		if t.owner != nil {
+			return c.managedUpdate(ctx, t.owner, hostmanager.UpdateAction{Kind: "delete", Volume: pos[0], Confirmed: true})
+		}
+		return t.eng.DeleteBranch(ctx, pos[0])
 	default:
 		return usageErrorf("update branches: unknown subcommand %q", sub)
 	}
@@ -459,6 +541,13 @@ func (c *cli) updateCompose(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	owner, err := resolveManagedOwner(dep)
+	if err != nil {
+		return err
+	}
+	if owner != nil {
+		return c.managedCompose(ctx, owner, pos)
+	}
 	eng := update.NewEngine(dep, c.deploymentDocker(dep), c.stderr)
 	name, argv, err := eng.ComposeCommand(pos)
 	if err != nil {
@@ -466,7 +555,7 @@ func (c *cli) updateCompose(ctx context.Context, args []string) error {
 	}
 	cmd := exec.CommandContext(ctx, name, argv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = c.stdin, c.stdout, c.stderr
-	if env := composeEnv(dep); len(env) > 0 {
+	if env := product.ComposeEnv(dep); len(env) > 0 {
 		// The deployment's recorded variables win over the caller's environment.
 		cmd.Env = append(os.Environ(), env...)
 	}

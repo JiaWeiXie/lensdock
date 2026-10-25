@@ -13,7 +13,7 @@ const demoOrigin = "http://127.0.0.1:18081"
 
 func demoIdentities(t *testing.T, enable bool) *identities {
 	t.Helper()
-	a, err := newIdentities([]Identity{{ID: "human", Role: "human", WorkspaceID: "alpha", TokenSHA256: digest("tok")}}, demoOrigin)
+	a, err := newIdentities([]Identity{{ID: "human", Role: "human", WorkspaceID: "alpha", TokenSHA256: digest("tok")}}, demoOrigin, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,10 +54,10 @@ func cookieNamed(w *httptest.ResponseRecorder, name string) *http.Cookie {
 
 func TestDemoOffByDefaultStillRequiresToken(t *testing.T) {
 	a := demoIdentities(t, false)
-	if w := serve(a, browserFetch("GET", "")); w.Code != 401 || cookieNamed(w, sessionCookie) != nil {
+	if w := serve(a, browserFetch("GET", "")); w.Code != 401 || cookieNamed(w, a.sessionCookie) != nil {
 		t.Fatalf("anonymous GET without demo: %d", w.Code)
 	}
-	if w := serve(a, browserFetch("POST", `{"demo":true}`)); w.Code != 401 || cookieNamed(w, sessionCookie) != nil {
+	if w := serve(a, browserFetch("POST", `{"demo":true}`)); w.Code != 401 || cookieNamed(w, a.sessionCookie) != nil {
 		t.Fatalf("demo POST without demo enabled: %d", w.Code)
 	}
 	if len(a.sessions) != 0 {
@@ -74,7 +74,7 @@ func TestDemoAutoSessionAndBoundaries(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("demo GET: %d %s", w.Code, w.Body)
 	}
-	c := cookieNamed(w, sessionCookie)
+	c := cookieNamed(w, a.sessionCookie)
 	if c == nil || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.MaxAge != 0 || !c.Expires.IsZero() {
 		t.Fatalf("demo cookie must be HttpOnly, SameSite=Strict and a browser-session cookie: %+v", c)
 	}
@@ -93,7 +93,7 @@ func TestDemoAutoSessionAndBoundaries(t *testing.T) {
 	// The cookie is reused: no new session on the next probe.
 	again := browserFetch("GET", "")
 	again.AddCookie(c)
-	if w := serve(a, again); w.Code != 200 || cookieNamed(w, sessionCookie) != nil || len(a.sessions) != 1 {
+	if w := serve(a, again); w.Code != 200 || cookieNamed(w, a.sessionCookie) != nil || len(a.sessions) != 1 {
 		t.Fatalf("existing demo session not reused: %d, %d sessions", w.Code, len(a.sessions))
 	}
 
@@ -163,7 +163,7 @@ func TestDemoEntryRequiresSameOriginBrowserFetch(t *testing.T) {
 			r := browserFetch(method, body)
 			f(r)
 			w := serve(a, r)
-			if w.Code == 200 || cookieNamed(w, sessionCookie) != nil {
+			if w.Code == 200 || cookieNamed(w, a.sessionCookie) != nil {
 				t.Fatalf("%s %s created a session (%d)", name, method, w.Code)
 			}
 		}
@@ -185,8 +185,8 @@ func TestDemoEntryRequiresSameOriginBrowserFetch(t *testing.T) {
 func TestDemoSessionDoesNotExpireButTokenSessionsDo(t *testing.T) {
 	a := demoIdentities(t, true)
 	w := serve(a, browserFetch("GET", ""))
-	demo := cookieNamed(w, sessionCookie)
-	tok := cookieNamed(serve(a, browserFetch("POST", `{"token":"tok"}`)), sessionCookie)
+	demo := cookieNamed(w, a.sessionCookie)
+	tok := cookieNamed(serve(a, browserFetch("POST", `{"token":"tok"}`)), a.sessionCookie)
 	if demo == nil || tok == nil {
 		t.Fatal("sessions not created")
 	}
@@ -210,7 +210,7 @@ func TestDemoSessionDoesNotExpireButTokenSessionsDo(t *testing.T) {
 	if _, ok := a.authenticate(e); ok {
 		t.Fatal("expired token session still valid")
 	}
-	if c := cookieNamed(serve(a, browserFetch("POST", `{"token":"tok"}`)), sessionCookie); c == nil || c.MaxAge != int((8*time.Hour)/time.Second) {
+	if c := cookieNamed(serve(a, browserFetch("POST", `{"token":"tok"}`)), a.sessionCookie); c == nil || c.MaxAge != int((8*time.Hour)/time.Second) {
 		t.Fatalf("token session cookie lifetime changed: %+v", c)
 	}
 }
@@ -230,7 +230,7 @@ func TestDemoSessionAllocationIsBounded(t *testing.T) {
 func TestDemoLogoutRequiresExplicitReentry(t *testing.T) {
 	a := demoIdentities(t, true)
 	w := serve(a, browserFetch("GET", ""))
-	c := cookieNamed(w, sessionCookie)
+	c := cookieNamed(w, a.sessionCookie)
 	var body struct {
 		CSRF string `json:"csrfToken"`
 	}
@@ -248,7 +248,7 @@ func TestDemoLogoutRequiresExplicitReentry(t *testing.T) {
 	if lw.Code != 204 || len(a.sessions) != 0 {
 		t.Fatalf("logout: %d, %d sessions", lw.Code, len(a.sessions))
 	}
-	marker := cookieNamed(lw, demoOffCookie)
+	marker := cookieNamed(lw, a.demoOffCookie)
 	if marker == nil || !marker.HttpOnly || marker.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("demo sign-out marker missing: %+v", marker)
 	}
@@ -264,17 +264,17 @@ func TestDemoLogoutRequiresExplicitReentry(t *testing.T) {
 	entry := browserFetch("POST", `{"demo":true}`)
 	entry.AddCookie(marker)
 	ew := serve(a, entry)
-	if ew.Code != 200 || cookieNamed(ew, sessionCookie) == nil {
+	if ew.Code != 200 || cookieNamed(ew, a.sessionCookie) == nil {
 		t.Fatalf("explicit demo entry: %d", ew.Code)
 	}
-	if m := cookieNamed(ew, demoOffCookie); m == nil || m.MaxAge >= 0 {
+	if m := cookieNamed(ew, a.demoOffCookie); m == nil || m.MaxAge >= 0 {
 		t.Fatal("demo sign-out marker not cleared")
 	}
 }
 
 func TestDemoRejectsRemoteOriginAndReservedIdentity(t *testing.T) {
 	for _, origin := range []string{"https://lensdock.example.com", "https://203.0.113.5:8443", "http://localhost.example.com:18081"} {
-		a, err := newIdentities([]Identity{{ID: "human", Role: "human", WorkspaceID: "w", TokenSHA256: digest("tok")}}, origin)
+		a, err := newIdentities([]Identity{{ID: "human", Role: "human", WorkspaceID: "w", TokenSHA256: digest("tok")}}, origin, "")
 		if err != nil {
 			continue // already rejected as an origin
 		}
@@ -283,12 +283,12 @@ func TestDemoRejectsRemoteOriginAndReservedIdentity(t *testing.T) {
 		}
 	}
 	for _, origin := range []string{"http://127.0.0.1:18081", "http://localhost:18081", "http://[::1]:18081"} {
-		a, err := newIdentities([]Identity{{ID: "human", Role: "human", WorkspaceID: "w", TokenSHA256: digest("tok")}}, origin)
+		a, err := newIdentities([]Identity{{ID: "human", Role: "human", WorkspaceID: "w", TokenSHA256: digest("tok")}}, origin, "")
 		if err != nil || a.enableDemo("w") != nil {
 			t.Fatalf("loopback origin %s rejected: %v", origin, err)
 		}
 	}
-	a, _ := newIdentities([]Identity{{ID: "demo-human", Role: "admin", WorkspaceID: "w", TokenSHA256: digest("tok")}}, demoOrigin)
+	a, _ := newIdentities([]Identity{{ID: "demo-human", Role: "admin", WorkspaceID: "w", TokenSHA256: digest("tok")}}, demoOrigin, "")
 	if a.enableDemo("w") == nil {
 		t.Fatal("demo actor ID collision accepted")
 	}

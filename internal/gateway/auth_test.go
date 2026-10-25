@@ -10,7 +10,7 @@ import (
 )
 
 func TestSessionRequiresScopeCSRFAndOrigin(t *testing.T) {
-	a, err := newIdentities([]Identity{{ID: "operator", Role: "human", WorkspaceID: "alpha", TokenSHA256: digest("test-pairing-token")}}, "http://127.0.0.1:18081")
+	a, err := newIdentities([]Identity{{ID: "operator", Role: "human", WorkspaceID: "alpha", TokenSHA256: digest("test-pairing-token")}}, "http://127.0.0.1:18081", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestSessionRequiresScopeCSRFAndOrigin(t *testing.T) {
 	}
 }
 func TestSessionRejectsMalformedTrailingBody(t *testing.T) {
-	a, _ := newIdentities([]Identity{{ID: "user", Role: "human", WorkspaceID: "w", TokenSHA256: digest("token")}}, "http://localhost:18081")
+	a, _ := newIdentities([]Identity{{ID: "user", Role: "human", WorkspaceID: "w", TokenSHA256: digest("token")}}, "http://localhost:18081", "")
 	for _, body := range []string{`{"token":"token"} rubbish`, `{"token":"token"}{}`, `{"token":"token","unexpected":true}`} {
 		w := httptest.NewRecorder()
 		a.serveSession(w, httptest.NewRequest("POST", "/api/v1/session", strings.NewReader(body)))

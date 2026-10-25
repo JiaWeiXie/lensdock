@@ -53,6 +53,7 @@ func (c *cli) cdpBridge(ctx context.Context, args []string) error {
 	listen := fs.String("listen", "127.0.0.1:0", "loopback address to listen on")
 	urlFile := fs.String("url-file", "", "also write the output line to this new file (mode 0600)")
 	pathSecret := fs.Bool("path-secret", false, "serve under a random secret URL prefix instead of the root")
+	pf := addProjectFlag(fs)
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
 	}
@@ -69,6 +70,9 @@ func (c *cli) cdpBridge(ctx context.Context, args []string) error {
 	}
 	if lease.Mode(lf.Lease.Mode) != lease.ModeAgent {
 		return usageErrorf("cdp bridge requires an AGENT lease; refusing a %s lease", lf.Lease.Mode)
+	}
+	if err := c.checkLeaseFileProject(ctx, fs, pf, lf); err != nil {
+		return err
 	}
 	client, err := c.newClient(lf.APIBaseURL)
 	if err != nil {

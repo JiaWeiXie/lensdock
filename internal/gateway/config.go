@@ -27,19 +27,40 @@ type RuntimeConfig struct {
 	// agent it is optional; it must be an agent identity of this workspace.
 	DefaultAgentID string `json:"defaultAgentId,omitempty"`
 }
+
+// Config is the Gateway configuration. DeploymentID is a non-secret identity
+// that managed deployments expose at GET /api/v1/deployment and mix into the
+// session cookie names; empty means a standalone deployment.
 type Config struct {
-	Listen      string          `json:"listen"`
-	Origin      string          `json:"origin"`
-	DataDir     string          `json:"dataDir"`
-	WebDir      string          `json:"webDir"`
-	StatusFile  string          `json:"statusFile,omitempty"`
-	TLSCertFile string          `json:"tlsCertFile,omitempty"`
-	TLSKeyFile  string          `json:"tlsKeyFile,omitempty"`
-	Identities  []Identity      `json:"identities"`
-	Runtimes    []RuntimeConfig `json:"runtimes"`
+	Listen       string          `json:"listen"`
+	Origin       string          `json:"origin"`
+	DeploymentID string          `json:"deploymentId,omitempty"`
+	DataDir      string          `json:"dataDir"`
+	WebDir       string          `json:"webDir"`
+	StatusFile   string          `json:"statusFile,omitempty"`
+	TLSCertFile  string          `json:"tlsCertFile,omitempty"`
+	TLSKeyFile   string          `json:"tlsKeyFile,omitempty"`
+	Identities   []Identity      `json:"identities"`
+	Runtimes     []RuntimeConfig `json:"runtimes"`
 	// DemoNoAuth is set only by the serve flag or LENSDOCK_DEMO_NO_AUTH, never
 	// read from the config file. See enableDemo for what it permits.
 	DemoNoAuth bool `json:"-"`
+}
+
+// ValidateDeploymentID accepts the empty standalone ID or 1-64 ASCII letters,
+// digits, underscores and hyphens that start with a letter or digit.
+func ValidateDeploymentID(id string) error {
+	if len(id) > 64 {
+		return errors.New("gateway: deployment ID must be 1-64 characters")
+	}
+	for i := range len(id) {
+		ch := id[i]
+		alnum := ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9'
+		if !alnum && (i == 0 || (ch != '_' && ch != '-')) {
+			return errors.New("gateway: deployment ID must start with a letter or digit and contain only letters, digits, underscores and hyphens")
+		}
+	}
+	return nil
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -53,6 +74,9 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if c.Listen == "" || c.DataDir == "" || c.WebDir == "" || len(c.Runtimes) == 0 {
 		return c, errors.New("gateway: listen, dataDir, webDir and runtimes required")
+	}
+	if err = ValidateDeploymentID(c.DeploymentID); err != nil {
+		return c, err
 	}
 	return c, nil
 }

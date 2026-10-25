@@ -896,6 +896,44 @@ func (m *Manager) EnterMaintenance() (Drain, error) {
 	return d, nil
 }
 
+// EnterMaintenanceIfIdle enters MAINTENANCE only when the control domain is
+// idle for the exact runtime generation expectedGeneration, and otherwise
+// changes nothing. Unlike EnterMaintenance it never fences a lease: a live
+// HUMAN or AGENT lease, a takeover, a CAPTURE hold and MAINTENANCE itself are
+// refused with ErrConflict / ErrMaintenance, and the generation, the active
+// token, the takeover and the capture restoration stay exactly as they were.
+// An expired lease is ended first, with the normal expiry semantics. An empty
+// expectedGeneration is ErrInvalidArgument and a different current generation
+// is ErrGenerationMismatch. The check and the entry happen under one lock, so
+// a concurrent Acquire either wins (the entry is refused) or loses (it gets
+// ErrMaintenance); there is never both.
+//
+// This guards the control domain only. It says nothing about browser pages,
+// downloads or noVNC viewers: the caller has already accepted losing them.
+// Nothing was fenced, so the returned Drain is already drained.
+func (m *Manager) EnterMaintenanceIfIdle(expectedGeneration string) (Drain, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.shutdown {
+		return Drain{}, ErrShutdown
+	}
+	if expectedGeneration == "" {
+		return Drain{}, fmt.Errorf("%w: expected generation is empty", ErrInvalidArgument)
+	}
+	m.expireLocked()
+	if m.generation != expectedGeneration {
+		return Drain{}, ErrGenerationMismatch
+	}
+	if m.maintenance {
+		return Drain{}, ErrMaintenance
+	}
+	if m.capture != nil || m.handoff != nil || m.cur != nil {
+		return Drain{}, ErrConflict
+	}
+	m.maintenance = true
+	return Drain{}, nil
+}
+
 // ExitMaintenance leaves MAINTENANCE. ErrNotFound when not in maintenance.
 func (m *Manager) ExitMaintenance() error {
 	m.mu.Lock()

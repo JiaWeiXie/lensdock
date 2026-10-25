@@ -67,6 +67,44 @@ mise 預設的 [24 小時發布等待期](https://mise.jdx.dev/security.html#min
 
 兩個映像都包含 Linux amd64 與 arm64。全新安裝預設拉取 `latest`，首次啟動時固定解析後的映像，避免日後重新啟動時無聲升級 Profile。若要固定版本或 Digest，請在首次初始化前設定 `LENSDOCK_RUNTIME_IMAGE` 與 `LENSDOCK_GATEWAY_IMAGE`，並選擇相容的一組映像。既有部署請使用主機端更新流程。
 
+## 多個本機專案
+
+每個獲授權專案都有獨立的 Runtime／Gateway、持久化 Volume、憑證、Workspace ID 與固定 Loopback Origin。主機端 Manager 依共用資源預算決定何時啟動。既有的 18081 獨立工作站不會被遷移，其資源上限會計入外部負載。
+
+先用包含部署檔案及兩種 Linux 更新工具的 Release Bundle 初始化 Manager，再由人類授權已存在的專案資料夾：
+
+```bash
+lensdock admin manager init --bundle-dir /path/to/lensdock-release
+lensdock admin project authorize "$HOME/code/site-a" "$HOME/code/site-b"
+lensdock admin project list
+```
+
+Manager 預設放在 `~/.local/share/lensdock-manager`；若改用其他位置，所有相關程序都要設定一致的 `LENSDOCK_MANAGER_DIR`。初始化會把主機執行檔與 Bundle 複製到這個私有目錄，並固定本機 Docker Engine。它不會安裝開機服務，也不管理專案的應用程式伺服器或資料庫。
+
+Agent 不需要 Docker 存取權，即可要求啟動已獲授權的專案：
+
+```bash
+unset LENSDOCK_API LENSDOCK_TOKEN_FILE
+lensdock project up --project "$HOME/code/site-a" --wait 10m
+lensdock workspace status --project "$HOME/code/site-a"
+lensdock feedback list --project "$HOME/code/site-a"
+lensdock mcp serve --project "$HOME/code/site-a"
+```
+
+`up` 會回傳已驗證的 API Origin、Workspace 與 Agent Token 檔案位置。開啟該 Origin，使用專案的 `product/human-token` 配對；檔案位於 `admin project list --json` 回傳的 `stateDir` 下。不同 Gateway 即使用相同主機名稱，也不會互相覆蓋 Session 或展示模式的登出狀態。MCP 請按專案設定，詳見 [Agent 整合](docs/AGENT-INTEGRATION.md#project-scoped-local-agents)。
+
+每個 Runtime 預設上限為 2 GiB／2 CPU，Gateway 為 256 MiB／0.5 CPU。Manager 的專案預算為 6.75 GiB／7.5 CPU，另保留 1 GiB／1 CPU 給生命週期工具、2 GiB／1 CPU 給系統。Docker Engine 的實際容量與外部容器上限可能降低可同時執行的專案數。若外部容器沒有上限，必須由人類明確設定預留量，否則拒絕啟動；預留量不會限制那些容器的用量。
+
+滿載時依 FIFO 等待，不會自動停止別人的瀏覽器。同專案的請求共用一個操作。取消或逾時只移除該呼叫者的等待；已接納的工作繼續執行。釋放租約、關閉 MCP、暫停 Agent 或關閉 UI 都不會停止 Chromium。
+
+停止必須明確同意捨棄記憶體中的頁面與網路工作：
+
+```bash
+lensdock project stop --project "$HOME/code/site-a" --discard-page-state
+```
+
+持久化 Profile 與回饋會保留到下次啟動。有租約時拒絕一般停止；人類強制停止也必須提供剛觀察到的 Runtime Generation。符號連結別名會對應同一份授權，Worktree 則各自獨立；搬移或替換資料夾需要人類處理。私有 Manager Socket 防止誤連專案，無法隔離同一 OS 使用者下的惡意程序。資源政策、故障復原與實測限制見 [更新 Runbook](docs/UPDATE-RUNBOOK.md#managed-project-lifecycle)。
+
 ## 使用方式
 
 1. 先觀看桌面；需要操作時取得控制權，或從 Agent 接管。
@@ -159,6 +197,8 @@ Agent 在另一台主機時，需設定有認證的 HTTPS Endpoint 及對應 Gat
 
 ## 維運與更新
 
+以下 Compose 指令適用於獨立部署。受 Manager 管理的專案請使用 `project up` 與明確的 `project stop`；其原始 Compose 介面只允許 `ps`、`logs`、`config`。
+
 ```bash
 export LENSDOCK_DEPLOYMENT="$HOME/.local/share/lensdock/deployment.json"
 lensdock update compose -- ps
@@ -191,6 +231,6 @@ CI/CD 參考 [comfyui-pwa-client](https://github.com/JiaWeiXie/comfyui-pwa-clien
 ## 參考文件與限制
 
 - [Agent 整合](docs/AGENT-INTEGRATION.md)、[更新 Runbook](docs/UPDATE-RUNBOOK.md)、[Web UI 細節](apps/web/README.md)。
-- 完整人機交接與成對更新示範是在 macOS arm64／OrbStack 執行。原生發版 Smoke Check 不代表每個平台都通過完整產品 E2E。日文／韓文原生輸入法、多 Workspace 管理與跨主機 Checkpoint 移轉仍不在已驗證範圍。
+- 完整人機交接與成對更新示範是在 macOS arm64／OrbStack 執行；三組受管理專案、獨立瀏覽器 Session 與生命週期故障復原也已在相同環境實測，負載量測與限制見 Runbook。原生發版 Smoke Check 不代表每個平台都通過完整產品 E2E。日文／韓文原生輸入法、統一的多 Workspace UI 與跨主機 Checkpoint 移轉仍不在已驗證範圍。
 - 未設定 TLS 與認證前，保持預設 Loopback 綁定。不可把 Docker Socket 掛進瀏覽器、Gateway 或 Agent。
 - LensDock 尚未選定專案授權；隨附依賴各自保留原授權，見 [參考來源](docs/REFERENCES.md)。

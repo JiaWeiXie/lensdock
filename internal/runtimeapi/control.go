@@ -1,7 +1,9 @@
 package runtimeapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -117,9 +119,16 @@ func decodeReason(w http.ResponseWriter, r *http.Request) (reasonRequest, bool) 
 }
 
 // maintenanceRequest rejects a "force" field that only takeover understands.
+// IfIdle selects the conditional entry, which refuses instead of fencing a live
+// lease and requires the exact runtime generation the caller observed.
 type maintenanceRequest struct {
-	Reason string `json:"reason"`
+	Reason             string          `json:"reason"`
+	IfIdle             json.RawMessage `json:"ifIdle"`
+	ExpectedGeneration json.RawMessage `json:"expectedGeneration"`
 }
+
+// maxGenerationLen mirrors the openapi maxLength of runtimeGeneration.
+const maxGenerationLen = 128
 
 func (a *api) beginTakeover(w http.ResponseWriter, r *http.Request) {
 	if !a.operatorRoute(w, r) {
@@ -191,7 +200,40 @@ func (a *api) enterMaintenance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, apiwire.CodeInvalidRequest, "reason must be 1 to 1000 characters")
 		return
 	}
-	drain, err := a.Leases.EnterMaintenance()
+	var ifIdle bool
+	switch string(bytes.TrimSpace(req.IfIdle)) {
+	case "", "false":
+	case "true":
+		ifIdle = true
+	default:
+		writeError(w, http.StatusBadRequest, apiwire.CodeInvalidRequest, "ifIdle must be a boolean")
+		return
+	}
+	var expectedGeneration string
+	if len(req.ExpectedGeneration) != 0 {
+		if !ifIdle {
+			writeError(w, http.StatusBadRequest, apiwire.CodeInvalidRequest, "expectedGeneration is only valid together with ifIdle")
+			return
+		}
+		if err := json.Unmarshal(req.ExpectedGeneration, &expectedGeneration); err != nil {
+			writeError(w, http.StatusBadRequest, apiwire.CodeInvalidRequest, "expectedGeneration must be a string")
+			return
+		}
+	}
+	var (
+		drain lease.Drain
+		err   error
+	)
+	switch {
+	case ifIdle:
+		if n := len(expectedGeneration); n < 1 || n > maxGenerationLen {
+			writeError(w, http.StatusBadRequest, apiwire.CodeInvalidRequest, "ifIdle requires expectedGeneration of 1 to 128 characters")
+			return
+		}
+		drain, err = a.Leases.EnterMaintenanceIfIdle(expectedGeneration)
+	default:
+		drain, err = a.Leases.EnterMaintenance()
+	}
 	if err != nil {
 		writeLeaseError(w, err)
 		return
@@ -202,6 +244,7 @@ func (a *api) enterMaintenance(w http.ResponseWriter, r *http.Request) {
 	a.Logger.Info("maintenance entered",
 		slog.String("requestId", w.Header().Get(requestIDHeader)),
 		slog.Bool("drained", drained),
+		slog.Bool("ifIdle", ifIdle),
 	)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"state":             string(lease.StateMaintenance),

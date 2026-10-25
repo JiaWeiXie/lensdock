@@ -67,6 +67,44 @@ The default workspace is `default`. Configuration and credentials live under `~/
 
 Both images contain Linux amd64 and arm64 variants. New installations pull `latest`; the first start pins the resolved images so a later restart cannot silently upgrade a profile. Set `LENSDOCK_RUNTIME_IMAGE` and `LENSDOCK_GATEWAY_IMAGE` before first initialization to select matching version tags or digests instead. Use the host update workflow for existing installations.
 
+## Multiple local projects
+
+Each authorized project gets its own Runtime/Gateway pair, persistent volumes, credentials, workspace ID and stable loopback origin. A host manager admits starts against a shared resource budget. The existing standalone workspace on port 18081 stays separate; the manager counts its resource limits as external demand.
+
+Initialize the manager once from a release bundle containing the deployment files and both Linux helper binaries. A human must authorize each existing project directory:
+
+```bash
+lensdock admin manager init --bundle-dir /path/to/lensdock-release
+lensdock admin project authorize "$HOME/code/site-a" "$HOME/code/site-b"
+lensdock admin project list
+```
+
+The default manager directory is `~/.local/share/lensdock-manager`; set `LENSDOCK_MANAGER_DIR` consistently for a custom location. Initialization copies the host executable and bundle into that private directory and fixes the local Docker engine. It does not install a boot service or manage your application servers or databases.
+
+An Agent can then request its authorized project without Docker access:
+
+```bash
+unset LENSDOCK_API LENSDOCK_TOKEN_FILE
+lensdock project up --project "$HOME/code/site-a" --wait 10m
+lensdock workspace status --project "$HOME/code/site-a"
+lensdock feedback list --project "$HOME/code/site-a"
+lensdock mcp serve --project "$HOME/code/site-a"
+```
+
+`up` returns the verified API origin, workspace and Agent token-file location. Open that origin and pair using the project's `product/human-token`, under the `stateDir` reported by `admin project list --json`. Sessions and demo sign-out markers are separate even when the Gateways share a hostname. Use project-scoped MCP configurations; see [Agent integration](docs/AGENT-INTEGRATION.md#project-scoped-local-agents).
+
+The default limits are 2 GiB / 2 CPUs per Runtime and 256 MiB / 0.5 CPU per Gateway. The manager's project budget is 6.75 GiB / 7.5 CPUs, with a separate 1 GiB / 1 CPU helper allowance and 2 GiB / 1 CPU of system headroom. Physical engine capacity and external container limits can reduce admissible concurrency. Uncapped external containers require an explicit human allowance or admission is refused. An allowance does not constrain those containers.
+
+When full, starts wait FIFO without evicting another browser. Requests for the same project share one operation. Canceling or timing out a wait removes only that caller's interest; admitted work continues. Releasing a lease, closing MCP, pausing the Agent or closing the UI never stops Chromium.
+
+Stopping requires explicit consent to lose in-memory pages and network work:
+
+```bash
+lensdock project stop --project "$HOME/code/site-a" --discard-page-state
+```
+
+The persistent profile and feedback remain for the next start. An active lease prevents this stop; a human can force it only with the observed runtime generation. Directory aliases resolve to one grant, worktrees get separate grants, and a moved or replaced directory needs human administration. The private manager socket prevents accidental cross-project routing; it does not isolate hostile processes running as your OS user. Resource policy, recovery and measured limits are in the [update runbook](docs/UPDATE-RUNBOOK.md#managed-project-lifecycle).
+
 ## Use the workspace
 
 1. Watch without taking control. Acquire control to use the desktop, or take over from the Agent.
@@ -159,6 +197,8 @@ For an Agent on another machine, configure an authenticated HTTPS endpoint and t
 
 ## Operate and update
 
+The Compose commands below are for standalone deployments. Managed projects use `project up` and explicit `project stop`; their raw Compose interface permits only `ps`, `logs` and `config`.
+
 ```bash
 export LENSDOCK_DEPLOYMENT="$HOME/.local/share/lensdock/deployment.json"
 lensdock update compose -- ps
@@ -191,6 +231,6 @@ CI/CD follows [comfyui-pwa-client](https://github.com/JiaWeiXie/comfyui-pwa-clie
 ## Reference and limits
 
 - [Agent integration](docs/AGENT-INTEGRATION.md), [update runbook](docs/UPDATE-RUNBOOK.md), and [web UI details](apps/web/README.md).
-- Full human/Agent handoff and paired-update demonstrations were performed on macOS arm64 with OrbStack. Native release smoke checks do not establish full product E2E coverage on every platform. Japanese/Korean native IMEs, multi-workspace administration, and cross-machine checkpoint portability remain outside the verified scope.
+- Full human/Agent handoff and paired-update demonstrations were performed on macOS arm64 with OrbStack. Three managed project pairs, scoped browser sessions and lifecycle fault recovery were also exercised there; see the runbook for workload measurements and limits. Native release smoke checks do not establish full product E2E coverage on every platform. Japanese/Korean native IMEs, a unified multi-workspace UI, and cross-machine checkpoint portability remain outside the verified scope.
 - Keep the default loopback binding unless you configure TLS and authentication. Never mount the Docker socket into the browser, Gateway, or Agent.
 - LensDock's project license has not been selected. Bundled dependencies retain their own licenses; see [references](docs/REFERENCES.md).

@@ -36,19 +36,19 @@ const (
       [--runtime-image REF] [--gateway-image REF] [--bundle-dir DIR]
   lensdock admin product-start [--state-dir DIR | --deployment FILE] [--pull always|missing|never]
   lensdock version
-  lensdock lease acquire <ws> --mode agent|human [--ttl 30] [--api URL] --operator-token-file F --output LEASEFILE
+  lensdock lease acquire [<ws> | --project PATH] --mode agent|human [--ttl 30] [--api URL] [--operator-token-file F] --output LEASEFILE
       --ttl is in seconds, 10 to 120; --output's directory must exist
       [--feedback-id ID --feedback-revision N] binds an agent lease to that acknowledged revision
-  lensdock lease release (--lease-file F | <ws> --lease-id ID --operator-token-file F) [--api URL]
-  lensdock lease refresh --lease-file F --output NEW_LEASEFILE
-  lensdock workspace status <ws> [--api URL] --operator-token-file F
-  lensdock workspace watch <ws> [--api URL] [--token-file F]
-      streams mode/pause notifications as JSONL; token file defaults to $LENSDOCK_TOKEN_FILE
-  lensdock cdp bridge --lease-file F [--listen 127.0.0.1:0] [--url-file F] [--path-secret]
+  lensdock lease release (--lease-file F | [<ws> | --project PATH] --lease-id ID) [--api URL] [--operator-token-file F]
+  lensdock lease refresh --lease-file F --output NEW_LEASEFILE [--project PATH]
+  lensdock workspace status [<ws> | --project PATH] [--api URL] [--operator-token-file F]
+  lensdock workspace watch [<ws> | --project PATH] [--api URL] [--token-file F]
+      --project supplies API/workspace/credential and refuses manual overrides or LENSDOCK_API/LENSDOCK_TOKEN_FILE.
+  lensdock cdp bridge --lease-file F [--project PATH] [--listen 127.0.0.1:0] [--url-file F] [--path-secret]
       serves CDP at the loopback root (http://127.0.0.1:PORT); with --path-secret
       every URL carries a random secret path prefix instead
-  lensdock clipboard set --lease-file F   (text on stdin)
-` + updateUsageText + releaseUsageText + feedbackUsageText + mcpUsageText
+  lensdock clipboard set --lease-file F [--project PATH]   (text on stdin)
+` + projectUsageText + updateUsageText + releaseUsageText + feedbackUsageText + mcpUsageText
 )
 
 // cli carries the process environment so commands can be tested.
@@ -130,16 +130,25 @@ func (c *cli) dispatch(ctx context.Context, args []string) error {
 	sub := args[1:]
 	switch args[0] {
 	case "admin":
-		return c.subcommand(sub, "admin", map[string]func([]string) error{"init": c.adminInit, "product-init": c.productInit, "product-start": func(a []string) error { return c.productStart(ctx, a) }})
+		return c.subcommand(sub, "admin", map[string]func([]string) error{
+			"init": c.adminInit, "product-init": c.productInit,
+			"product-start": func(a []string) error { return c.productStart(ctx, a) },
+			"manager":       func(a []string) error { return c.managerCommand(ctx, a) },
+			"project":       func(a []string) error { return c.adminProject(ctx, a) },
+		})
+	case "project":
+		return c.projectCommand(ctx, sub, false)
+	case "__manager":
+		return c.internalManager(ctx, sub)
 	case "lease":
 		return c.subcommand(sub, "lease", map[string]func([]string) error{
-			"acquire": c.leaseAcquire,
-			"release": c.leaseRelease,
-			"refresh": c.leaseRefresh,
+			"acquire": func(a []string) error { return c.leaseAcquire(ctx, a) },
+			"release": func(a []string) error { return c.leaseRelease(ctx, a) },
+			"refresh": func(a []string) error { return c.leaseRefresh(ctx, a) },
 		})
 	case "workspace":
 		return c.subcommand(sub, "workspace", map[string]func([]string) error{
-			"status": c.workspaceStatus,
+			"status": func(a []string) error { return c.workspaceStatus(ctx, a) },
 			"watch":  func(a []string) error { return c.workspaceWatch(ctx, a) },
 		})
 	case "cdp":
@@ -147,7 +156,7 @@ func (c *cli) dispatch(ctx context.Context, args []string) error {
 			"bridge": func(a []string) error { return c.cdpBridge(ctx, a) },
 		})
 	case "clipboard":
-		return c.subcommand(sub, "clipboard", map[string]func([]string) error{"set": c.clipboardSet})
+		return c.subcommand(sub, "clipboard", map[string]func([]string) error{"set": func(a []string) error { return c.clipboardSet(ctx, a) }})
 	case "update":
 		return c.subcommand(sub, "update", c.updateSubcommands(ctx))
 	case "release":

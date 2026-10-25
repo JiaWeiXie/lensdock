@@ -28,6 +28,32 @@ security:
 - bearerAuth: []
 - sessionCookie: []
 paths:
+  /api/v1/deployment:
+    get:
+      operationId: getDeploymentIdentity
+      summary: Read the non-secret Gateway deployment identity
+      description: >-
+        Requires the configured Host but no credential. A managed client checks
+        the owned published port and this exact identity before reading or sending
+        its Gateway credential. Redirects are not a valid identity response.
+        Standalone Gateways may return an empty deploymentId.
+      security: []
+      responses:
+        '200':
+          description: The identity configured for this Gateway.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [deploymentId]
+                properties:
+                  deploymentId:
+                    type: string
+                    maxLength: 64
+                    pattern: '^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,63})?$'
+        '405':
+          description: METHOD_NOT_ALLOWED. Only GET is supported.
   /api/v1/workspaces/{workspaceId}:
     get:
       operationId: getWorkspace
@@ -1855,7 +1881,14 @@ components:
     sessionCookie:
       type: apiKey
       in: cookie
-      name: lensdock_session
+      name: lensdock-session-{namespace}
+      description: >-
+        The name is a template: namespace is the first 16 bytes of SHA-256,
+        encoded as 32 lowercase hexadecimal characters, of the UTF-8 string
+        "lensdock-cookie-namespace-v1" + NUL + configured origin + NUL +
+        deploymentId. Browsers use the actual Set-Cookie name. Session and
+        demo-signout cookies are scoped independently by exact origin and
+        deployment identity; legacy unscoped cookies are not accepted.
   schemas:
     Error:
       type: object
@@ -2098,6 +2131,49 @@ components:
       required:
       - status
       - requestId
+    MaintenanceRequest:
+      description: >-
+        Body of the Runtime operator route POST /api/v1/workspaces/{workspaceId}/maintenance
+        (not served by the Gateway as a core flow operation). Without ifIdle the
+        request fences any live control lease and enters MAINTENANCE. With
+        ifIdle true the Runtime enters MAINTENANCE only when the control domain is
+        idle for exactly expectedGeneration: a live HUMAN or AGENT lease, a
+        takeover, a capture or an existing maintenance is refused (409
+        LEASE_CONFLICT or MAINTENANCE) and a different current generation is
+        refused (412 GENERATION_MISMATCH), each without changing any control
+        state. ifIdle guards the control domain only, not browser pages,
+        downloads or noVNC viewers; the caller has already accepted losing them.
+        expectedGeneration without ifIdle true is invalid (400).
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        ifIdle:
+          type: boolean
+          default: false
+        expectedGeneration:
+          type: string
+          minLength: 1
+          maxLength: 128
+      required:
+      - reason
+      allOf:
+      - if:
+          properties:
+            ifIdle:
+              const: true
+          required:
+          - ifIdle
+        then:
+          required:
+          - expectedGeneration
+        else:
+          not:
+            required:
+            - expectedGeneration
     CreateCapture:
       type: object
       additionalProperties: false

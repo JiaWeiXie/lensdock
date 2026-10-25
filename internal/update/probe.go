@@ -59,6 +59,11 @@ type ProbeRequest struct {
 	Reason    string      `json:"reason,omitempty"`
 	LeaseID   string      `json:"leaseId,omitempty"`
 	Verify    *VerifySpec `json:"verify,omitempty"`
+	// IfIdle makes maintenance-enter conditional: the runtime refuses instead
+	// of fencing a live lease. It requires ExpectedGeneration, the runtime
+	// generation the caller observed.
+	IfIdle             bool   `json:"ifIdle,omitempty"`
+	ExpectedGeneration string `json:"expectedGeneration,omitempty"`
 }
 
 // RuntimeStatus is the operator view of a runtime (GET /readyz?detail=1).
@@ -136,7 +141,10 @@ func HandleProbe(ctx context.Context, req ProbeRequest) ProbeResponse {
 		if reason == "" {
 			reason = "lensdock update"
 		}
-		res, err := c.enterMaintenance(ctx, reason)
+		if err := validateConditionalMaintenance(req); err != nil {
+			return ProbeResponse{Error: err.Error()}
+		}
+		res, err := c.enterMaintenance(ctx, reason, req.IfIdle, req.ExpectedGeneration)
 		if err != nil {
 			return failure(err)
 		}
@@ -159,6 +167,23 @@ func HandleProbe(ctx context.Context, req ProbeRequest) ProbeResponse {
 		return ProbeResponse{Verify: &report}
 	}
 	return ProbeResponse{Error: fmt.Sprintf("unknown probe operation %q", req.Op)}
+}
+
+// validateConditionalMaintenance rejects ambiguous or unbounded conditional
+// maintenance input before anything is sent: ifIdle needs a bounded
+// expectedGeneration and expectedGeneration needs ifIdle. Other operations
+// accept neither field.
+func validateConditionalMaintenance(req ProbeRequest) error {
+	if !req.IfIdle {
+		if req.ExpectedGeneration != "" {
+			return errors.New("expectedGeneration requires ifIdle")
+		}
+		return nil
+	}
+	if n := len(req.ExpectedGeneration); n < 1 || n > 128 {
+		return errors.New("ifIdle requires an expectedGeneration of 1 to 128 characters")
+	}
+	return nil
 }
 
 type probeError struct {
@@ -353,8 +378,13 @@ func (c *runtimeClient) status(ctx context.Context) (RuntimeStatus, readyDoc, er
 	return st, doc, nil
 }
 
-func (c *runtimeClient) enterMaintenance(ctx context.Context, reason string) (MaintenanceResult, error) {
-	body, _ := json.Marshal(map[string]string{"reason": reason})
+func (c *runtimeClient) enterMaintenance(ctx context.Context, reason string, ifIdle bool, expectedGeneration string) (MaintenanceResult, error) {
+	payload := map[string]any{"reason": reason}
+	if ifIdle {
+		payload["ifIdle"] = true
+		payload["expectedGeneration"] = expectedGeneration
+	}
+	body, _ := json.Marshal(payload)
 	code, data, err := c.call(ctx, http.MethodPost, c.wsPath("/maintenance"), nil, c.token, body)
 	if err != nil {
 		return MaintenanceResult{}, err

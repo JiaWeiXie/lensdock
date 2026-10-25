@@ -94,6 +94,8 @@ var (
 // Unknown JSON fields are rejected.
 type Deployment struct {
 	Version int `json:"version"`
+	// ManagedBy routes lifecycle mutations through the owning host manager.
+	ManagedBy *ManagedOwner `json:"managedBy,omitempty"`
 	// StateDir holds state/, updates/ and generations/. Defaults to the
 	// directory of deployment.json.
 	StateDir string `json:"stateDir,omitempty"`
@@ -339,6 +341,11 @@ func (d *Deployment) Validate() error {
 
 	if d.Version != DeploymentVersion {
 		add("version must be %d", DeploymentVersion)
+	}
+	if d.ManagedBy != nil {
+		if err := d.ManagedBy.validate(); err != nil {
+			add("%v", err)
+		}
 	}
 	for name, p := range map[string]string{
 		"stateDir": d.StateDir, "backupDir": d.BackupDir, "releasesDir": d.ReleasesDir, "backupKeyFile": d.BackupKeyFile,

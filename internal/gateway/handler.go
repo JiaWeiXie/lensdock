@@ -38,7 +38,7 @@ type Gateway struct {
 }
 
 func New(c Config, d Integrations) (*Gateway, error) {
-	identities, err := newIdentities(c.Identities, c.Origin)
+	identities, err := newIdentities(c.Identities, c.Origin, c.DeploymentID)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +91,15 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/healthz" && r.Method == "GET" {
 		jsonReply(w, 200, map[string]bool{"ok": true})
+		return
+	}
+	if r.URL.Path == "/api/v1/deployment" {
+		if r.Method != "GET" {
+			w.Header().Set("Allow", "GET")
+			fail(w, 405, "METHOD_NOT_ALLOWED", "method not allowed")
+			return
+		}
+		jsonReply(w, 200, map[string]string{"deploymentId": g.config.DeploymentID})
 		return
 	}
 	if r.URL.Path == "/readyz" && r.Method == "GET" {

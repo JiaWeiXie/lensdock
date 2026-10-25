@@ -24,17 +24,19 @@ const (
 )
 
 // feedbackUsageText is appended to the CLI usage text.
-const feedbackUsageText = `  lensdock feedback list --workspace W [--state S] [--cursor C] [--token-file F] [--api URL]
-  lensdock feedback get <id> (--revision N | --workspace W) [--token-file F] [--api URL]
-  lensdock feedback pull <id> --output NEWDIR (--revision N | --workspace W) [--token-file F] [--api URL]
+const feedbackUsageText = `  lensdock feedback list (--workspace W | --project PATH) [--state S] [--cursor C] [--token-file F] [--api URL]
+  lensdock feedback get <id> (--revision N | --workspace W | --project PATH) [--token-file F] [--api URL]
+  lensdock feedback pull <id> --output NEWDIR (--revision N | --workspace W | --project PATH) [--token-file F] [--api URL]
       downloads and hash-verifies the share bundle into NEWDIR, which must not exist;
       the bundle appears atomically or not at all. Pulling never acknowledges.
-  lensdock feedback ack <id> --image-viewed [--bundle DIR | --revision N | --workspace W] [--token-file F] [--api URL]
+  lensdock feedback ack <id> --image-viewed [--bundle DIR | --revision N | --workspace W | --project PATH] [--token-file F] [--api URL]
       --image-viewed asserts you actually looked at the screenshot; --bundle verifies a pulled bundle first
-  lensdock feedback resolve <id> (--revision N | --workspace W) (--summary T | --summary-file F|-)
+  lensdock feedback resolve <id> (--revision N | --workspace W | --project PATH) (--summary T | --summary-file F|-)
       (--verification T | --verification-file F|-) [--result-feedback-id ID]... [--token-file F] [--api URL]
       the bearer token is only ever read from a private (0600) token file, --token-file or $LENSDOCK_TOKEN_FILE;
       --api defaults to $LENSDOCK_API or ` + defaultGatewayAPI + `
+      --project PATH uses that managed project's Gateway API, workspace and Agent credential instead; it conflicts
+      with --api, --workspace, --token-file, a non-empty $LENSDOCK_API or $LENSDOCK_TOKEN_FILE, and never starts the project
 `
 
 // feedbackCommand dispatches "lensdock feedback ...".
@@ -54,6 +56,8 @@ type feedbackFlags struct {
 	tokenFile string
 	workspace string
 	revision  int
+	project   *projectFlag
+	fs        *flag.FlagSet
 }
 
 func (c *cli) addFeedbackFlags(fs *flag.FlagSet, workspace, revision bool) *feedbackFlags {
@@ -72,7 +76,21 @@ func (c *cli) addFeedbackFlags(fs *flag.FlagSet, workspace, revision bool) *feed
 	if revision {
 		fs.IntVar(&ff.revision, "revision", 0, "revision number (default: the revision the server assigned to you)")
 	}
+	ff.project, ff.fs = addProjectFlag(fs), fs
 	return ff
+}
+
+// useProject replaces the manual API, workspace and token file with the ones
+// of the --project connection, which is resolved once, here. Without
+// --project the flags and their environment defaults stay in force. Call it
+// after cheap argument validation and before anything uses ff.workspace.
+func (c *cli) useProject(ctx context.Context, ff *feedbackFlags) error {
+	conn, err := c.resolveProjectFlag(ctx, ff.fs, ff.project)
+	if err != nil || conn == nil {
+		return err
+	}
+	ff.api.value, ff.tokenFile, ff.workspace = conn.API, conn.TokenFile, conn.Workspace
+	return nil
 }
 
 // client builds the authenticated Gateway client. The token comes from a
@@ -136,6 +154,9 @@ func (c *cli) feedbackList(ctx context.Context, args []string) error {
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
 	}
+	if err := c.useProject(ctx, ff); err != nil {
+		return err
+	}
 	if ff.workspace == "" {
 		return usageErrorf("--workspace is required")
 	}
@@ -159,6 +180,9 @@ func (c *cli) feedbackGet(ctx context.Context, args []string) error {
 	}
 	id, err := feedbackID(pos)
 	if err != nil {
+		return err
+	}
+	if err := c.useProject(ctx, ff); err != nil {
 		return err
 	}
 	client, err := c.feedbackClient(ff)
@@ -199,6 +223,9 @@ func (c *cli) feedbackPull(ctx context.Context, args []string) error {
 	}
 	if ff.revision < 0 {
 		return usageErrorf("--revision must be at least 1")
+	}
+	if err := c.useProject(ctx, ff); err != nil {
+		return err
 	}
 	if ff.revision == 0 && ff.workspace == "" {
 		return usageErrorf("--revision, or --workspace to look up the revision assigned to you, is required")
@@ -246,6 +273,9 @@ func (c *cli) feedbackAck(ctx context.Context, args []string) error {
 	}
 	if ff.revision < 0 {
 		return usageErrorf("--revision must be at least 1")
+	}
+	if err := c.useProject(ctx, ff); err != nil {
+		return err
 	}
 	if *bundle != "" {
 		m, err := delivery.VerifyBundle(*bundle)
@@ -307,6 +337,9 @@ func (c *cli) feedbackResolve(ctx context.Context, args []string) error {
 	res := delivery.Resolution{Summary: sum, Verification: ver, ResultFeedbackIDs: results}
 	if err := res.Validate(); err != nil {
 		return usageErrorf("%v", err)
+	}
+	if err := c.useProject(ctx, ff); err != nil {
+		return err
 	}
 	client, err := c.feedbackClient(ff)
 	if err != nil {
