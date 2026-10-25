@@ -50,6 +50,8 @@ lensdock admin product-start --state-dir "$HOME/.local/share/lensdock"
 
 `bin_path=.` 會選用主機 CLI，避免選到隨附的 Linux 更新工具。只有 Agent 的主機只需執行第一行。Token 只傳給這次 mise 程序，GitHub CLI 把它存放在系統鑰匙圈時也能使用。其他認證方式見 [mise 的 Token 設定](https://mise.jdx.dev/dev-tools/github-tokens.html)。
 
+mise 預設的 [24 小時發布等待期](https://mise.jdx.dev/security.html#minimum-release-age) 可能讓 `@latest` 暫時找不到新版本。若要安裝當天發布的版本，把 `@latest` 換成明確版本，例如 `@0.3.0`，即可保留全域的發布等待保護。
+
 ### 開啟工作站
 
 開啟 **http://127.0.0.1:18081/**，用 `~/.local/share/lensdock/product/admin-token` 的內容配對。請在本機讀取這個私有檔案，不要貼進 Issue、聊天、網址或截圖。

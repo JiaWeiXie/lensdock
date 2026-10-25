@@ -50,6 +50,8 @@ lensdock admin product-start --state-dir "$HOME/.local/share/lensdock"
 
 `bin_path=.` selects the host CLI rather than the bundled Linux update helpers. On an Agent-only machine, run just the first command. The token is passed only to that mise process, including when GitHub CLI stores it in the system keychain. See [mise's token configuration](https://mise.jdx.dev/dev-tools/github-tokens.html) for other authentication methods.
 
+Mise's default [24-hour release-age policy](https://mise.jdx.dev/security.html#minimum-release-age) can hide a new release from `@latest`. To install a same-day release, replace `@latest` with its exact version, such as `@0.3.0`. This keeps the global release-age protection enabled.
+
 ### Open the workspace
 
 Open **http://127.0.0.1:18081/** and pair with the contents of `~/.local/share/lensdock/product/admin-token`. Read this private file locally; never paste it into an issue, chat, URL, or screenshot.
