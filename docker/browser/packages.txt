@@ -1,0 +1,18 @@
+# Runtime packages installed by docker/browser/Dockerfile (one name per line).
+# Resolved versions are recorded in /usr/share/lensdock/dpkg-manifest.tsv at build time.
+ca-certificates
+chromium
+chromium-l10n
+dbus
+fontconfig
+fonts-noto-cjk
+fonts-noto-color-emoji
+fonts-noto-core
+locales
+openbox
+tini
+tzdata
+x11vnc
+x11-xserver-utils
+xclip
+xvfb

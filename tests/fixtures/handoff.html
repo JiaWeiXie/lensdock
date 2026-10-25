@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LensDock 視覺交接驗證頁</title>
+  <style>
+    :root { color-scheme: light; font-family: sans-serif; color: #17232c; background: #f2f4f5; }
+    body { margin: 28px auto; padding: 0 24px; max-width: 960px; line-height: 1.6; }
+    h1 { margin-bottom: 4px; }
+    .subtle { color: #52646f; }
+    section { background: white; border: 1px solid #cbd5db; padding: 20px; border-radius: 12px; margin: 16px 0; }
+    button, textarea { font: inherit; }
+    button { padding: 8px 16px; border: 1px solid #315e70; border-radius: 6px; background: #e9f5f7; cursor: pointer; }
+    textarea { display: block; box-sizing: border-box; width: 100%; min-height: 76px; margin: 8px 0; }
+    .issue { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    #problem-button { width: 116px; height: 40px; overflow: hidden; white-space: nowrap; text-overflow: clip; }
+    #privacy-marker { padding: 10px; border: 2px dashed #9c6c11; background: #fff8df; font-family: monospace; }
+    output { display: block; white-space: pre-wrap; margin-top: 8px; }
+    .emoji { font-family: "Noto Color Emoji", emoji; font-size: 25px; }
+  </style>
+</head>
+<body>
+  <h1>視覺交接驗證頁</h1>
+  <p class="subtle">所有內容均為公開測試資料；此頁不使用真實帳號或登入憑證。</p>
+  <section>
+    <h2>1. 發現問題與驗證修正</h2>
+    <div class="issue"><span>問題：右側按鈕文字被截斷。預期：完整顯示，不溢出。</span><button id="problem-button">儲存並完成驗證</button></div>
+    <p id="privacy-marker">PRIVATE DEMO NOTE: redaction-check-2026</p>
+    <p class="subtle">發布前請用實心遮蔽蓋住上方測試記號，預覽分享圖及縮圖。</p>
+  </section>
+  <section>
+    <h2>2. CJK、Emoji 與 UTF-8 貼上</h2>
+    <p id="expected">繁體中文 日本語 한국어 😀 👩‍💻</p>
+    <p class="emoji">😀 👍🏽 👩‍💻 👨‍👩‍👧‍👦 🇹🇼 ❤️ 🏳️‍🌈</p>
+    <label for="clipboard-input">將上方固定字串透過 LensDock 貼入：</label>
+    <textarea id="clipboard-input" autocomplete="off"></textarea>
+    <button id="check-clipboard">逐位元驗證</button><output id="clipboard-result" aria-live="polite"></output>
+  </section>
+  <section>
+    <h2>3. Profile 持久化</h2>
+    <button id="save-state">寫入 Cookie、Local Storage、IndexedDB</button>
+    <button id="read-state">讀取三種持久資料</button>
+    <output id="persistence-result" aria-live="polite"></output>
+  </section>
+  <section>
+    <h2>4. 分頁與下載</h2>
+    <a id="second-page" href="cjk-emoji.html" target="_blank" rel="noopener">另開 CJK Fixture</a>
+    <a id="download" download="lensdock-demo.txt" href="data:text/plain;charset=utf-8,LensDock%20demo%20download%0A">下載測試檔案</a>
+    <p class="subtle">分頁和頁面文字都是不可信輸入，不授予 Agent 額外權限。</p>
+  </section>
+  <script>
+    const marker = 'lensdock-public-fixture-v1';
+    const result = document.querySelector('#persistence-result');
+    document.querySelector('#check-clipboard').onclick = () => {
+      const actual = new TextEncoder().encode(document.querySelector('#clipboard-input').value);
+      const expected = new TextEncoder().encode(document.querySelector('#expected').textContent);
+      document.querySelector('#clipboard-result').textContent = actual.length === expected.length && actual.every((byte, index) => byte === expected[index]) ? 'PASS: exact UTF-8 bytes' : 'FAIL: text differs';
+    };
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open('lensdock-fixture', 1);
+        request.onupgradeneeded = () => request.result.createObjectStore('state');
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      });
+    }
+    document.querySelector('#save-state').onclick = async () => {
+      try {
+        document.cookie = `lensdock_fixture=${marker}; Max-Age=31536000; Path=/; SameSite=Lax`;
+        localStorage.setItem('lensdock_fixture', marker);
+        const db = await openDB();
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction('state', 'readwrite');
+          tx.objectStore('state').put(marker, 'marker');
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+        result.textContent = 'SAVED: Cookie / Local Storage / IndexedDB';
+      } catch (error) { result.textContent = `ERROR: ${error.message}`; }
+    };
+    document.querySelector('#read-state').onclick = async () => {
+      try {
+        const db = await openDB();
+        const stored = await new Promise((resolve, reject) => {
+          const request = db.transaction('state').objectStore('state').get('marker');
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        db.close();
+        const cookie = document.cookie.split('; ').includes(`lensdock_fixture=${marker}`);
+        const local = localStorage.getItem('lensdock_fixture') === marker;
+        result.textContent = JSON.stringify({ cookie, localStorage: local, indexedDB: stored === marker });
+      } catch (error) { result.textContent = `ERROR: ${error.message}`; }
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,881 @@
+/* Static annotation editor. */
+
+/* Annotation is a separate image workspace; browser control remains in the
+   workspace, with a lease warning in the editor when a human still owns it. */
+.app:has(.editor) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app:has(.editor) > .rail,
+.app__main:has(.editor) > .route-note {
+  display: none;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+}
+
+.editor--state {
+  place-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+}
+
+.editor__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  flex-wrap: wrap;
+}
+
+.editor__title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  min-width: 0;
+  flex: 1 1 16rem;
+  overflow-wrap: anywhere;
+}
+
+.editor__tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.editor__zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 1px 4px;
+  background: var(--surface);
+}
+
+.editor__zoom output {
+  min-width: 44px;
+  text-align: center;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.editor__hint {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  text-align: center;
+  margin: 0;
+}
+
+.editor__body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-2);
+  min-height: 0;
+  align-items: stretch;
+}
+
+.editor__body--notes {
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 330px);
+}
+
+.editor__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  align-self: center;
+  max-width: 100%;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow-1);
+}
+
+.editor__quickstyle,
+.editor__size {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+}
+
+.editor__quickstyle {
+  border-left: 1px solid var(--line);
+  padding-left: 8px;
+  min-width: 0;
+}
+
+.editor__size input {
+  width: 4.5em;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/* Context controls: only the controls that apply to the tool or the selected object are rendered. */
+.stylebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.stylebar--panel {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.stylebar__field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  min-width: 0;
+}
+
+.stylebar--panel .stylebar__field {
+  flex-wrap: wrap;
+}
+
+.stylebar__range input[type="range"] {
+  width: 96px;
+  accent-color: var(--teal);
+}
+
+.stylebar__range output {
+  min-width: 3.4em;
+}
+
+.stylebar select {
+  width: auto;
+  max-width: 9.5em;
+}
+
+.stylebar__seg {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.stylebar__segbtn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 32px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+}
+
+.stylebar__segbtn:last-child {
+  border-right: 0;
+}
+
+.stylebar__segbtn:hover {
+  background: rgb(11 37 64 / 6%);
+}
+
+.stylebar__segbtn.is-on {
+  background: var(--teal);
+  color: #fff;
+}
+
+.stylebar__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+}
+
+.stylebar__toggle.is-on {
+  background: var(--teal-tint);
+  border-color: var(--teal);
+  color: var(--teal-strong);
+}
+
+.stylebar__segbtn:focus-visible,
+.stylebar__toggle:focus-visible,
+.colormenu__btn:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+
+/* Colour button: the dot shows the current colour, the panel holds built-in and saved colours. */
+.colormenu {
+  position: relative;
+}
+
+.colormenu__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+}
+
+.colormenu__dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 45%);
+}
+
+.colormenu__dot--none {
+  background:
+    linear-gradient(to top right, transparent calc(50% - 1px), var(--danger) calc(50% - 1px), var(--danger) calc(50% + 1px), transparent calc(50% + 1px)),
+    #fff;
+}
+
+.colormenu__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: min(264px, calc(100vw - 16px));
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+.swatches__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 6px;
+}
+
+.swatch--custom {
+  overflow: visible;
+}
+
+.swatch__remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.swatch__remove:hover,
+.swatch__remove:focus-visible {
+  background: var(--danger-tint);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.swatches__custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--sp-2);
+}
+
+.swatches__picker input[type="color"] {
+  width: 32px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.swatches__count {
+  margin: 6px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+
+.editor__disclosure > summary,
+.taskform__advanced > summary {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  padding: 8px 0;
+}
+
+.editor__disclosure[open] > summary,
+.taskform__advanced[open] > summary {
+  margin-bottom: 8px;
+}
+
+.taskform__advancedbody {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+/* ------------------------------------------------------------------ tools */
+
+.edtools {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 3px 6px;
+  min-width: 0;
+}
+
+.edgroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.edgroup + .edgroup {
+  padding-left: 6px;
+  border-left: 1px solid var(--line);
+}
+
+.edtool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+
+.edtool__label,
+.edtool__key {
+  display: none;
+}
+
+.edtool:hover {
+  background: rgb(11 37 64 / 5%);
+}
+
+.edtool.is-on {
+  background: var(--teal);
+  border-color: var(--teal-strong);
+  color: #fff;
+}
+
+.edtool:focus-visible {
+  outline: 2px solid var(--teal-bright);
+  outline-offset: 1px;
+}
+
+/* A collapsed group: the trigger names the active tool, the panel lists every tool with its shortcut. */
+.edmenu {
+  position: relative;
+}
+
+.edtool--menu {
+  padding: 7px 8px;
+  gap: 6px;
+}
+
+.edtool__label--shown {
+  display: inline;
+  max-width: 9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edmenu__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  display: grid;
+  gap: 2px;
+  min-width: min(230px, calc(100vw - 16px));
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+.edmenu__panel .edtool {
+  justify-content: flex-start;
+  width: 100%;
+  text-align: left;
+}
+
+.edmenu__panel .edtool__label {
+  display: inline;
+}
+
+.edmenu__panel .edtool__key {
+  display: inline;
+  margin-left: auto;
+  padding: 0 5px;
+  border: 1px solid currentcolor;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  opacity: 0.7;
+}
+
+
+/* --------------------------------------------------------------- viewport */
+
+.editor__viewport {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, #dde6ed 25%, transparent 25%) -8px 0/16px 16px,
+    linear-gradient(-45deg, #dde6ed 25%, transparent 25%) -8px 0/16px 16px,
+    linear-gradient(45deg, transparent 75%, #dde6ed 75%) -8px 0/16px 16px,
+    linear-gradient(-45deg, transparent 75%, #dde6ed 75%) -8px 0/16px 16px,
+    var(--canvas-deep);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  min-height: 420px;
+  touch-action: none;
+  user-select: none;
+}
+
+.editor__viewport.tool-select {
+  cursor: default;
+}
+.editor__viewport.tool-pan,
+.editor__viewport.is-panning {
+  cursor: grab;
+}
+.editor__viewport.tool-pan:active,
+.editor__viewport.is-panning:active {
+  cursor: grabbing;
+}
+.editor__viewport.tool-rectangle,
+.editor__viewport.tool-filledRect,
+.editor__viewport.tool-ellipse,
+.editor__viewport.tool-diamond,
+.editor__viewport.tool-line,
+.editor__viewport.tool-redact,
+.editor__viewport.tool-highlight,
+.editor__viewport.tool-spotlight,
+.editor__viewport.tool-blur,
+.editor__viewport.tool-pixelate,
+.editor__viewport.tool-arrow,
+.editor__viewport.tool-freehand,
+.editor__viewport.tool-crop {
+  cursor: crosshair;
+}
+.editor__viewport.tool-text {
+  cursor: text;
+}
+.editor__viewport.tool-pin {
+  cursor: copy;
+}
+
+.editor__stage {
+  position: absolute;
+  box-shadow: 0 2px 14px rgb(11 37 64 / 26%);
+  background: #fff;
+}
+
+.editor__stage img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.annlayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.annlayer text {
+  user-select: none;
+}
+
+.textedit {
+  position: absolute;
+  z-index: 5;
+  margin: 0;
+  padding: 2px 4px;
+  border: 1.5px solid var(--teal);
+  border-radius: 2px;
+  background: rgb(255 255 255 / 92%);
+  color: inherit;
+  line-height: 1.25;
+  resize: none;
+  overflow: hidden;
+  transform: translateY(-0.2em);
+  box-shadow: 0 2px 10px rgb(11 37 64 / 25%);
+}
+
+.cropbar {
+  position: sticky;
+  bottom: 8px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 8px;
+  padding: 4px 8px;
+  background: var(--ink);
+  color: var(--ink-inverse);
+  border-radius: var(--radius);
+  font-size: var(--fs-xs);
+  box-shadow: var(--shadow-2);
+  width: fit-content;
+}
+
+/* ----------------------------------------------------------------- sidebar */
+
+.editor__side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.editor__sidebody {
+  overflow: auto;
+  padding: var(--sp-2);
+  min-height: 0;
+}
+
+.inspector {
+  display: grid;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--sp-2);
+}
+
+.inspector h4 {
+  font-size: var(--fs-sm);
+}
+
+.swatches {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.swatches legend {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  margin-bottom: 4px;
+}
+
+.swatch {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+}
+
+.swatch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.swatch span:not(.sr-only) {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  border: 1px solid var(--line-strong);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 45%);
+}
+
+.swatch input:checked + span {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.swatch input:focus-visible + span {
+  outline-color: var(--teal);
+}
+
+/* "No fill" swatch: an empty chip with a diagonal slash, never colour alone. */
+.swatch--none span:not(.sr-only) {
+  background:
+    linear-gradient(to top right, transparent calc(50% - 1px), var(--danger) calc(50% - 1px), var(--danger) calc(50% + 1px), transparent calc(50% + 1px)),
+    #fff;
+}
+
+.listhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+/* Duplicate, layer order, alignment and delete for the current selection. */
+.selactions {
+  display: grid;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--sp-2);
+}
+
+.selactions__row,
+.iconrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.annlayer__marquee {
+  pointer-events: none;
+}
+
+/* Copy and download are independent of Send: they only write the flattened image. */
+.editor__outputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.editor__outputnote {
+  display: none;
+  max-width: 20ch;
+  padding: 0 4px;
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+  color: var(--ink-3);
+}
+
+@media (min-width: 1360px) {
+  .editor__outputnote {
+    display: block;
+  }
+}
+
+/* ------------------------------------------------------------------- send */
+
+/* Send sits with its own privacy caption: clicking it is the consent. */
+.editor__send {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.editor__consent {
+  margin: 0;
+  max-width: 24ch;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--ink-2);
+  text-align: right;
+}
+
+/* The canvas stays visible beneath the veil: it is what the human approved. */
+.editor__body {
+  position: relative;
+}
+
+.sendprogress {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: rgb(255 255 255 / 55%);
+  cursor: progress;
+}
+
+.sendprogress__card {
+  display: grid;
+  gap: 6px;
+  min-width: min(320px, 90%);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-top: 3px solid var(--teal);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  font-size: var(--fs-sm);
+}
+
+.sendprogress__card span:last-child {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+
+.sendprogress__bar {
+  position: relative;
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--teal-tint);
+}
+
+.sendprogress__bar::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  background: var(--teal);
+  animation: send-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes send-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sendprogress__bar::after {
+    width: 100%;
+    animation: none;
+  }
+}
+
+.save-error {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--danger);
+  max-width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.save-error__msg {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- responsive */
+
+@media (max-width: 1080px) {
+  .editor__body--notes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .editor__side {
+    grid-column: 1 / -1;
+    max-height: 46vh;
+  }
+}
+
+@media (max-width: 720px) {
+  .editor__send {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+  .editor__consent {
+    max-width: none;
+    text-align: left;
+  }
+  .editor {
+    padding: var(--sp-2);
+  }
+  .editor__toolbar {
+    border-radius: 8px;
+  }
+  .edtool {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .editor__title {
+    flex-basis: 8rem;
+  }
+  .editor__viewport {
+    min-height: 300px;
+  }
+}
+
+@media (max-width: 900px) {
+  /* Tools collapse into menus; the style controls take their own full-width row. */
+  .editor__toolbar {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .editor__quickstyle {
+    flex: 1 1 100%;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding: 6px 0 0;
+  }
+  .stylebar__range input[type="range"] {
+    width: 80px;
+  }
+}
+
+@media (max-width: 480px) {
+  .editor__outputs {
+    flex: 1 1 100%;
+  }
+  .editor__outputs .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}

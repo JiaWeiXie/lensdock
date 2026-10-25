@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LensDock CJK and Emoji Test Fixture</title>
+  <style>
+    body { margin: 32px; font-family: sans-serif; font-size: 22px; line-height: 1.6; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid; padding: 12px; text-align: left; }
+    .emoji { font-family: "Noto Color Emoji", emoji; font-size: 36px; }
+    textarea { width: 96%; min-height: 96px; font: inherit; }
+    button { padding: 10px 18px; font: inherit; }
+    output { display: block; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>LensDock CJK and Emoji Fixture</h1>
+  <p>Verify the browser view, noVNC capture, and annotation export separately.</p>
+  <table>
+    <thead><tr><th>Case</th><th>Expected content</th></tr></thead>
+    <tbody>
+      <tr><td>Traditional Chinese</td><td lang="zh-Hant-TW">繁體中文：臺灣、登入帳號、瀏覽器、截圖與標註。</td></tr>
+      <tr><td>Simplified Chinese</td><td lang="zh-Hans-CN">简体中文：登录账号、浏览器、截图与标注。</td></tr>
+      <tr><td>Japanese</td><td lang="ja">日本語：ブラウザー、ログイン、画像、設定。</td></tr>
+      <tr><td>Korean</td><td lang="ko">한국어: 브라우저, 로그인, 이미지, 설정.</td></tr>
+      <tr><td>Emoji corpus</td><td class="emoji">😀 👍🏽 👩‍💻 👨‍👩‍👧‍👦 🇹🇼 ❤️ 🏳️‍🌈</td></tr>
+    </tbody>
+  </table>
+  <h2>Exact UTF-8 clipboard round trip</h2>
+  <p id="expected">繁體中文 日本語 한국어 😀 👩‍💻</p>
+  <label for="input">Paste the line above into the remote browser:</label>
+  <textarea id="input" autocomplete="off"></textarea>
+  <button id="verify" type="button">Verify exact text</button>
+  <output id="result" aria-live="polite"></output>
+  <script>
+    // Font availability alone does not prove that every glyph renders correctly.
+    const expected = document.getElementById("expected").textContent;
+    document.getElementById("verify").addEventListener("click", () => {
+      const actual = document.getElementById("input").value;
+      document.getElementById("result").textContent = actual === expected
+        ? "PASS: exact text match"
+        : "FAIL: the pasted text differs";
+    });
+  </script>
+</body>
+</html>

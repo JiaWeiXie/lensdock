@@ -1,0 +1,100 @@
+name: lensdock-product
+
+services:
+  config-init:
+    image: lensdock/gateway:dev
+    profiles: [setup]
+    command: [prepare-config]
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ${LENSDOCK_STATE_DIR:-../.lensdock}/product:/source:ro
+      - runtime-credentials:/prepared/runtime
+      - gateway-credentials:/prepared/gateway
+    healthcheck:
+      disable: true
+
+  runtime:
+    image: lensdock/runtime:dev
+    hostname: runtime
+    init: false
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+      - /run:mode=0755
+      - /home/browser:uid=10001,gid=10001,mode=0700
+    shm_size: 1gb
+    mem_limit: 4g
+    cpus: 4
+    cap_drop: [ALL]
+    # Only root tini retains KILL, to forward stop signals after the runtime drops UID.
+    cap_add: [CHOWN, SETUID, SETGID, SETPCAP, KILL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./browser/seccomp/chromium.json
+    env_file:
+      - ${LENSDOCK_STATE_DIR:-../.lensdock}/runtime.env
+    environment:
+      LENSDOCK_WORKSPACE_ID: ${LENSDOCK_WORKSPACE_ID:-default}
+      LENSDOCK_MODE: ${LENSDOCK_MODE:-AGENT}
+      LENSDOCK_TLS_CERT_FILE: /run/lensdock-credentials/runtime.crt
+      LENSDOCK_TLS_KEY_FILE: /run/lensdock-credentials/runtime.key
+      LENSDOCK_TLS_CLIENT_CA_FILE: /run/lensdock-credentials/ca.crt
+      LENSDOCK_TLS_CLIENT_NAMES: gateway
+    volumes:
+      - lensdock-profile:/data/profile
+      - lensdock-downloads:/data/downloads
+      - lensdock-runtime-policy:/data/runtime
+      - runtime-credentials:/run/lensdock-credentials:ro
+    networks: [control, browser-egress]
+    stop_grace_period: 30s
+
+  gateway:
+    image: lensdock/gateway:dev
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+      - /run:mode=0755
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, SETPCAP]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    cpus: 2
+    environment:
+      LENSDOCK_HEALTH_ORIGIN: ${LENSDOCK_PUBLIC_ORIGIN:-http://127.0.0.1:18081}
+      # Local demo only (see docs): "1" lets same-origin browsers enter without a token.
+      # The gateway refuses to start with it unless the public origin is loopback, and the
+      # host port below stays bound to 127.0.0.1. Set it in compose.env, never inline.
+      LENSDOCK_DEMO_NO_AUTH: ${LENSDOCK_DEMO_NO_AUTH:-0}
+    ports:
+      - "127.0.0.1:${LENSDOCK_HOST_PORT:-18081}:8080"
+    volumes:
+      - gateway-db:/data/db
+      - gateway-private:/data/private
+      - gateway-artifacts:/data/artifacts
+      - gateway-credentials:/run/lensdock:ro
+      - ${LENSDOCK_STATE_DIR:-../.lensdock}/product/public:/run/lensdock-status:ro
+    networks: [control, gateway-edge]
+    depends_on:
+      runtime:
+        condition: service_healthy
+    stop_grace_period: 30s
+
+networks:
+  control:
+    internal: true
+  browser-egress: {}
+  gateway-edge: {}
+
+volumes:
+  lensdock-profile:
+  lensdock-downloads:
+  lensdock-runtime-policy:
+  gateway-db:
+  gateway-private:
+  gateway-artifacts:
+  runtime-credentials:
+  gateway-credentials:

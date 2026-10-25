@@ -1,0 +1,1271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:lensdock:schema:feedback:0.3.0",
+  "title": "LensDock Published Feedback Revision",
+  "description": "An immutable, human-approved share bundle. Private drafts and delivery state are separate entities.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "enum": [
+        "0.1.0",
+        "0.2.0",
+        "0.3.0"
+      ],
+      "description": "0.2.0 adds the drawing capture source, the ellipse, diamond and line annotation kinds, and visual-only tasks (empty description, expectedResult and actualResult). 0.3.0 adds the highlight, spotlight, blur and pixelate annotation kinds, the arrow control point and the opacity, effectSizePx, arrowStyle, textStyle and smoothing styles. A 0.1.0 document may use none of the 0.2.0 or 0.3.0 features: it requires a description and, for bug and visual-regression, expectedResult and actualResult. A 0.2.0 document may use none of the 0.3.0 features. Blur and pixelate are cosmetic base-image effects, not redaction: only redact with mode solid removes pixels securely."
+    },
+    "feedbackId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "workspaceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "publishedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "capture": {
+      "$ref": "#/$defs/capture"
+    },
+    "task": {
+      "$ref": "#/$defs/task"
+    },
+    "annotations": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/annotation"
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "sharePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "humanApproved": {
+          "const": true
+        },
+        "redactionsApplied": {
+          "const": true
+        },
+        "includesRawImage": {
+          "const": false
+        },
+        "diagnosticsIncluded": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "humanApproved",
+        "redactionsApplied",
+        "includesRawImage",
+        "diagnosticsIncluded"
+      ]
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "feedbackId",
+    "revision",
+    "workspaceId",
+    "publishedAt",
+    "capture",
+    "task",
+    "annotations",
+    "artifacts",
+    "sharePolicy"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": "0.1.0"
+          }
+        },
+        "required": [
+          "schemaVersion"
+        ]
+      },
+      "then": {
+        "properties": {
+          "task": {
+            "properties": {
+              "description": {
+                "minLength": 1
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "bug",
+                        "visual-regression"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "expectedResult": {
+                      "minLength": 1
+                    },
+                    "actualResult": {
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "capture": {
+            "properties": {
+              "source": {
+                "enum": [
+                  "desktop",
+                  "page-viewport",
+                  "page-full"
+                ]
+              }
+            }
+          },
+          "annotations": {
+            "items": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "rectangle",
+                    "arrow",
+                    "freehand",
+                    "text",
+                    "pin",
+                    "redact"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "enum": [
+              "0.1.0",
+              "0.2.0"
+            ]
+          }
+        },
+        "required": [
+          "schemaVersion"
+        ]
+      },
+      "then": {
+        "properties": {
+          "annotations": {
+            "items": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "rectangle",
+                    "arrow",
+                    "ellipse",
+                    "diamond",
+                    "line",
+                    "freehand",
+                    "text",
+                    "pin",
+                    "redact"
+                  ]
+                },
+                "geometry": {
+                  "not": {
+                    "required": [
+                      "control"
+                    ]
+                  }
+                },
+                "style": {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "opacity"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "effectSizePx"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "arrowStyle"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "textStyle"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "smoothing"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "rectangle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ]
+    },
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/point"
+        },
+        "end": {
+          "$ref": "#/$defs/point"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "styleBase": {
+      "type": "object",
+      "properties": {
+        "stroke": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "fill": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "description": "Shape fill for rectangle, ellipse and diamond annotations; absent means transparent."
+        },
+        "strokeWidthPx": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 32
+        },
+        "fontSizePx": {
+          "type": "number",
+          "minimum": 8,
+          "maximum": 128
+        }
+      }
+    },
+    "style": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/styleBase"
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "styleHighlight": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/styleBase"
+        }
+      ],
+      "properties": {
+        "opacity": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 0.8,
+          "description": "Alpha of the highlight fill (schema 0.3.0, highlight only); absent means 0.35. The highlight color is style.stroke, default #f2a900."
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "styleEffect": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/styleBase"
+        }
+      ],
+      "properties": {
+        "effectSizePx": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 64,
+          "description": "Blur radius or pixelate block edge in source-image pixels (schema 0.3.0, blur and pixelate only); absent means 12 for blur and 16 for pixelate. Cosmetic only, never redaction."
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "styleArrow": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/styleBase"
+        }
+      ],
+      "properties": {
+        "arrowStyle": {
+          "enum": [
+            "filled",
+            "open",
+            "double",
+            "curved"
+          ],
+          "description": "Schema 0.3.0, arrow only; absent means filled. A curved arrow is a quadratic curve through geometry.control."
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "styleText": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/styleBase"
+        }
+      ],
+      "properties": {
+        "textStyle": {
+          "enum": [
+            "plain",
+            "outline",
+            "label",
+            "shadow",
+            "mono",
+            "bold",
+            "underline"
+          ],
+          "description": "Schema 0.3.0, text only; absent means outline."
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "styleFreehand": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/styleBase"
+        }
+      ],
+      "properties": {
+        "smoothing": {
+          "type": "boolean",
+          "description": "Schema 0.3.0, freehand only; true renders the stored points as a smooth quadratic path, absent means false."
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "annotation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "rectangle"
+            },
+            "geometry": {
+              "$ref": "#/$defs/rectangle"
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/style"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "arrow"
+            },
+            "geometry": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "start": {
+                  "$ref": "#/$defs/point"
+                },
+                "end": {
+                  "$ref": "#/$defs/point"
+                },
+                "control": {
+                  "$ref": "#/$defs/point",
+                  "description": "Schema 0.3.0, arrow only: control point of a quadratic curve, used when style.arrowStyle is curved and ignored otherwise."
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/styleArrow"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "ellipse"
+            },
+            "geometry": {
+              "$ref": "#/$defs/rectangle"
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/style"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "diamond"
+            },
+            "geometry": {
+              "$ref": "#/$defs/rectangle"
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/style"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "line"
+            },
+            "geometry": {
+              "$ref": "#/$defs/segment"
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/style"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "freehand"
+            },
+            "geometry": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "points": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 10000,
+                  "items": {
+                    "$ref": "#/$defs/point"
+                  }
+                }
+              },
+              "required": [
+                "points"
+              ]
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/styleFreehand"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "text"
+            },
+            "geometry": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "position": {
+                  "$ref": "#/$defs/point"
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "position",
+                "text"
+              ]
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/styleText"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "pin"
+            },
+            "geometry": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "position": {
+                  "$ref": "#/$defs/point"
+                },
+                "number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                }
+              },
+              "required": [
+                "position",
+                "number"
+              ]
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/style"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "redact"
+            },
+            "geometry": {
+              "$ref": "#/$defs/rectangle"
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "mode": {
+              "const": "solid"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry",
+            "mode"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "highlight"
+            },
+            "geometry": {
+              "$ref": "#/$defs/rectangle"
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/styleHighlight"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "spotlight"
+            },
+            "geometry": {
+              "$ref": "#/$defs/rectangle"
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/style"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "blur"
+            },
+            "geometry": {
+              "$ref": "#/$defs/rectangle"
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/styleEffect"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "const": "pixelate"
+            },
+            "geometry": {
+              "$ref": "#/$defs/rectangle"
+            },
+            "comment": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4000
+            },
+            "style": {
+              "$ref": "#/$defs/styleEffect"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "geometry"
+          ]
+        }
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "enum": [
+            "screenshot.redacted.png",
+            "screenshot.annotated.png",
+            "environment.json",
+            "diagnostics.redacted.json"
+          ]
+        },
+        "mimeType": {
+          "enum": [
+            "image/png",
+            "application/json"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 33554432
+        }
+      },
+      "required": [
+        "name",
+        "mimeType",
+        "sha256",
+        "sizeBytes"
+      ]
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "source": {
+          "enum": [
+            "desktop",
+            "page-viewport",
+            "page-full",
+            "drawing"
+          ]
+        },
+        "provenance": {
+          "enum": [
+            "client-framebuffer",
+            "runtime-cdp",
+            "generated-canvas"
+          ]
+        },
+        "capturedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serverReceivedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "runtimeGeneration": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "description": "Empty only for a drawing, which has no runtime; every other source requires 1 to 128 characters."
+        },
+        "targetId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "navigationId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "consistency": {
+          "enum": [
+            "stable-navigation",
+            "best-effort",
+            "unknown"
+          ]
+        },
+        "imageWidthPx": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "imageHeightPx": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "redactedImageSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "page": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "urlSanitized": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "titleSanitized": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 512
+            },
+            "viewportWidthCss": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "viewportHeightCss": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "pixelsPerCssX": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "pixelsPerCssY": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "scrollXCss": {
+              "type": "number"
+            },
+            "scrollYCss": {
+              "type": "number"
+            },
+            "browserVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "urlSanitized",
+            "titleSanitized",
+            "viewportWidthCss",
+            "viewportHeightCss",
+            "pixelsPerCssX",
+            "pixelsPerCssY",
+            "scrollXCss",
+            "scrollYCss",
+            "browserVersion"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "provenance",
+        "capturedAt",
+        "serverReceivedAt",
+        "runtimeGeneration",
+        "targetId",
+        "navigationId",
+        "consistency",
+        "imageWidthPx",
+        "imageHeightPx",
+        "redactedImageSha256"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "desktop"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "properties": {
+              "provenance": {
+                "const": "client-framebuffer"
+              },
+              "runtimeGeneration": {
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "drawing"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "properties": {
+              "provenance": {
+                "const": "generated-canvas"
+              },
+              "runtimeGeneration": {
+                "const": ""
+              },
+              "targetId": {
+                "type": "null"
+              },
+              "navigationId": {
+                "type": "null"
+              },
+              "consistency": {
+                "const": "unknown"
+              }
+            },
+            "not": {
+              "required": [
+                "page"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "enum": [
+                  "page-viewport",
+                  "page-full"
+                ]
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "required": [
+              "page"
+            ],
+            "properties": {
+              "provenance": {
+                "const": "runtime-cdp"
+              },
+              "runtimeGeneration": {
+                "minLength": 1
+              },
+              "targetId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "bug",
+            "task",
+            "question",
+            "visual-regression"
+          ]
+        },
+        "intent": {
+          "enum": [
+            "analyze-only",
+            "reproduce",
+            "modify-and-verify"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 12000,
+          "description": "May be empty from 0.2.0 on (a visual-only revision); 0.1.0 requires 1 to 12000 characters."
+        },
+        "expectedResult": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 6000
+        },
+        "actualResult": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 6000
+        },
+        "reproductionSteps": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "intent",
+        "title",
+        "description",
+        "expectedResult",
+        "actualResult",
+        "reproductionSteps"
+      ]
+    },
+    "draftTask": {
+      "type": "object",
+      "description": "The task of a private draft, as the API accepts it. Only kind and intent are required; every prose field may be omitted or empty. Omitted fields read back as empty strings and an empty title is replaced by 'Visual feedback' only when a revision is published.",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/task/properties/kind"
+        },
+        "intent": {
+          "$ref": "#/$defs/task/properties/intent"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 12000
+        },
+        "expectedResult": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 6000
+        },
+        "actualResult": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 6000
+        },
+        "reproductionSteps": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "intent"
+      ]
+    }
+  }
+}

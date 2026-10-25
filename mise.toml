@@ -1,0 +1,150 @@
+[settings]
+lockfile = true
+
+[tools]
+# go must equal go.mod `toolchain` and the GO_IMAGE ARG in docker/browser/Dockerfile (`mise run check:pins`).
+go = "1.27.3"
+node = "24.22.1"
+pnpm = "11.28.8"
+python = "3.13.17"
+uv = "0.13.5"
+shellcheck = "0.11.0"
+# SPIKE-04 compatibility subject; never run `agent-browser install` (it would download a local browser).
+"npm:agent-browser" = "0.39.2"
+
+[env]
+GOTOOLCHAIN = "local"
+UV_PYTHON_PREFERENCE = "only-system"
+LENSDOCK_API = "http://127.0.0.1:18081"
+LENSDOCK_STATE_DIR = "{{config_root}}/.lensdock"
+# Defaults to the host architecture (the Docker engine's on Docker Desktop and OrbStack); override with LENSDOCK_ARCH.
+LENSDOCK_ARCH = "{{ get_env(name='LENSDOCK_ARCH', default=arch(x64='amd64', arm64='arm64')) }}"
+
+[tasks.validate]
+description = "Validate the specification package (not a running application)"
+run = "uv run --script tools/validate_spec.py"
+
+[tasks."go:fmt"]
+description = "Fail (listing the offending files) when Go sources are not gofmt-clean"
+run = 'out=$(gofmt -l cmd internal tests); test -z "$out" || { echo "$out"; exit 1; }'
+
+[tasks."go:vet"]
+description = "go vet for the host OS and for linux (including e2e build tag)"
+run = [
+  "go vet ./...",
+  "GOOS=linux go vet ./...",
+  "GOOS=linux go vet -tags e2e ./tests/e2e/...",
+]
+
+[tasks."go:test"]
+description = "Unit tests"
+run = "go test -race -count=1 ./..."
+
+[tasks."lint:sh"]
+description = "shellcheck the e2e orchestration scripts"
+run = "shellcheck tests/e2e/*.sh tests/e2e/internal/harness/procsnap.sh"
+
+[tasks."check:pins"]
+description = "Go version pins must agree across mise.toml, go.mod and the Dockerfile"
+run = "tests/e2e/check-pins.sh"
+
+[tasks.check]
+description = "All static checks and unit tests"
+depends = ["validate", "go:fmt", "go:vet", "go:test", "lint:sh", "check:pins"]
+
+[tasks.build]
+description = "Host binaries into bin/"
+run = "go build -trimpath -o bin/ ./cmd/lensdock ./cmd/runtime ./cmd/gateway"
+
+[tasks."build:linux"]
+description = "Linux CLI and e2e test binary for LENSDOCK_ARCH"
+run = [
+  "CGO_ENABLED=0 GOOS=linux GOARCH=$LENSDOCK_ARCH go build -trimpath -o bin/linux-$LENSDOCK_ARCH/ ./cmd/lensdock",
+  "CGO_ENABLED=0 GOOS=linux GOARCH=$LENSDOCK_ARCH go test -c -tags e2e -o bin/linux-$LENSDOCK_ARCH/e2e.test ./tests/e2e",
+]
+
+[tasks."image:build"]
+description = "Build the runtime image"
+run = "docker buildx build --platform linux/$LENSDOCK_ARCH -f docker/browser/Dockerfile -t lensdock/runtime:dev --load ."
+
+[tasks."seccomp:generate"]
+description = "Regenerate the Chromium seccomp profile from the pinned moby default"
+run = "uv run --script tools/gen_seccomp.py -o docker/browser/seccomp/chromium.json"
+
+[tasks."runtime:init"]
+description = "Create the host operator token and runtime env file"
+run = "go run ./cmd/lensdock admin init --state-dir $LENSDOCK_STATE_DIR"
+
+[tasks."runtime:up"]
+description = "Start the runtime"
+run = "docker compose -f docker/browser/compose.yaml up -d --wait"
+
+[tasks."runtime:down"]
+description = "Stop the runtime; named volumes are kept"
+run = "docker compose -f docker/browser/compose.yaml down"
+
+[tasks."e2e:build-host"]
+description = "Host e2e test binary (macOS/Linux host tests)"
+run = "go test -c -tags e2e -o bin/e2e.test ./tests/e2e"
+
+[tasks."e2e:host"]
+description = "Host-side M0 acceptance tests (RT-02/03, CT-03, CT-10) against the running runtime"
+depends = ["build", "e2e:build-host"]
+run = "tests/e2e/run-host.sh"
+
+[tasks."e2e:sidecar"]
+description = "Sidecar tests sharing the runtime netns (CT-04, TX-01..03, RT-03 viewers, cut-text)"
+depends = ["build:linux"]
+run = "tests/e2e/run-sidecar.sh"
+
+[tasks."e2e:version-matrix"]
+description = "Record OS/kernel/Docker/arch/image/Browser versions for spike reports"
+run = "tests/e2e/version-matrix.sh"
+
+[tasks."e2e:rt01"]
+description = "RT-01 image checks"
+depends = ["image:build"]
+run = "tests/e2e/rt01-image.sh"
+
+[tasks."e2e:sandbox-matrix"]
+description = "SPIKE-01 sandbox matrix (custom seccomp vs default seccomp)"
+depends = ["build", "e2e:build-host", "image:build"]
+run = "tests/e2e/sandbox-matrix.sh"
+
+[tasks."e2e:vnc-cpu"]
+description = "SPIKE-02 marginal CPU of the view-only VNC server"
+depends = ["build:linux"]
+run = "tests/e2e/vnc-cpu.sh"
+
+[tasks."e2e:agent-browser"]
+description = "SPIKE-04 agent-browser through the lensdock CDP bridge (root and --path-secret modes)"
+depends = ["build"]
+run = "tests/e2e/agent-browser.sh"
+
+[tasks."web:build"]
+description = "Install locked frontend dependencies and build the offline UI"
+dir = "apps/web"
+run = ["pnpm install --frozen-lockfile", "pnpm build"]
+
+[tasks."gateway:image"]
+description = "Build the Debian slim Gateway and offline UI image"
+run = "docker buildx build --platform linux/$LENSDOCK_ARCH -f docker/gateway/Dockerfile -t lensdock/gateway:dev --load ."
+
+[tasks."product:init"]
+description = "Create workspace-scoped identities and runtime mutual-TLS certificates"
+run = "go run ./cmd/lensdock admin product-init --state-dir $LENSDOCK_STATE_DIR"
+
+[tasks."product:up"]
+description = "Prepare private container credentials and start the complete product"
+run = [
+  "docker compose --env-file \"$LENSDOCK_STATE_DIR/product/compose.env\" -f docker/compose.yaml run --rm config-init",
+  "go run ./cmd/lensdock update compose --deployment \"$LENSDOCK_STATE_DIR/deployment.json\" -- up -d --wait",
+]
+
+[tasks."product:down"]
+description = "Stop the complete product, keeping persistent volumes"
+run = 'go run ./cmd/lensdock update compose --deployment "$LENSDOCK_STATE_DIR/deployment.json" -- down'
+
+[tasks."gateway:dev"]
+description = "Serve the built UI with M0 host runtime for development"
+run = "go run ./cmd/gateway serve --config $LENSDOCK_STATE_DIR/product/gateway-host.json"

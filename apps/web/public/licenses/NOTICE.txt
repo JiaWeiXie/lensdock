@@ -1,0 +1,31 @@
+LensDock web UI - third-party font and library notices
+=======================================================
+
+The LensDock web UI bundles the font files below so that the interface and the
+annotation PNG export render identically on machines that have none of these
+fonts installed, and without contacting a third-party CDN. The fonts are
+redistributed unmodified as WOFF2 files produced by the Fontsource project
+(https://fontsource.org). Each family is licensed under the SIL Open Font
+License, Version 1.1; the full text accompanies this file (OFL-*.txt). The
+Font Software is not sold by itself, and no Reserved Font Name is used for a
+modified version.
+
+Family                Package                        Version  Copyright holder
+--------------------  -----------------------------  -------  ---------------------------
+IBM Plex Sans         @fontsource/ibm-plex-sans      5.3.0    Copyright 2019 IBM Corp.
+IBM Plex Mono         @fontsource/ibm-plex-mono      5.3.0    Copyright 2019 IBM Corp.
+Noto Sans TC          @fontsource/noto-sans-tc       5.3.1    Copyright Google Inc.
+Noto Sans SC          @fontsource/noto-sans-sc       5.3.1    Copyright Google Inc.
+Noto Sans JP          @fontsource/noto-sans-jp       5.3.1    Copyright Google Inc.
+Noto Sans KR          @fontsource/noto-sans-kr       5.3.1    Copyright Google Inc.
+Noto Color Emoji      @fontsource/noto-color-emoji   5.3.2    Copyright 2021 Google Inc.
+
+License texts (verbatim copies from the installed packages)
+  OFL-ibm-plex-sans.txt, OFL-ibm-plex-mono.txt, OFL-noto-sans-tc.txt,
+  OFL-noto-sans-sc.txt, OFL-noto-sans-jp.txt, OFL-noto-sans-kr.txt,
+  OFL-noto-color-emoji.txt
+
+noVNC (@novnc/novnc 1.7.0) - the RFB client library
+  The core library is licensed under MPL-2.0 (MPL-2.0.txt); see
+  noVNC-LICENSE.txt for the complete list of components and their licenses.
+  LensDock imports the library unmodified and uses only the public RFB API.

@@ -1,0 +1,30 @@
+Name:	chromium
+Umask:	0022
+State:	S (sleeping)
+Tgid:	4300
+Ngid:	0
+Pid:	4300
+PPid:	4261
+TracerPid:	0
+Uid:	10001	10001	10001	10001
+Gid:	10001	10001	10001	10001
+FDSize:	64
+Groups:	
+NStgid:	4300	7
+NSpid:	4300	7
+NSpgid:	4261	0
+NSsid:	4261	0
+VmPeak:	  1204480 kB
+VmRSS:	    98304 kB
+Threads:	14
+SigQ:	0/15678
+CapInh:	0000000000000000
+CapPrm:	0000000000000000
+CapEff:	0000000000000000
+CapBnd:	0000000000000000
+CapAmb:	0000000000000000
+NoNewPrivs:	1
+Seccomp:	2
+Seccomp_filters:	1
+Speculation_Store_Bypass:	thread force mitigated
+Cpus_allowed_list:	0-3

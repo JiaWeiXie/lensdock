@@ -1,0 +1,16 @@
+# Include only build inputs; private deployment state, Git history and local
+# dependencies must never reach the Docker daemon.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!docker/browser/
+docker/browser/README.md
+docker/browser/compose*.yaml
+docker/browser/seccomp/
+!apps/
+apps/*
+!apps/web/
+apps/web/node_modules/
+apps/web/dist/

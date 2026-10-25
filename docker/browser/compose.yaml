@@ -1,0 +1,45 @@
+# LensDock runtime (user-namespace sandbox with the custom Chromium seccomp profile).
+# Run via: mise run runtime:up   (requires `mise run image:build` and `mise run runtime:init` first)
+name: lensdock
+
+services:
+  runtime:
+    image: lensdock/runtime:dev
+    container_name: lensdock-runtime
+    hostname: lensdock-runtime
+    init: false # tini is the image entrypoint
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+      - /run:mode=0755
+      - /home/browser:uid=10001,gid=10001,mode=0700
+    shm_size: 1gb
+    mem_limit: 4g
+    cpus: 4
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - SETPCAP
+      - KILL # Root tini forwards stop signals; the runtime drops this capability.
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp/chromium.json
+    env_file:
+      - ../../.lensdock/runtime.env
+    environment:
+      LENSDOCK_MODE: ${LENSDOCK_MODE:-AGENT}
+    ports:
+      - "127.0.0.1:18080:8080"
+    volumes:
+      - lensdock-profile:/data/profile
+      - lensdock-downloads:/data/downloads
+      - lensdock-runtime-policy:/data/runtime
+    stop_grace_period: 30s
+
+volumes:
+  lensdock-profile:
+  lensdock-downloads:
+  lensdock-runtime-policy:

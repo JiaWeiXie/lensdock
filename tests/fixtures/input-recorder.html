@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LensDock input recorder</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #fff; }
+    /* The textarea covers the whole viewport so a pointer event at the screen centre always lands on it. */
+    #sink { position: fixed; inset: 0; width: 100%; height: 100%; box-sizing: border-box; border: 0; padding: 16px; font: 28px sans-serif; resize: none; }
+    #log { display: none; }
+  </style>
+</head>
+<body>
+  <textarea id="sink" autocomplete="off" spellcheck="false" autofocus></textarea>
+  <ol id="log"></ol>
+  <script>
+    // Records every keyboard, pointer, mouse, paste and input event that reaches the page.
+    // Tests read window.__events (or JSON.stringify(window.__events)) over CDP and compare it
+    // with what they injected through RFB. No event is ever expected from the view-only port.
+    window.__events = [];
+    const log = document.getElementById("log");
+    const sink = document.getElementById("sink");
+    const types = [
+      "keydown", "keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut",
+      "pointerdown", "pointerup", "pointermove", "mousedown", "mouseup", "mousemove",
+      "click", "dblclick", "contextmenu", "wheel", "compositionstart", "compositionend"
+    ];
+    function record(e) {
+      const entry = {
+        type: e.type,
+        t: Math.round(performance.now()),
+        key: e.key === undefined ? null : e.key,
+        code: e.code === undefined ? null : e.code,
+        x: e.clientX === undefined ? null : e.clientX,
+        y: e.clientY === undefined ? null : e.clientY,
+        button: e.button === undefined ? null : e.button,
+        data: e.type === "paste" && e.clipboardData ? e.clipboardData.getData("text/plain") : (e.data === undefined ? null : e.data)
+      };
+      window.__events.push(entry);
+      const li = document.createElement("li");
+      li.textContent = entry.type + " " + (entry.key || "") + " " + (entry.x === null ? "" : entry.x + "," + entry.y);
+      log.appendChild(li);
+    }
+    for (const t of types) window.addEventListener(t, record, true);
+    // Clears recorded events and the textarea; returns nothing so a CDP call stays small.
+    window.__reset = function () {
+      window.__events.length = 0;
+      log.textContent = "";
+      sink.value = "";
+      sink.focus();
+    };
+    window.__focus = function () { window.focus(); sink.focus(); return document.activeElement === sink; };
+  </script>
+</body>
+</html>

@@ -1,0 +1,2545 @@
+openapi: 3.1.0
+info:
+  title: LensDock Core API
+  version: 0.1.0-draft
+  description: >-
+    Core flow contract of the LensDock Gateway. The Gateway serves every
+    operation in this file from one origin. The web UI authenticates with the
+    sessionCookie scheme (pairing, login and logout at /api/v1/session are not
+    described here; with the opt-in local demo no-auth, see
+    README.md#local-demo-without-token-entry, a same-origin browser fetch of GET /api/v1/session
+    also starts a workspace-scoped human demo session) and the CLI, MCP server and Agents authenticate with
+    bearerAuth. The Browser Runtime implements getWorkspace, acquireLease,
+    renewLease and releaseLease itself and accepts bearer tokens only; in the
+    full product only the Gateway reaches it, over mutual TLS. The Gateway
+    also serves routes this file does not list: GET /healthz and /readyz,
+    /api/v1/session, /api/v1/system, /api/v1/audit, GET /api/v1/workspaces,
+    the workspace routes health, targets, files, resolution, clipboard,
+    maintenance, vnc/view, vnc/control and the lease-scoped cdp/ proxy, and
+    the feedback routes for crop, draft list and delete, revisions, delivery
+    state, manifest, bundle download and the private capture image. Their
+    absence here says nothing about whether they are supported. The Runtime
+    and the feedback routes answer a wrong method on a known path with 405
+    METHOD_NOT_ALLOWED and an Allow header. Full-page capture (page-full)
+    and multi-image feedback are not implemented.
+servers:
+- url: /
+security:
+- bearerAuth: []
+- sessionCookie: []
+paths:
+  /api/v1/workspaces/{workspaceId}:
+    get:
+      operationId: getWorkspace
+      summary: Read workspace and control state
+      description: Requires workspace-scoped authorization. Cookie-authenticated mutations
+        also require CSRF protection.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: The workspace ID in the path does not name this workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/workspaces/{workspaceId}/leases:
+    post:
+      operationId: acquireLease
+      summary: Acquire a single-writer lease
+      description: >-
+        The authenticated identity is the holder. A bearer-authenticated
+        caller receives the capability token once and must not log it; a
+        cookie-authenticated browser session receives only the lease, because
+        the Gateway keeps the token on the server. Agent mode grants
+        high-trust browser control, not read-only CDP. Idempotency-Key must be
+        1-256 printable ASCII characters. The Runtime never replays a grant:
+        reusing the key of the still-active lease returns 409
+        IDEMPOTENCY_REPLAY without a token, and any other key while a lease is
+        held returns 409 LEASE_CONFLICT. An Agent lease may name the feedback
+        it starts work on with feedbackId and an optional feedbackRevision.
+        The Gateway then requires that the calling agent is the assigned agent
+        and that the revision is ACKNOWLEDGED (or already IN_PROGRESS). When
+        feedbackRevision is omitted, feedbackId must have exactly one
+        acknowledged or in-progress revision assigned to the caller; with
+        several the request fails and the revision must be named. A
+        successful grant moves the revision to IN_PROGRESS. A HUMAN lease
+        with feedbackId, and feedbackRevision without feedbackId, return 400
+        INVALID_REQUEST. A failed feedback precondition returns 409
+        FEEDBACK_CONFLICT before any lease exists; a failed transition after
+        the grant revokes the lease and returns 409 FEEDBACK_CONFLICT.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/LeaseGrant'
+                - $ref: '#/components/schemas/LeaseView'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: The workspace ID in the path does not name this workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcquireLease'
+  /api/v1/workspaces/{workspaceId}/leases/{leaseId}/renew:
+    post:
+      operationId: renewLease
+      summary: Renew the current lease
+      description: Requires workspace-scoped authorization. Cookie-authenticated mutations
+        also require CSRF protection.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: leaseId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lease'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: The workspace ID in the path does not name this workspace, or the lease ID is not the current lease
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenewLease'
+  /api/v1/workspaces/{workspaceId}/leases/{leaseId}:
+    delete:
+      operationId: releaseLease
+      summary: Revoke the lease and close control connections
+      description: Requires workspace-scoped authorization. Cookie-authenticated mutations
+        also require CSRF protection.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: leaseId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '204':
+          description: Success
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: The workspace ID in the path does not name this workspace, or the lease ID is not the current lease
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/workspaces/{workspaceId}/takeover:
+    post:
+      operationId: requestTakeover
+      summary: Start a human takeover
+      description: Human-operator authorization is required. No new control grant
+        is issued before the old writer is fenced. Poll workspace state for completion.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '202':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TakeoverPending'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Takeover'
+  /api/v1/workspaces/{workspaceId}/captures:
+    post:
+      operationId: createCapture
+      summary: Reserve a desktop capture, capture a CDP viewport, or create a blank drawing
+      description: Desktop reservations require Human Operator workspace authorization
+        and no lease; they never change lease state and await an authenticated PNG
+        upload. CDP viewport capture requires targetId and the current human lease
+        or an explicitly authorized capture lease. A drawing (source drawing) requires
+        imageWidthPx and imageHeightPx, each an integer from 64 to 4096 within the
+        shared pixel and size limits (413 IMAGE_TOO_LARGE above them; nothing is clipped
+        or defaulted). The Gateway creates an opaque white PNG itself and answers with
+        a ready private capture (provenance generated-canvas, empty runtimeGeneration,
+        null targetId and navigationId, no page); it never contacts the browser runtime
+        and takes no targetId, leaseId or allowInterrupt, so it works while the browser
+        is unavailable. Authorization, ownership, Idempotency-Key and quotas are those
+        of every capture.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '202':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureState'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCapture'
+  /api/v1/captures/{captureId}:
+    get:
+      operationId: getCapture
+      summary: Read authorized private capture status
+      description: Private draft scope only. Published-feedback readers cannot use
+        this endpoint to retrieve raw image data.
+      parameters:
+      - name: captureId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureState'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/captures/{captureId}/image:
+    put:
+      operationId: uploadDesktopCapture
+      summary: Upload the PNG for a desktop capture reservation
+      description: Only the reserving human identity can upload before reservation
+        expiry. Enforce PNG decoding, dimension, size and memory limits. This is user-supplied
+        framebuffer evidence.
+      parameters:
+      - name: captureId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaptureState'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema:
+              type: string
+              format: binary
+  /api/v1/feedback:
+    post:
+      operationId: createDraft
+      summary: Create a private feedback draft
+      description: Requires workspace-scoped authorization. Cookie-authenticated mutations
+        also require CSRF protection.
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Draft'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDraft'
+    get:
+      operationId: listPublishedFeedback
+      summary: List authorized feedback revisions for a workspace
+      description: Assigned agents see only their authorized deliveries. Filtering
+        does not widen access. Drafts are not exposed by this endpoint.
+      parameters:
+      - name: workspaceId
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: state
+        in: query
+        schema:
+          enum:
+          - READY
+          - QUEUED
+          - ACKNOWLEDGED
+          - IN_PROGRESS
+          - RESOLVED
+          - VERIFIED
+          - CANCELLED
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackList'
+        '401': &id001
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': &id002
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409': &id003
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412': &id004
+          description: Precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/feedback/{feedbackId}:
+    get:
+      operationId: getPublishedFeedback
+      summary: Read an authorized published revision
+      description: Requires workspace-scoped authorization. Cookie-authenticated mutations
+        also require CSRF protection.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: revision
+        in: query
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishedFeedback'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      operationId: patchDraft
+      summary: Update a private draft using an ETag
+      description: Requires workspace-scoped authorization. Cookie-authenticated mutations
+        also require CSRF protection.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Draft'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchDraft'
+  /api/v1/feedback/{feedbackId}/publish:
+    post:
+      operationId: publishFeedback
+      summary: Publish an immutable human-approved share bundle
+      description: >-
+        Human-only operation. Re-encode and redact all shared images and
+        derived artifacts before committing the revision atomically. The
+        shared redacted image first has its solid redactions applied, then
+        the blur and pixelate annotations in annotation order, then the solid
+        redactions again, so overlapping effects never lighten a redaction.
+        Blur and pixelate are cosmetic and are not redaction. Raw
+        images never become share artifacts. A published revision is
+        immutable: the database refuses to rewrite or delete it, and a change
+        is a new revision. Every prose field of the task may be empty, and a
+        blank title is published as "Visual feedback"; a supplied title and
+        all other task text are published exactly as drafted and nothing is
+        derived from the image. The published feedback.json, annotations.json,
+        environment.json and manifest.json all carry the same schemaVersion.
+        It is 0.3.0 when any annotation is a highlight, spotlight, blur or
+        pixelate, an arrow has a control point, or a style uses opacity,
+        effectSizePx, arrowStyle, textStyle or smoothing. Otherwise it is
+        0.2.0 when the capture source is drawing, any annotation is an
+        ellipse, diamond or line, or the task has no description (or, for a
+        bug or visual-regression task, no expected or actual result), and
+        0.1.0 in every other case, so earlier readers keep reading every
+        revision whose content they can validate. With dispatch:true the same transaction
+        also inserts the delivery as QUEUED (history DRAFT to READY to QUEUED
+        and the assigned-only delivery.dispatched event) for the agent the
+        server resolves from configuration, so publish and queue succeed or
+        fail together. If no recipient can be resolved (no configured agent,
+        a misconfigured default, or several agents without a default) the
+        request fails with 409 AGENT_NOT_CONFIGURED or AGENT_AMBIGUOUS before
+        anything is published and the draft stays open. The dispatch flag is
+        part of the idempotency fingerprint: replaying one Idempotency-Key in
+        the other mode is 409 IDEMPOTENCY_KEY_REUSED, and an identical retry
+        returns the stored result without queueing twice. Queueing means
+        authorized and visible to the agent only; it never claims the agent
+        read or ran anything. Without dispatch the revision stays READY.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '201':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishedFeedback'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Publish'
+  /api/v1/feedback/{feedbackId}/dispatch:
+    post:
+      operationId: dispatchFeedback
+      summary: Queue an authorized revision for an agent
+      description: >-
+        Human-only (READY to QUEUED). Queues the latest published revision for
+        the agent principal that may then read and acknowledge it; an older
+        revision is rejected as superseded. The request body needs only the
+        revision: when agentId is omitted the server resolves the recipient to
+        the workspace's configured default agent, or to its only configured
+        agent. Zero configured agents, a misconfigured default, or several
+        agents without a default fail with 409 AGENT_NOT_CONFIGURED or
+        AGENT_AMBIGUOUS and change nothing; the message tells the user to ask
+        an administrator. An explicit agentId (operator use) must be a
+        configured agent identity of the revision's workspace, else 400.
+        Queueing does not reach into any running agent conversation.
+        Cookie-authenticated mutations also require CSRF protection.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '202':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Dispatch'
+  /api/v1/feedback/{feedbackId}/ack:
+    post:
+      operationId: acknowledgeFeedback
+      summary: Record receipt by the authenticated assigned agent
+      description: >-
+        Only the assigned agent can call this (QUEUED to ACKNOWLEDGED). It
+        records that the agent says it received and read the revision, and it
+        grants no browser control: working on the feedback starts only when an
+        Agent lease is acquired with feedbackId. Listing, reading and
+        downloading a revision never acknowledge it, and queueing a revision
+        is not evidence that any agent read it. Cookie-authenticated mutations
+        also require CSRF protection.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Acknowledge'
+  /api/v1/feedback/{feedbackId}/resolve:
+    post:
+      operationId: resolveFeedback
+      summary: Submit a result for human verification
+      description: >-
+        Only the assigned agent can call this, and only for a revision that is
+        IN_PROGRESS, a state reached by acquiring an Agent lease with feedbackId.
+        It moves the revision to RESOLVED and never to VERIFIED; only a human
+        verifies. Cookie-authenticated mutations also require CSRF protection.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Resolve'
+  /api/v1/feedback/{feedbackId}/verify:
+    post:
+      operationId: verifyFeedback
+      summary: Human verification of a resolved revision, or rejection back to the queue
+      description: Human Operator only; agent tokens are rejected. A rejected outcome
+        requires a reason and re-queues the revision with history preserved. Cookie-authenticated
+        mutations also require CSRF protection.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Verify'
+  /api/v1/feedback/{feedbackId}/cancel:
+    post:
+      operationId: cancelFeedback
+      summary: Cancel a non-terminal feedback delivery
+      description: Human Operator only. Cancelling does not undo effects already
+        performed by an agent. Cookie-authenticated mutations also require CSRF protection.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict, for example already VERIFIED or CANCELLED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Cancel'
+  /api/v1/feedback/{feedbackId}/artifacts/{name}:
+    get:
+      operationId: getShareArtifact
+      summary: Download an authorized immutable share artifact
+      description: Requires access to the exact published revision. No raw/private
+        images. Use private, no-store caching for sensitive deployments; enforce safe
+        attachment names.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: revision
+        in: query
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: Success
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/events:
+    get:
+      operationId: streamEvents
+      summary: Stream authorized state changes
+      description: SSE is transport notification, not a guarantee of injection into
+        an existing agent conversation. Resume using event IDs and recheck current
+        state.
+      parameters:
+      - name: workspaceId
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '200':
+          description: Success
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Lease or state conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Revision or generation precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate or resource limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/feedback/{feedbackId}/draft:
+    get:
+      operationId: getPrivateDraft
+      summary: Read a private draft for continued editing
+      description: Only the authorized human draft owner can read it. Agent feedback
+        access does not grant access to raw captures or drafts.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftDetail'
+        '401': *id001
+        '403': *id002
+        '409': *id003
+        '412': *id004
+  /api/v1/feedback/{feedbackId}/draft/preview:
+    put:
+      operationId: uploadDraftPreview
+      summary: Upload the annotated PNG for the exact draft version
+      description: Human-only. If-Match binds the preview to the current annotations
+        and capture. Verify dimensions and size. This client render is untrusted;
+        the server must re-encode and reapply solid redactions before sharing. It
+        already contains any blur and pixelate effects and is never filtered a
+        second time. Any later draft edit invalidates this preview.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftDetail'
+        '401': *id001
+        '403': *id002
+        '409': *id003
+        '412': *id004
+  /api/v1/workspaces/{workspaceId}/agent:
+    get:
+      operationId: getAgentControl
+      summary: Read the usage mode and pause state
+      description: Any role scoped to the workspace, including an Agent in NOVNC
+        mode. The Runtime owns the state and the Gateway reads it on every gated
+        request.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentControl'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: The workspace ID in the path does not name this workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: UPSTREAM_UNAVAILABLE. The policy could not be read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: setAgentMode
+      summary: Switch between NOVNC (browser only) and AGENT
+      description: Human or administrator only. NOVNC disconnects the Agent, closes
+        its lease, tickets and sockets, removes its Gateway grants, ends open feedback
+        subscriptions and downloads, and clears pause. Enabling AGENT starts unpaused
+        and never revives an earlier lease. A page action the Agent sent before the
+        switch cannot be undone. The mode set here wins over the startup flag or
+        environment value, which only seeds a workspace with no saved policy.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetAgentMode'
+      responses:
+        '200':
+          description: The state after the change, or unchanged for the same mode
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentControl'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: UPSTREAM_UNAVAILABLE. The change was not confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/workspaces/{workspaceId}/agent/pause:
+    post:
+      operationId: pauseAgent
+      summary: Pause the Agent immediately
+      description: Human or administrator only, body {}. No confirmation. The Runtime
+        fences the Agent lease and closes its tickets and sockets. No lease can be
+        granted or renewed until resume. A HUMAN lease is untouched, and feedback
+        stays open to humans and to the assigned Agent. Idempotent.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '200':
+          description: The state after the change
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentControl'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: AGENT_MODE_DISABLED. The workspace is in NOVNC mode.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: UPSTREAM_UNAVAILABLE. The pause was not confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/workspaces/{workspaceId}/agent/resume:
+    post:
+      operationId: resumeAgent
+      summary: Allow the Agent to acquire control again
+      description: Human or administrator only, body {}. Resuming never revives an
+        earlier lease or token and never acquires control by itself; the Agent must
+        acquire a new lease. Idempotent.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '200':
+          description: The state after the change
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentControl'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: UPSTREAM_UNAVAILABLE. The resume was not confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/workspaces/{workspaceId}/agent/events:
+    get:
+      operationId: streamAgentControl
+      summary: Subscribe to usage-mode and pause changes
+      description: 'Server-sent events. Each event is `event: agent-control` with the
+        AgentControl JSON as data and the revision as id; the current state comes
+        first. The stream carries no feedback or private data and stays open in NOVNC
+        mode and while paused, so an Agent hears about a resume. A client that loses
+        the stream must reconnect and must not read silence as permission. The Gateway
+        ends it on shutdown.'
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '200':
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: The Gateway is shutting down
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/workspaces/{workspaceId}/agent/setup:
+    get:
+      operationId: getAgentSetup
+      summary: Read the Agent onboarding prompt
+      description: Human or administrator only, AGENT mode only. The prompt names
+        the configured origin and workspace, the real lensdock commands, and the
+        stop rules. It contains no credential.
+      parameters:
+      - name: workspaceId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSetup'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: AGENT_MODE_DISABLED. The workspace is in NOVNC mode.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: UPSTREAM_UNAVAILABLE. The policy could not be read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: lensdock_session
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+      required:
+      - code
+      - message
+      - requestId
+    Workspace:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        runtimeGeneration:
+          type: string
+          minLength: 1
+          maxLength: 128
+        controlState:
+          enum:
+          - IDLE
+          - HUMAN
+          - AGENT
+          - HANDOFF_PENDING
+          - CAPTURE
+          - MAINTENANCE
+          - ERROR_LOCKED
+        holderId:
+          type:
+          - string
+          - 'null'
+        ready:
+          type: boolean
+        agentControl:
+          $ref: '#/components/schemas/AgentControl'
+      required:
+      - id
+      - runtimeGeneration
+      - controlState
+      - holderId
+      - ready
+      - agentControl
+    AgentControl:
+      type: object
+      description: Authoritative usage policy of a workspace, owned by the Browser
+        Runtime. It is separate from controlState. paused is always false in NOVNC
+        mode. revision grows by one for every change of mode or paused. A client
+        that cannot read a valid AgentControl must treat Agent features as unavailable,
+        never as AGENT.
+      additionalProperties: false
+      properties:
+        mode:
+          enum:
+          - NOVNC
+          - AGENT
+        paused:
+          type: boolean
+        revision:
+          type: integer
+          minimum: 1
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+      - mode
+      - paused
+      - revision
+      - updatedAt
+    SetAgentMode:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          enum:
+          - NOVNC
+          - AGENT
+      required:
+      - mode
+    AgentSetup:
+      type: object
+      additionalProperties: false
+      properties:
+        prompt:
+          type: string
+          description: English onboarding prompt for an Agent. Built from the configured
+            origin and the workspace ID only; it never contains a token, session
+            cookie or lease.
+      required:
+      - prompt
+    AcquireLease:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          enum:
+          - HUMAN
+          - AGENT
+        ttlSeconds:
+          type: integer
+          minimum: 10
+          maximum: 120
+          default: 30
+        feedbackId:
+          type: string
+          pattern: ^[A-Za-z0-9._~:-]{1,128}$
+          description: Agent mode only. The acknowledged feedback this lease begins
+            work on; the assigned agent's revision moves to IN_PROGRESS on success.
+        feedbackRevision:
+          type: integer
+          minimum: 1
+          description: Optional, and only together with feedbackId. Omit it when exactly
+            one acknowledged or in-progress revision of the feedback is assigned
+            to the caller; name it when several are active.
+      required:
+      - mode
+      dependentRequired:
+        feedbackRevision:
+        - feedbackId
+      allOf:
+      - if:
+          required:
+          - feedbackId
+        then:
+          properties:
+            mode:
+              const: AGENT
+    Lease:
+      type: object
+      additionalProperties: false
+      properties:
+        leaseId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        holderId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        mode:
+          enum:
+          - HUMAN
+          - AGENT
+        epoch:
+          type: integer
+          minimum: 1
+        runtimeGeneration:
+          type: string
+          minLength: 1
+          maxLength: 128
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+      - leaseId
+      - workspaceId
+      - holderId
+      - mode
+      - epoch
+      - runtimeGeneration
+      - expiresAt
+    LeaseView:
+      type: object
+      description: Reply to a cookie-authenticated acquireLease. The Gateway keeps
+        the capability token on the server for that session, so none is returned.
+      additionalProperties: false
+      properties:
+        lease:
+          $ref: '#/components/schemas/Lease'
+      required:
+      - lease
+    LeaseGrant:
+      type: object
+      additionalProperties: false
+      properties:
+        lease:
+          $ref: '#/components/schemas/Lease'
+        capabilityToken:
+          type: string
+          minLength: 16
+          maxLength: 8192
+      required:
+      - lease
+      - capabilityToken
+    RenewLease:
+      type: object
+      additionalProperties: false
+      properties:
+        epoch:
+          type: integer
+          minimum: 1
+        runtimeGeneration:
+          type: string
+          minLength: 1
+          maxLength: 128
+      required:
+      - epoch
+      - runtimeGeneration
+    Takeover:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        force:
+          type: boolean
+          default: false
+      required:
+      - reason
+    TakeoverPending:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          const: HANDOFF_PENDING
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+      required:
+      - status
+      - requestId
+    CreateCapture:
+      type: object
+      additionalProperties: false
+      properties:
+        source:
+          enum:
+          - desktop
+          - page-viewport
+          - drawing
+        targetId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        leaseId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        allowInterrupt:
+          type: boolean
+        imageWidthPx:
+          type: integer
+          minimum: 64
+          maximum: 4096
+        imageHeightPx:
+          type: integer
+          minimum: 64
+          maximum: 4096
+      required:
+      - source
+      allOf:
+      - if:
+          properties:
+            source:
+              const: page-viewport
+          required:
+          - source
+        then:
+          required:
+          - targetId
+          - leaseId
+          not:
+            anyOf:
+            - required:
+              - imageWidthPx
+            - required:
+              - imageHeightPx
+      - if:
+          properties:
+            source:
+              const: desktop
+          required:
+          - source
+        then:
+          not:
+            anyOf:
+            - required:
+              - targetId
+            - required:
+              - leaseId
+            - required:
+              - allowInterrupt
+            - required:
+              - imageWidthPx
+            - required:
+              - imageHeightPx
+      - if:
+          properties:
+            source:
+              const: drawing
+          required:
+          - source
+        then:
+          required:
+          - imageWidthPx
+          - imageHeightPx
+          not:
+            anyOf:
+            - required:
+              - targetId
+            - required:
+              - leaseId
+            - required:
+              - allowInterrupt
+    CaptureState:
+      type: object
+      additionalProperties: false
+      properties:
+        captureId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        status:
+          enum:
+          - awaiting-upload
+          - capturing
+          - ready
+          - failed
+        consistency:
+          enum:
+          - stable-navigation
+          - best-effort
+          - unknown
+        source:
+          enum:
+          - desktop
+          - page-viewport
+          - page-full
+          - drawing
+        provenance:
+          enum:
+          - client-framebuffer
+          - runtime-cdp
+          - generated-canvas
+        imageWidthPx:
+          type: integer
+          minimum: 1
+          maximum: 32768
+        imageHeightPx:
+          type: integer
+          minimum: 1
+          maximum: 32768
+        capturedAt:
+          type: string
+          format: date-time
+        serverReceivedAt:
+          type: string
+          format: date-time
+        runtimeGeneration:
+          type: string
+          minLength: 0
+          maxLength: 128
+          description: Empty only for a drawing, which has no runtime.
+        targetId:
+          type:
+          - string
+          - 'null'
+          minLength: 1
+          maxLength: 256
+        navigationId:
+          type:
+          - string
+          - 'null'
+          minLength: 1
+          maxLength: 256
+        page:
+          $ref: ../schemas/feedback.schema.json#/$defs/capture/properties/page
+        parentTransform:
+          type: object
+          description: Present on a crop or a revision base; a derived capture keeps the
+            source, provenance and context of its parent, so a crop of a drawing is still
+            a drawing.
+        feedbackId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+      - captureId
+      - workspaceId
+      - status
+      - consistency
+    CreateDraft:
+      type: object
+      additionalProperties: false
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        captureId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        task:
+          $ref: ../schemas/feedback.schema.json#/$defs/draftTask
+      required:
+      - workspaceId
+      - captureId
+      - task
+    PatchDraft:
+      type: object
+      additionalProperties: false
+      properties:
+        task:
+          $ref: ../schemas/feedback.schema.json#/$defs/draftTask
+        annotations:
+          type: array
+          maxItems: 100
+          items:
+            $ref: ../schemas/feedback.schema.json#/$defs/annotation
+      required: []
+    Draft:
+      type: object
+      additionalProperties: false
+      properties:
+        feedbackId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revision:
+          type: integer
+          minimum: 1
+        etag:
+          type: string
+          minLength: 1
+          maxLength: 128
+        state:
+          const: DRAFT
+      required:
+      - feedbackId
+      - revision
+      - etag
+      - state
+    Publish:
+      type: object
+      additionalProperties: false
+      properties:
+        humanApproved:
+          const: true
+        dispatch:
+          type: boolean
+          default: false
+          description: >-
+            Opt in to publish and queue in one atomic step. The server resolves
+            the recipient (never sent by the client): the workspace's
+            administratively configured default agent, or its only configured
+            agent. Omitted or false keeps the revision READY.
+      required:
+      - humanApproved
+    PublishedFeedback:
+      $ref: ../schemas/feedback.schema.json
+    Dispatch:
+      type: object
+      additionalProperties: false
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: >-
+            Optional operator override. Must be a configured agent identity of
+            the revision's workspace. When omitted the server resolves the
+            workspace's default or only configured agent.
+      required:
+      - revision
+    Acknowledge:
+      type: object
+      additionalProperties: false
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+      required:
+      - revision
+    Resolve:
+      type: object
+      additionalProperties: false
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 12000
+        verification:
+          type: string
+          minLength: 1
+          maxLength: 12000
+        resultFeedbackIds:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+      required:
+      - revision
+      - summary
+      - verification
+    Verify:
+      type: object
+      additionalProperties: false
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+        outcome:
+          enum:
+          - verified
+          - rejected
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 12000
+      required:
+      - revision
+      - outcome
+      allOf:
+      - if:
+          properties:
+            outcome:
+              const: rejected
+          required:
+          - outcome
+        then:
+          required:
+          - reason
+    Cancel:
+      type: object
+      additionalProperties: false
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 12000
+      required:
+      - revision
+    Delivery:
+      type: object
+      additionalProperties: false
+      properties:
+        feedbackId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revision:
+          type: integer
+          minimum: 1
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        state:
+          enum:
+          - QUEUED
+          - ACKNOWLEDGED
+          - IN_PROGRESS
+          - RESOLVED
+          - VERIFIED
+          - CANCELLED
+      required:
+      - feedbackId
+      - revision
+      - agentId
+      - state
+    FeedbackSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        feedbackId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revision:
+          type: integer
+          minimum: 1
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        title:
+          type: string
+        deliveryState:
+          enum:
+          - READY
+          - QUEUED
+          - ACKNOWLEDGED
+          - IN_PROGRESS
+          - RESOLVED
+          - VERIFIED
+          - CANCELLED
+      required:
+      - feedbackId
+      - revision
+      - workspaceId
+      - title
+      - deliveryState
+    FeedbackList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/FeedbackSummary'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+      required:
+      - items
+      - nextCursor
+    DraftDetail:
+      type: object
+      additionalProperties: false
+      properties:
+        feedbackId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revision:
+          type: integer
+          minimum: 1
+        etag:
+          type: string
+          minLength: 1
+          maxLength: 128
+        state:
+          const: DRAFT
+        captureId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        task:
+          $ref: ../schemas/feedback.schema.json#/$defs/draftTask
+        annotations:
+          type: array
+          maxItems: 100
+          items:
+            $ref: ../schemas/feedback.schema.json#/$defs/annotation
+        previewReady:
+          type: boolean
+      required:
+      - feedbackId
+      - revision
+      - etag
+      - state
+      - captureId
+      - task
+      - annotations
+      - previewReady

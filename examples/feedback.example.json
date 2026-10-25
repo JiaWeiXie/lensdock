@@ -1,0 +1,105 @@
+{
+  "schemaVersion": "0.1.0",
+  "feedbackId": "fb_fixture_001",
+  "revision": 1,
+  "workspaceId": "ws_fixture",
+  "publishedAt": "2026-10-24T12:10:00Z",
+  "capture": {
+    "id": "cap_fixture_001",
+    "source": "page-viewport",
+    "provenance": "runtime-cdp",
+    "capturedAt": "2026-10-24T12:00:00Z",
+    "serverReceivedAt": "2026-10-24T12:00:01Z",
+    "runtimeGeneration": "generation_fixture",
+    "targetId": "target_fixture",
+    "navigationId": "nav_fixture",
+    "consistency": "stable-navigation",
+    "imageWidthPx": 1920,
+    "imageHeightPx": 1080,
+    "redactedImageSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "page": {
+      "urlSanitized": "https://example.test/dashboard",
+      "titleSanitized": "Fixture dashboard",
+      "viewportWidthCss": 1280,
+      "viewportHeightCss": 720,
+      "pixelsPerCssX": 1.5,
+      "pixelsPerCssY": 1.5,
+      "scrollXCss": 0,
+      "scrollYCss": 0,
+      "browserVersion": "fixture-version-not-an-observation"
+    }
+  },
+  "task": {
+    "kind": "bug",
+    "intent": "modify-and-verify",
+    "title": "The primary button overlaps the filter panel",
+    "description": "Inspect the marked region, reproduce the layout issue, and report the fix with a new screenshot.",
+    "expectedResult": "The button remains fully visible without covering the filter panel.",
+    "actualResult": "The right edge of the button covers the panel label.",
+    "reproductionSteps": [
+      "Open the fixture dashboard.",
+      "Set the viewport to 1280 by 720 CSS pixels.",
+      "Expand the filter panel."
+    ]
+  },
+  "annotations": [
+    {
+      "id": "ann_001",
+      "kind": "rectangle",
+      "geometry": {
+        "x": 0.65,
+        "y": 0.2,
+        "width": 0.2,
+        "height": 0.15
+      },
+      "comment": "The overlapping region.",
+      "style": {
+        "stroke": "#D83A32",
+        "strokeWidthPx": 3
+      }
+    },
+    {
+      "id": "ann_002",
+      "kind": "pin",
+      "geometry": {
+        "position": {
+          "x": 0.7,
+          "y": 0.22
+        },
+        "number": 1
+      },
+      "comment": "Check the button bounds."
+    },
+    {
+      "id": "ann_003",
+      "kind": "redact",
+      "mode": "solid",
+      "geometry": {
+        "x": 0.02,
+        "y": 0.02,
+        "width": 0.2,
+        "height": 0.05
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "screenshot.redacted.png",
+      "mimeType": "image/png",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 120000
+    },
+    {
+      "name": "screenshot.annotated.png",
+      "mimeType": "image/png",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "sizeBytes": 130000
+    }
+  ],
+  "sharePolicy": {
+    "humanApproved": true,
+    "redactionsApplied": true,
+    "includesRawImage": false,
+    "diagnosticsIncluded": false
+  }
+}

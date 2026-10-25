@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LensDock VNC load</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+    // Continuously changing full-viewport content so x11vnc always has dirty tiles to encode.
+    // Used by SPIKE-02 (tests/e2e/vnc-cpu.sh); the animation itself costs the browser, never the VNC path.
+    const canvas = document.getElementById("c");
+    const ctx = canvas.getContext("2d", { alpha: false });
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener("resize", resize);
+    resize();
+    function frame(ts) {
+      const w = canvas.width, h = canvas.height, bands = 48;
+      for (let i = 0; i < bands; i++) {
+        ctx.fillStyle = "hsl(" + ((ts / 12 + i * 7) % 360) + ", 80%, " + (35 + 20 * Math.sin(ts / 700 + i)) + "%)";
+        ctx.fillRect(0, (i * h) / bands, w, h / bands + 1);
+      }
+      for (let k = 0; k < 6; k++) {
+        const x = w / 2 + Math.cos(ts / 900 + k) * w * 0.35;
+        const y = h / 2 + Math.sin(ts / 700 + k * 1.7) * h * 0.35;
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.beginPath();
+        ctx.arc(x, y, 60 + 25 * Math.sin(ts / 300 + k), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
