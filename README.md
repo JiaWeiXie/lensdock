@@ -11,7 +11,7 @@ A persistent Chromium workspace that you and your coding Agent can use together.
 
 ## Install
 
-You need macOS or Linux on amd64/arm64, a running Docker engine with Compose v2, and a host that supports Chromium's user-namespace sandbox. Allow roughly 8 GiB of memory for the Docker host. LensDock does not disable the sandbox to work around an incompatible host.
+You need macOS or Linux on amd64/arm64, a running Docker engine with Compose v2, and a host that supports Chromium's user-namespace sandbox. Give the Docker host at least 2 CPUs and roughly 8 GiB of memory. LensDock does not disable the sandbox to work around an incompatible host.
 
 ### Private repository access
 

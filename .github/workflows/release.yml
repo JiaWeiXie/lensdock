@@ -249,7 +249,7 @@ jobs:
           base="${REGISTRY}/${REPOSITORY,,}"
           for name in runtime gateway; do
             digest=$(jq -er --arg name "$name" '.[$name]' "digests/digests-$ARCH.json")
-            tools/release/image-evidence.sh "$name" "$base/$name@$digest" evidence
+            tools/release/image-evidence.sh "$name" "$base/$name@$digest" evidence "linux/$ARCH"
           done
       - name: Upload the evidence
         if: always()

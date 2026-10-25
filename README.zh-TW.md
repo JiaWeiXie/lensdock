@@ -11,7 +11,7 @@
 
 ## 安裝
 
-需要 macOS 或 Linux、amd64 或 arm64 架構、已啟動的 Docker 與 Compose v2。主機必須支援 Chromium 的 User Namespace Sandbox，建議為 Docker 主機保留約 8 GiB 記憶體。LensDock 不會為了啟動而關閉 Sandbox。
+需要 macOS 或 Linux、amd64 或 arm64 架構、已啟動的 Docker 與 Compose v2。主機必須支援 Chromium 的 User Namespace Sandbox，Docker 主機至少需要 2 CPU，並建議保留約 8 GiB 記憶體。LensDock 不會為了啟動而關閉 Sandbox。
 
 ### 私有儲存庫存取權
 

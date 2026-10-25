@@ -34,7 +34,7 @@ services:
       - /home/browser:uid=10001,gid=10001,mode=0700
     shm_size: 1gb
     mem_limit: 4g
-    cpus: 4
+    cpus: 2
     cap_drop: [ALL]
     # Only root tini retains KILL, to forward stop signals after the runtime drops UID.
     cap_add: [CHOWN, SETUID, SETGID, SETPCAP, KILL]
