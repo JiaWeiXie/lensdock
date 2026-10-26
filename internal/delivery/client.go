@@ -328,11 +328,8 @@ func (c *Client) AssignedRevision(ctx context.Context, workspaceID, id string) (
 
 // Get reads one authorized published revision.
 func (c *Client) Get(ctx context.Context, id string, revision int) (*Feedback, error) {
-	if err := ValidateID("feedback ID", id); err != nil {
+	if err := checkTarget(id, revision); err != nil {
 		return nil, err
-	}
-	if revision < 1 {
-		return nil, errors.New("revision must be at least 1")
 	}
 	data, err := c.getJSON(ctx, feedbackPath(id), url.Values{"revision": {strconv.Itoa(revision)}})
 	if err != nil {

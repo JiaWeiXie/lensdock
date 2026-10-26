@@ -36,10 +36,6 @@ func composeEnvValue(value string) string { return "'" + strings.ReplaceAll(valu
 // what it can interpret exactly: plain values and the single-quoted form that
 // Initialize writes. Anything else is left to Compose itself.
 func parseEnvLine(line string) (key, value string, ok bool) {
-	line = strings.TrimSpace(line)
-	if line == "" || strings.HasPrefix(line, "#") {
-		return "", "", false
-	}
 	k, v, found := strings.Cut(line, "=")
 	if !found {
 		return "", "", false

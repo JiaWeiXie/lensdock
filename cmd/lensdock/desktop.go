@@ -530,6 +530,13 @@ func (d *desktopSession) pointer(buttons uint8, x, y int) error {
 	return nil
 }
 
+func (d *desktopSession) moveAndSettle(ctx context.Context, x, y int) error {
+	if err := d.pointer(d.buttons, x, y); err != nil {
+		return err
+	}
+	return sleepCtx(ctx, pointerSettle)
+}
+
 func (d *desktopSession) releaseButtons() error {
 	if d.buttons == 0 {
 		return nil
@@ -542,10 +549,7 @@ func stepMove(x, y int) desktopStep {
 		if err := d.checkPoint(x, y); err != nil {
 			return err
 		}
-		if err := d.pointer(d.buttons, x, y); err != nil {
-			return err
-		}
-		return sleepCtx(ctx, pointerSettle)
+		return d.moveAndSettle(ctx, x, y)
 	}
 }
 
@@ -554,10 +558,7 @@ func stepClick(x, y int, button uint8, count int) desktopStep {
 		if err := d.checkPoint(x, y); err != nil {
 			return err
 		}
-		if err := d.pointer(d.buttons, x, y); err != nil {
-			return err
-		}
-		if err := sleepCtx(ctx, pointerSettle); err != nil {
+		if err := d.moveAndSettle(ctx, x, y); err != nil {
 			return err
 		}
 		for i := range count {
@@ -598,10 +599,7 @@ func stepDrag(x1, y1, x2, y2 int, button uint8, steps int) desktopStep {
 		if err := errors.Join(d.checkPoint(x1, y1), d.checkPoint(x2, y2)); err != nil {
 			return err
 		}
-		if err := d.pointer(d.buttons, x1, y1); err != nil {
-			return err
-		}
-		if err := sleepCtx(ctx, pointerSettle); err != nil {
+		if err := d.moveAndSettle(ctx, x1, y1); err != nil {
 			return err
 		}
 		if err := d.pointer(d.buttons|button, x1, y1); err != nil {
@@ -632,10 +630,7 @@ func stepScroll(x, y, dx, dy int) desktopStep {
 		if err := d.checkPoint(x, y); err != nil {
 			return err
 		}
-		if err := d.pointer(d.buttons, x, y); err != nil {
-			return err
-		}
-		if err := sleepCtx(ctx, pointerSettle); err != nil {
+		if err := d.moveAndSettle(ctx, x, y); err != nil {
 			return err
 		}
 		wheel := func(button uint8, n int) error {

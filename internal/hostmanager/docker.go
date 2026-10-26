@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -629,14 +630,13 @@ func (b DockerBackend) Execute(ctx context.Context, cfg Config, p Project, op Op
 	case "start":
 		gatewayRunning := false
 		for _, c := range all {
-			if c.Config.Labels["com.docker.compose.project"] == p.ComposeProject && c.State.Running {
-				if c.Config.Labels["com.docker.compose.service"] == "gateway" {
-					if !portOwned(c, p) {
-						return errors.New("existing Gateway port ownership is invalid")
-					}
-					gatewayRunning = true
-				}
+			if c.Config.Labels["com.docker.compose.project"] != p.ComposeProject || !c.State.Running || c.Config.Labels["com.docker.compose.service"] != "gateway" {
+				continue
 			}
+			if !portOwned(c, p) {
+				return errors.New("existing Gateway port ownership is invalid")
+			}
+			gatewayRunning = true
 		}
 		if !gatewayRunning {
 			ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(p.Port))
@@ -668,15 +668,11 @@ func (b DockerBackend) Execute(ctx context.Context, cfg Config, p Project, op Op
 // explicitly disables that cap, which also overrides any default cap of the
 // base Compose file; nothing is replaced by a large placeholder.
 func capLines(r Resources) string {
-	mem, swap, cpus := "0", "0", "0"
+	mem := "0"
 	if r.MemoryBytes > 0 {
 		mem = strconv.FormatInt(r.MemoryBytes, 10)
-		swap = mem
 	}
-	if r.NanoCPUs > 0 {
-		cpus = strconv.FormatFloat(float64(r.NanoCPUs)/1e9, 'f', 9, 64)
-	}
-	return fmt.Sprintf("    mem_limit: %s\n    memswap_limit: %s\n    cpus: %s\n", mem, swap, cpus)
+	return fmt.Sprintf("    mem_limit: %s\n    memswap_limit: %s\n    cpus: %s\n", mem, mem, cpuArg(r.NanoCPUs))
 }
 
 // resourceProfile is the exact Compose override of a project's authorized
@@ -750,14 +746,7 @@ func ensureResourceProfile(cfg Config, p Project, dep *update.Deployment) error 
 		} else {
 			return err
 		}
-		listed := false
-		for _, f := range dep.Compose.Files {
-			if f == file {
-				listed = true
-				break
-			}
-		}
-		if !listed {
+		if !slices.Contains(dep.Compose.Files, file) {
 			dep.Compose.Files = append(dep.Compose.Files, file)
 			changed = true
 		}

@@ -171,17 +171,17 @@ func publish(final string, contents map[string][]byte, lim Limits) error {
 		}
 	}()
 	// Manifest last: it is the commit record of the staged content.
-	names := make([]string, 0, len(contents))
-	for _, n := range bundleOrder {
-		if _, ok := contents[n]; ok {
-			names = append(names, n)
+	for _, name := range bundleOrder {
+		data, ok := contents[name]
+		if !ok {
+			continue
 		}
-	}
-	names = append(names, FileManifest)
-	for _, n := range names {
-		if err := writeNew(filepath.Join(stage, n), contents[n]); err != nil {
+		if err := writeNew(filepath.Join(stage, name), data); err != nil {
 			return err
 		}
+	}
+	if err := writeNew(filepath.Join(stage, FileManifest), contents[FileManifest]); err != nil {
+		return err
 	}
 	syncDir(stage)
 	if _, err := VerifyBundle(stage, lim); err != nil {
@@ -385,21 +385,18 @@ func readRegular(path string, max int64) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	if max <= 0 {
-		data, err := io.ReadAll(f)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", filepath.Base(path), err)
+	var reader io.Reader = f
+	if max > 0 {
+		if fi.Size() > max {
+			return nil, fmt.Errorf("%s is larger than %d bytes", filepath.Base(path), max)
 		}
-		return data, nil
+		reader = io.LimitReader(f, max+1)
 	}
-	if fi.Size() > max {
-		return nil, fmt.Errorf("%s is larger than %d bytes", filepath.Base(path), max)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", filepath.Base(path), err)
 	}
-	if int64(len(data)) > max {
+	if max > 0 && int64(len(data)) > max {
 		return nil, fmt.Errorf("%s is larger than %d bytes", filepath.Base(path), max)
 	}
 	return data, nil

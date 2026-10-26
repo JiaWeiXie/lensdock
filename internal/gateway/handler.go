@@ -373,9 +373,11 @@ func (g *Gateway) acquire(w http.ResponseWriter, r *http.Request, p Identity, e 
 		}
 		in.FeedbackRevision = revision
 	}
-	body, _ := json.Marshal(map[string]any{"mode": in.Mode, "ttlSeconds": in.TTLSeconds})
+	var body []byte
 	if takeover {
 		body, _ = json.Marshal(map[string]any{"reason": in.Reason, "force": in.Force})
+	} else {
+		body, _ = json.Marshal(map[string]any{"mode": in.Mode, "ttlSeconds": in.TTLSeconds})
 	}
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/json")
@@ -456,15 +458,13 @@ func (g *Gateway) leaseAction(w http.ResponseWriter, r *http.Request, p Identity
 	if status >= 200 && status < 300 {
 		if release {
 			g.leases.removeWorkspace(p.WorkspaceID)
+			g.record(r.Context(), p, "lease.released")
 		} else {
 			var renewed apiwire.Lease
 			if json.Unmarshal(out, &renewed) == nil {
 				l.Grant.Lease = renewed
 				g.leases.put(l)
 			}
-		}
-		if release {
-			g.record(r.Context(), p, "lease.released")
 		}
 	}
 	forwardReply(w, status, h, out)
