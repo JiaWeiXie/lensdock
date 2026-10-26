@@ -282,6 +282,7 @@ func TestTX03(t *testing.T) {
 		{"nfd-and-nfc", "e\u0301 vs \u00e9, a\u0308, \u1112\u1161\u11ab 한"},
 		{"zwj-flags-skin-tone", "👩‍💻 👨‍👩‍👧‍👦 🏳️‍🌈 🇹🇼 ❤️ 👍🏽"},
 		{"newline", "line one\nline two\n繁體中文"},
+		{"large-cjk-payload", strings.Repeat("繁體中文😀\n", 4096)},
 	}
 	type result struct {
 		Name    string `json:"name"`

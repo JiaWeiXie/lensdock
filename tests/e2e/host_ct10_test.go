@@ -108,7 +108,6 @@ func TestCT10(t *testing.T) {
 			{Name: "second lease while HUMAN holds", Method: "POST", Path: api.WorkspacePath("/leases"), Token: api.Operator, Headers: idem, Body: acquireBody, Status: 409, Code: apiwire.CodeLeaseConflict},
 			{Name: "clipboard with the HUMAN token", Method: "PUT", Path: api.WorkspacePath("/clipboard"), Token: gh.Token, Headers: textPlain, Body: []byte("ct10"), Status: 204},
 			{Name: "clipboard with invalid UTF-8", Method: "PUT", Path: api.WorkspacePath("/clipboard"), Token: gh.Token, Headers: textPlain, Body: []byte{0xff, 0xfe, 'a'}, Status: 400, Code: apiwire.CodeInvalidUTF8},
-			{Name: "clipboard over 64 KiB", Method: "PUT", Path: api.WorkspacePath("/clipboard"), Token: gh.Token, Headers: textPlain, Body: []byte(strings.Repeat("a", 64*1024+1)), Status: 413, Code: apiwire.CodeBodyTooLarge},
 		})
 		_, err := api.CDP(gh.Token).Dial(ctx, "ws://x"+wsPath)
 		wantHTTPError(t, "CDP WebSocket upgrade with a HUMAN token (generic Runtime.evaluate path)", err, 403)

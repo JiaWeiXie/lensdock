@@ -327,25 +327,20 @@ export function reorderSelection(list: readonly Annotation[], ids: ReadonlySet<s
     case 'back':
       return [...out.filter((a) => ids.has(a.id)), ...out.filter((a) => !ids.has(a.id))];
     case 'forward':
-      for (let i = out.length - 2; i >= 0; i -= 1) {
+    case 'backward': {
+      const offset = direction === 'forward' ? 1 : -1;
+      const start = direction === 'forward' ? out.length - 2 : 1;
+      // Walk against the movement so each selected object advances only once.
+      for (let i = start; i >= 0 && i < out.length; i -= offset) {
         const cur = out[i];
-        const next = out[i + 1];
-        if (cur && next && ids.has(cur.id) && !ids.has(next.id)) {
-          out[i] = next;
-          out[i + 1] = cur;
+        const neighbour = out[i + offset];
+        if (cur && neighbour && ids.has(cur.id) && !ids.has(neighbour.id)) {
+          out[i] = neighbour;
+          out[i + offset] = cur;
         }
       }
       return out;
-    case 'backward':
-      for (let i = 1; i < out.length; i += 1) {
-        const cur = out[i];
-        const prev = out[i - 1];
-        if (cur && prev && ids.has(cur.id) && !ids.has(prev.id)) {
-          out[i] = prev;
-          out[i - 1] = cur;
-        }
-      }
-      return out;
+    }
   }
 }
 

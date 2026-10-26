@@ -230,39 +230,7 @@ func (e *runtimeEdge) rewriteDiscovery(resp *http.Response) error {
 		return err
 	}
 	prefix := "/api/v1/workspaces/" + e.config.WorkspaceID + "/cdp/devtools/"
-	var rewrite func(any) error
-	rewrite = func(v any) error {
-		switch v := v.(type) {
-		case []any:
-			for _, item := range v {
-				if err := rewrite(item); err != nil {
-					return err
-				}
-			}
-		case map[string]any:
-			delete(v, "devtoolsFrontendUrl")
-			delete(v, "devtoolsFrontendUrlCompat")
-			if raw, ok := v["webSocketDebuggerUrl"]; ok {
-				s, ok := raw.(string)
-				if !ok {
-					return errors.New("gateway: invalid discovery URL")
-				}
-				u, err := url.Parse(s)
-				if err != nil || !strings.HasPrefix(u.Path, prefix) || u.RawQuery != "" || u.Fragment != "" {
-					return errors.New("gateway: unexpected discovery path")
-				}
-				u.Host = e.publicOrigin.Host
-				u.Scheme = "ws"
-				if e.publicOrigin.Scheme == "https" {
-					u.Scheme = "wss"
-				}
-				u.User = nil
-				v["webSocketDebuggerUrl"] = u.String()
-			}
-		}
-		return nil
-	}
-	if err := rewrite(value); err != nil {
+	if err := e.rewriteDiscoveryValue(value, prefix); err != nil {
 		return err
 	}
 	out, err := json.Marshal(value)
@@ -272,5 +240,39 @@ func (e *runtimeEdge) rewriteDiscovery(resp *http.Response) error {
 	resp.Body = io.NopCloser(bytes.NewReader(out))
 	resp.ContentLength = int64(len(out))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(out)))
+	return nil
+}
+
+func (e *runtimeEdge) rewriteDiscoveryValue(v any, prefix string) error {
+	switch v := v.(type) {
+	case []any:
+		for _, item := range v {
+			if err := e.rewriteDiscoveryValue(item, prefix); err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		delete(v, "devtoolsFrontendUrl")
+		delete(v, "devtoolsFrontendUrlCompat")
+		raw, ok := v["webSocketDebuggerUrl"]
+		if !ok {
+			return nil
+		}
+		s, ok := raw.(string)
+		if !ok {
+			return errors.New("gateway: invalid discovery URL")
+		}
+		u, err := url.Parse(s)
+		if err != nil || !strings.HasPrefix(u.Path, prefix) || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("gateway: unexpected discovery path")
+		}
+		u.Host = e.publicOrigin.Host
+		u.Scheme = "ws"
+		if e.publicOrigin.Scheme == "https" {
+			u.Scheme = "wss"
+		}
+		u.User = nil
+		v["webSocketDebuggerUrl"] = u.String()
+	}
 	return nil
 }

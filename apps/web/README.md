@@ -118,9 +118,9 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
   crop (C). The keys match physical keys and never fire while composing or
   typing. Editing: Shift-click
   and marquee selection, group move, resize handles and line or arrow
-  endpoints, duplicate (Ctrl+D), six alignments, four layer commands
-  (Ctrl+[ and Ctrl+]), per-object and bulk style including fill for closed
-  shapes, undo and redo (200 steps), keyboard nudge, ETag autosave (800 ms) with
+  endpoints, duplicate (Ctrl+D), six alignments, per-object and bulk style
+  including fill for closed shapes, undo and redo (200 steps), keyboard nudge,
+  ETag autosave (800 ms) with
   conflict resolution, a confirmed and undoable Clear all, and per-grapheme
   limits. Crop creates a new capture and draft; annotations are not carried
   over, and the UI warns before cropping. Copy image and Download PNG export a
@@ -128,6 +128,10 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
   normalized to the real image content rectangle; export waits for font
   readiness and rasterizes with the same primitives as the SVG layer, and
   solid redactions are painted last.
+  Ctrl+[ and Ctrl+] move selected layers past the nearest unselected neighbor;
+  adding Shift sends them to the back or front. Both preserve relative order
+  within the selected and unselected groups. A group already at the boundary
+  stays put.
 - **Advanced annotation tools** (feedback schema 0.3.0): highlighter, spotlight,
   blur and pixelate are rectangle kinds. The highlighter is a plain alpha fill
   (color `#f2a900` by default, opacity 0.1 to 0.8, default 0.35). The spotlight
