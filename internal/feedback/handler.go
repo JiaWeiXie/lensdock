@@ -59,6 +59,8 @@ func NewHandler(s *Service) http.Handler {
 	route("POST /api/v1/feedback/{feedbackId}/verify", h.verify)
 	route("POST /api/v1/feedback/{feedbackId}/cancel", h.cancel)
 	route("GET /api/v1/feedback/{feedbackId}/delivery", h.getDelivery)
+	route("POST /api/v1/feedback/history/clear", h.clearAllHistory)
+	route("POST /api/v1/feedback/{feedbackId}/history/clear", h.clearHistory)
 	route("GET /api/v1/feedback/{feedbackId}/manifest", h.getManifest)
 	route("GET /api/v1/feedback/{feedbackId}/bundle", h.getBundle)
 	route("GET /api/v1/feedback/{feedbackId}/artifacts/{name}", h.getArtifact)
@@ -83,6 +85,8 @@ func NewHandler(s *Service) http.Handler {
 		"/api/v1/feedback/{feedbackId}/delivery":             "GET",
 		"/api/v1/feedback/{feedbackId}/manifest":             "GET",
 		"/api/v1/feedback/{feedbackId}/bundle":               "GET",
+		"/api/v1/feedback/history/clear":                     "POST",
+		"/api/v1/feedback/{feedbackId}/history/clear":        "POST",
 		"/api/v1/feedback/{feedbackId}/artifacts/{name}":     "GET",
 	} {
 		allow := allow
@@ -421,7 +425,7 @@ func (h *handler) listFeedback(ctx context.Context, w http.ResponseWriter, r *ht
 		}
 		limit = n
 	}
-	l, err := h.s.ListPublished(ctx, ListQuery{WorkspaceID: q.Get("workspaceId"), State: q.Get("state"), Cursor: q.Get("cursor"), Limit: limit})
+	l, err := h.s.ListPublished(ctx, ListQuery{WorkspaceID: q.Get("workspaceId"), State: q.Get("state"), History: q.Get("history"), Cursor: q.Get("cursor"), Limit: limit})
 	if err != nil {
 		return err
 	}
@@ -580,5 +584,35 @@ func (h *handler) cancel(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return err
 	}
 	writeJSON(w, http.StatusOK, d)
+	return nil
+}
+
+func (h *handler) clearHistory(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		Revision int `json:"revision"`
+	}
+	if err := h.decodeJSON(w, r, &in, false); err != nil {
+		return err
+	}
+	out, err := h.s.ClearHistory(ctx, r.PathValue("feedbackId"), in.Revision, idemKey(r))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+func (h *handler) clearAllHistory(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		WorkspaceID string `json:"workspaceId"`
+	}
+	if err := h.decodeJSON(w, r, &in, false); err != nil {
+		return err
+	}
+	out, err := h.s.ClearAllHistory(ctx, in.WorkspaceID, idemKey(r))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }

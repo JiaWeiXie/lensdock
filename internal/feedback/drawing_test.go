@@ -568,7 +568,7 @@ func sameRows(t *testing.T, what string, before, after []string) {
 }
 
 // downgradeToV1 rebuilds the captures table exactly as migration 1 defines it
-// and forgets migration 2, producing a database a v1 Gateway left behind.
+// and forgets migrations 2 and 3, producing a database a v1 Gateway left behind.
 func downgradeToV1(t *testing.T, db *storage.DB) {
 	t.Helper()
 	old := strings.Replace(migrations[0].Statements[0], "CREATE TABLE captures (", "CREATE TABLE captures_old (", 1)
@@ -585,7 +585,8 @@ func downgradeToV1(t *testing.T, db *storage.DB) {
 			`DROP TABLE captures`,
 			`ALTER TABLE captures_old RENAME TO captures`,
 			`CREATE INDEX captures_owner ON captures (workspace_id, owner_id)`,
-			`DELETE FROM schema_migrations WHERE component = 'feedback' AND version = 2`,
+			`DROP TABLE history_hidden`,
+			`DELETE FROM schema_migrations WHERE component = 'feedback' AND version >= 2`,
 		} {
 			if _, err := tx.Exec(stmt); err != nil {
 				return fmt.Errorf("%s: %w", stmt, err)
@@ -664,10 +665,10 @@ func TestMigrationV2PreservesV1DataAndWidensCaptureChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The next start applies migration 2.
+	// The next start applies migrations 2 and 3.
 	e.open()
 	versions, err = storage.SchemaVersions(ctx, e.st.DB)
-	if err != nil || versions["feedback"] != 2 || versions["storage"] != 1 {
+	if err != nil || versions["feedback"] != 3 || versions["storage"] != 1 {
 		t.Fatalf("versions = %v, %v", versions, err)
 	}
 	after := snapshot()
@@ -679,7 +680,10 @@ func TestMigrationV2PreservesV1DataAndWidensCaptureChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := e.st.DB.Migrate(ctx, "feedback", migrations[:1]); err == nil || !strings.Contains(err.Error(), "newer than this binary") {
-		t.Fatalf("a v1 binary accepted the v2 database: %v", err)
+		t.Fatalf("a v1 binary accepted the v3 database: %v", err)
+	}
+	if err := e.st.DB.Migrate(ctx, "feedback", migrations[:2]); err == nil || !strings.Contains(err.Error(), "newer than this binary") {
+		t.Fatalf("a v2 binary accepted the v3 database: %v", err)
 	}
 
 	// Published history is byte-identical and the old drafts are still usable.

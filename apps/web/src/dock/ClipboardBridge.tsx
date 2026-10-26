@@ -8,16 +8,19 @@ import { useWorkspace } from '@/state/workspace';
 import { graphemeLength, utf8ByteLength } from '@/util/text';
 import { XK } from '@/vnc/keys';
 import { useClock, useRfb, useRfbController } from '@/vnc/DesktopProvider';
+import { REMOTE_CLIPBOARD_FAILURE_TEXT, useRemoteClipboard } from '@/vnc/RemoteClipboardProvider';
 
 /** Selection lifetime (60 s). The server enforces it; text size is limited only when the administrator configures a limit. */
 const SELECTION_TTL_S = 60;
 
 /**
- * Manual UTF-8 clipboard bridge. VNC's own clipboard is Latin-1 only, so text
- * composed with a local IME is sent over the runtime X11 clipboard bridge.
- * Nothing is read from the local clipboard unless the person presses the
- * explicit button, nothing is kept after sending (unless they opt out), and
- * the text is never logged or stored by the UI.
+ * UTF-8 clipboard bridge. Local to remote is manual: VNC's own clipboard is
+ * Latin-1 only, so text composed with a local IME is sent over the runtime X11
+ * clipboard bridge, and nothing is read from the local clipboard unless the
+ * person presses the explicit button. Remote to local is the opt-out sync
+ * owned by RemoteClipboardProvider (it runs with this panel closed); this panel
+ * only shows its toggle, status and the explicit copy fallback. Text is never
+ * logged or stored by the UI.
  */
 export function ClipboardBridge(): ReactNode {
   const { t } = useI18n();
@@ -26,6 +29,7 @@ export function ClipboardBridge(): ReactNode {
   const controller = useRfbController();
   const rfb = useRfb();
   const now = useClock();
+  const remote = useRemoteClipboard();
   const [text, setText] = useState('');
   const [clearAfter, setClearAfter] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -116,6 +120,28 @@ export function ClipboardBridge(): ReactNode {
         <Notice tone="teal">{t('clip.sent', { s: remaining })}</Notice>
       ) : sentAt !== null ? (
         <Notice tone="neutral">{t('clip.expired')}</Notice>
+      ) : null}
+      <h3>{t('clip.sync.title')}</h3>
+      <label className="check">
+        <input type="checkbox" checked={remote.enabled} onChange={(e) => remote.setEnabled(e.target.checked)} />
+        <span>{t('clip.sync.toggle')}</span>
+      </label>
+      <p className="panel__desc">{remote.enabled ? t('clip.sync.hint') : t('clip.sync.off')}</p>
+      {remote.status === 'copied' ? <Notice tone="teal">{t('clip.sync.copied')}</Notice> : null}
+      {remote.status === 'unfocused' || remote.status === 'denied' || remote.status === 'unavailable' ? (
+        <Notice tone="amber">{t(REMOTE_CLIPBOARD_FAILURE_TEXT[remote.status])}</Notice>
+      ) : null}
+      {remote.fallbackText !== null ? (
+        <Field label={t('clip.sync.fallbackLabel')} htmlFor="clip-remote-text">
+          <textarea id="clip-remote-text" className="input input--mono" rows={3} readOnly lang="zh-TW" spellCheck={false} value={remote.fallbackText} onFocus={(e) => e.currentTarget.select()} />
+        </Field>
+      ) : null}
+      {remote.enabled && remote.hasLatest ? (
+        <div className="btn-row">
+          <Button small icon="clipboard" onClick={() => void remote.copyLatest()}>
+            {t('clip.sync.copyLatest')}
+          </Button>
+        </div>
       ) : null}
       <p className="panel__desc">{t('clip.privacy')}</p>
     </section>

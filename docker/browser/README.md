@@ -148,6 +148,8 @@ The supervisor sends `Browser.close` first (waiting up to 3 seconds) and falls b
 
 An Agent lease grants high-trust control of this browser. The CDP proxy permits `Browser.close` and `Extensions.*`. An unpacked extension must exist at the requested path inside the container. `Target.exposeDevToolsProtocol` remains blocked because its page binding would outlive the fenced connection; nested `Target.sendMessageToTarget` is blocked to prevent bypassing that check. Flattened target sessions remain supported. Closing Chromium causes a restart and invalidates old leases.
 
+For extensions that use Native Messaging, add the host executable and its dependencies to a derived Runtime image. Register its manifest under `/etc/chromium/native-messaging-hosts/`, with a `0755` directory and a readable manifest such as `0644`. Verify access as the browser user, UID `10001`, rather than root: a directory without execute permission makes Chromium report `Specified native messaging host not found` even when the manifest exists. Keep unpacked extensions in a persistent path so they survive container replacement, and deploy the derived image through the paired update workflow.
+
 ## Data lifetime and removal
 
 Host-side age expiry removes only unreferenced update data, not the active Profile,

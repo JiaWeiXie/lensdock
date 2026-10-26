@@ -179,4 +179,24 @@ var migrations = []storage.Migration{{
 		`ALTER TABLE captures_v2 RENAME TO captures`,
 		`CREATE INDEX captures_owner ON captures (workspace_id, owner_id)`,
 	},
+}, {
+	// Published-history clearing: a revision listed here is hidden from the
+	// history listing (GET /feedback?history=visible) only. The published
+	// revision, its artifacts and its delivery are not touched, so the
+	// immutability triggers of migration 1 stay untouched; rows are only ever
+	// inserted. A v2 Gateway refuses this schema (rollback needs the snapshot).
+	Version: 3,
+	Name:    "hidden published history",
+	Statements: []string{
+		`CREATE TABLE history_hidden (
+			feedback_id TEXT NOT NULL,
+			revision INTEGER NOT NULL,
+			workspace_id TEXT NOT NULL,
+			hidden_by TEXT NOT NULL,
+			hidden_at INTEGER NOT NULL,
+			PRIMARY KEY (feedback_id, revision),
+			FOREIGN KEY (feedback_id, revision) REFERENCES revisions (feedback_id, revision)
+		)`,
+		`CREATE INDEX history_hidden_workspace ON history_hidden (workspace_id)`,
+	},
 }}

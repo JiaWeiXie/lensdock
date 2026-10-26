@@ -3,6 +3,8 @@ import {
   artifactUrl,
   bundleUrl,
   cancelFeedback,
+  clearFeedbackHistory,
+  clearWorkspaceHistory,
   createRevision,
   dispatchFeedback,
   getDelivery,
@@ -41,37 +43,137 @@ export function FeedbackPanel(): ReactNode {
 
 function FeedbackList(): ReactNode {
   const { t, locale } = useI18n();
+  const { actor } = useSession();
   const { workspaceId, eventTick } = useWorkspace();
   const { select } = useUi();
+  const toast = useToast();
+  const operator = canOperate(actor?.role);
   const [filter, setFilter] = useState<DeliveryState | 'ALL'>('ALL');
   const [items, setItems] = useState<FeedbackSummary[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  const [clearTarget, setClearTarget] = useState<ClearTarget | null>(null);
+  const [clearBusy, setClearBusy] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
+  const clearing = useRef(false);
+  // One key per confirmation dialog: a retry inside the dialog replays, a fresh dialog is a fresh request.
+  const clearKey = useRef<string | null>(null);
+  // Every full reload starts a new epoch. An answer from an older epoch (before a clear, a filter or
+  // workspace change, or a refresh) is dropped so it can never put cleared rows back.
+  const epoch = useRef(0);
+  const mounted = useRef(true);
+  const liveWorkspace = useRef(workspaceId);
+  liveWorkspace.current = workspaceId;
 
   const load = useCallback(
     async (after?: string): Promise<void> => {
+      if (!after) {
+        epoch.current += 1;
+        setLoadingMore(false);
+      }
+      const mine = epoch.current;
       try {
         const res = await listFeedback(workspaceId, {
           ...(filter === 'ALL' ? {} : { state: filter }),
           ...(after ? { cursor: after } : {}),
+          history: 'visible',
           limit: 50,
         });
+        if (mine !== epoch.current) return;
         setItems((prev) => (after ? [...prev, ...res.items] : res.items));
         setCursor(res.nextCursor);
         setError(null);
       } catch (err) {
+        if (mine !== epoch.current) return;
         setError(err as ApiError);
       } finally {
-        setLoading(false);
+        if (mine === epoch.current) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
     },
     [workspaceId, filter],
   );
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      epoch.current += 1;
+    };
+  }, []);
+
+  // A different workspace or filter must not show the previous scope's rows while its own list loads.
+  useEffect(() => {
+    epoch.current += 1;
+    setItems([]);
+    setCursor(null);
+    setLoading(true);
+    setLoadingMore(false);
+  }, [workspaceId, filter]);
 
   useEffect(() => {
     void load();
   }, [load, eventTick]);
+
+  // A confirmation for another workspace must not be answered here.
+  useEffect(() => {
+    clearKey.current = null;
+    setClearTarget(null);
+    setClearError(null);
+  }, [workspaceId]);
+
+  const openClear = (target: ClearTarget): void => {
+    if (clearing.current) return;
+    clearKey.current = newKey();
+    setClearError(null);
+    setClearTarget(target);
+  };
+
+  const closeClear = (): void => {
+    if (clearing.current) return;
+    clearKey.current = null;
+    setClearError(null);
+    setClearTarget(null);
+  };
+
+  const confirmClear = async (): Promise<void> => {
+    const target = clearTarget;
+    if (!target || clearing.current) return;
+    clearing.current = true;
+    setClearBusy(true);
+    setClearError(null);
+    const origin = workspaceId;
+    const key = clearKey.current ?? newKey();
+    clearKey.current = key;
+    // The workspace may change while the request is in flight; only the originating scope may react to its result.
+    const sameScope = (): boolean => mounted.current && liveWorkspace.current === origin && clearKey.current === key;
+    try {
+      if (target.scope === 'all') {
+        const res = await clearWorkspaceHistory(target.workspaceId, key);
+        toast.push(res.cleared > 0 ? 'ok' : 'info', res.cleared > 0 ? t('fb.clear.all.done', { n: res.cleared }) : t('fb.clear.all.none'));
+      } else {
+        await clearFeedbackHistory(target.feedbackId, target.revision, key);
+        toast.push('ok', t('fb.clear.one.done'));
+      }
+      if (sameScope()) {
+        clearKey.current = null;
+        setClearTarget(null);
+        // The latest loader reflects the current filter; a changed workspace already loads its own list.
+        await loadRef.current();
+      }
+    } catch (err) {
+      if (sameScope()) setClearError(describeError(err, t));
+    } finally {
+      clearing.current = false;
+      if (mounted.current) setClearBusy(false);
+    }
+  };
 
   return (
     <div className="panel-stack">
@@ -87,6 +189,13 @@ function FeedbackList(): ReactNode {
             ))}
           </select>
         </Field>
+        {operator ? (
+          <div className="btn-row">
+            <Button small variant="danger" icon="trash" disabled={clearBusy} onClick={() => openClear({ scope: 'all', workspaceId })}>
+              {t('fb.clear.all')}
+            </Button>
+          </div>
+        ) : null}
         {loading ? <p>{t('common.loading')}</p> : null}
         {error ? <Notice tone="danger">{describeError(error, t)}</Notice> : null}
         {!loading && items.length === 0 && !error ? <p className="empty">{t('fb.empty')}</p> : null}
@@ -103,22 +212,81 @@ function FeedbackList(): ReactNode {
                 </span>
                 <DeliveryChip state={i.deliveryState} />
               </button>
+              {operator ? (
+                <Button
+                  small
+                  variant="ghost"
+                  icon="trash"
+                  disabled={clearBusy}
+                  aria-label={t('fb.clear.one.aria', { title: i.title })}
+                  title={t('fb.clear.one')}
+                  onClick={() => openClear({ scope: 'one', feedbackId: i.feedbackId, revision: i.revision })}
+                />
+              ) : null}
             </li>
           ))}
         </ul>
         {cursor ? (
-          <Button small onClick={() => void load(cursor)}>
+          <Button small busy={loadingMore} onClick={() => {
+            if (loadingMore) return;
+            setLoadingMore(true);
+            void load(cursor);
+          }}>
             {t('common.loadMore')}
           </Button>
         ) : null}
       </section>
+
+      <ClearHistoryModal open={clearTarget !== null} scope={clearTarget?.scope ?? 'all'} busy={clearBusy} error={clearError} onClose={closeClear} onConfirm={() => void confirmClear()} />
     </div>
+  );
+}
+
+type ClearTarget = { scope: 'all'; workspaceId: string } | { scope: 'one'; feedbackId: string; revision: number };
+
+function ClearHistoryModal({
+  open,
+  scope,
+  busy,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  scope: 'one' | 'all';
+  busy: boolean;
+  error: string | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}): ReactNode {
+  const { t } = useI18n();
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t(scope === 'all' ? 'fb.clear.all.title' : 'fb.clear.one.title')}
+      dismissible={!busy}
+      footer={
+        <>
+          <Button disabled={busy} onClick={onClose}>
+            {t('common.cancel')}
+          </Button>
+          <Button variant="danger" icon="trash" busy={busy} onClick={onConfirm}>
+            {t('fb.clear.confirm')}
+          </Button>
+        </>
+      }
+    >
+      <p>{t(scope === 'all' ? 'fb.clear.all.body' : 'fb.clear.one.body')}</p>
+      <p>{t('fb.clear.preserved')}</p>
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+    </Modal>
   );
 }
 
 // ----------------------------------------------------------------- detail
 
-type PendingAction = null | 'verify' | 'reject' | 'cancel';
+type PendingAction = null | 'verify' | 'reject' | 'cancel' | 'clear';
 
 function FeedbackDetail({ feedbackId, revision }: { feedbackId: string; revision: number }): ReactNode {
   const { t, locale } = useI18n();
@@ -186,6 +354,45 @@ function FeedbackDetail({ feedbackId, revision }: { feedbackId: string; revision
     }
   };
 
+  // One key per confirmation dialog: a retry inside the dialog replays, a fresh dialog is a fresh request.
+  const clearKey = useRef<string | null>(null);
+  const clearing = useRef(false);
+
+  const openClear = (): void => {
+    if (clearing.current) return;
+    clearKey.current = newKey();
+    setActionError(null);
+    setPending('clear');
+  };
+
+  const closeClear = (): void => {
+    if (clearing.current) return;
+    clearKey.current = null;
+    setActionError(null);
+    setPending(null);
+  };
+
+  const clearHistory = async (): Promise<void> => {
+    if (clearing.current) return;
+    clearing.current = true;
+    setBusy(true);
+    setActionError(null);
+    const key = clearKey.current ?? newKey();
+    clearKey.current = key;
+    try {
+      await clearFeedbackHistory(feedbackId, revision, key);
+      clearKey.current = null;
+      toast.push('ok', t('fb.clear.one.done'));
+      setPending(null);
+      select(null);
+    } catch (err) {
+      setActionError(describeError(err, t));
+    } finally {
+      clearing.current = false;
+      setBusy(false);
+    }
+  };
+
   const state = delivery?.state ?? null;
   const terminal = state !== null && TERMINAL.includes(state);
 
@@ -246,6 +453,9 @@ function FeedbackDetail({ feedbackId, revision }: { feedbackId: string; revision
             ) : null}
             <Button icon="pen" busy={busy} onClick={() => void startRevision()}>
               {t('fb.newRevision')}
+            </Button>
+            <Button variant="danger" icon="trash" disabled={busy} onClick={openClear}>
+              {t('fb.clear.one')}
             </Button>
           </div>
           <p className="panel__desc">{t('fb.revisionNote')}</p>
@@ -368,6 +578,7 @@ function FeedbackDetail({ feedbackId, revision }: { feedbackId: string; revision
         onClose={() => setPending(null)}
         onConfirm={() => void run(() => cancelFeedback(feedbackId, revision, reason.trim() || undefined, newKey()), 'fb.cancel.done')}
       />
+      <ClearHistoryModal open={pending === 'clear'} scope="one" busy={busy} error={actionError} onClose={closeClear} onConfirm={() => void clearHistory()} />
 
       <Modal open={preview !== null} onClose={() => setPreview(null)} title={t('fb.image')} wide>
         {preview ? <img className="bigimg" src={preview} alt={t('fb.image')} /> : null}

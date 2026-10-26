@@ -4,6 +4,7 @@ import { useControl } from '@/state/control';
 import { useSession } from '@/state/session';
 import { useWorkspace } from '@/state/workspace';
 import { RfbController, type RfbSnapshot, type StreamTarget } from './controller';
+import { RemoteClipboardProvider } from './RemoteClipboardProvider';
 
 const Ctx = createContext<RfbController | null>(null);
 
@@ -54,7 +55,13 @@ export function DesktopProvider({ children }: { children: ReactNode }): ReactNod
     controller.setTarget(target);
   }, [controller, target]);
 
-  return <Ctx.Provider value={controller}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={controller}>
+      <RemoteClipboardProvider controller={controller} session={target?.mode === 'control' ? target.key : null}>
+        {children}
+      </RemoteClipboardProvider>
+    </Ctx.Provider>
+  );
 }
 
 export function useRfbController(): RfbController {

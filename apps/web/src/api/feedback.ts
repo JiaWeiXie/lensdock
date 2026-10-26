@@ -1,6 +1,7 @@
 import { request, requestBlob } from './http';
 import type {
   Annotation,
+  ClearHistoryResult,
   DeliveryDetail,
   Draft,
   DraftDetail,
@@ -88,12 +89,22 @@ export function publishDraft(feedbackId: string, etag: string, idempotencyKey: s
 
 export function listFeedback(
   workspaceId: string,
-  opts: { state?: DeliveryState; cursor?: string; limit?: number; signal?: AbortSignal } = {},
+  opts: { state?: DeliveryState; cursor?: string; limit?: number; history?: 'visible'; signal?: AbortSignal } = {},
 ): Promise<FeedbackList> {
   return request<FeedbackList>('/api/v1/feedback', {
-    query: { workspaceId, state: opts.state, cursor: opts.cursor, limit: opts.limit },
+    query: { workspaceId, state: opts.state, cursor: opts.cursor, limit: opts.limit, history: opts.history },
     signal: opts.signal,
   });
+}
+
+/** Hides one published revision from the history list. Nothing published, delivered or stored is changed. */
+export function clearFeedbackHistory(feedbackId: string, revision: number, idempotencyKey: string): Promise<ClearHistoryResult> {
+  return request<ClearHistoryResult>(`${fb(feedbackId)}/history/clear`, { method: 'POST', body: { revision }, idempotencyKey });
+}
+
+/** Hides every currently published revision of the workspace from the history list, across all states and pages. */
+export function clearWorkspaceHistory(workspaceId: string, idempotencyKey: string): Promise<ClearHistoryResult> {
+  return request<ClearHistoryResult>('/api/v1/feedback/history/clear', { method: 'POST', body: { workspaceId }, idempotencyKey });
 }
 
 export function listRevisions(feedbackId: string, signal?: AbortSignal): Promise<RevisionList> {

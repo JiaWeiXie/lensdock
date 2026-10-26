@@ -289,12 +289,24 @@ type DraftList struct {
 	Items []DraftDetail `json:"items"`
 }
 
+// HistoryVisible is the only value of the list filter "history": it omits
+// revisions a human cleared from the published history. Without the filter
+// every revision is listed (Agent queue, CLI, evidence lookups).
+const HistoryVisible = "visible"
+
 // ListQuery filters ListPublished.
 type ListQuery struct {
 	WorkspaceID string
 	State       string
+	History     string
 	Cursor      string
 	Limit       int
+}
+
+// ClearHistoryResult is the response of both history-clear operations: the
+// number of revisions newly hidden by the call.
+type ClearHistoryResult struct {
+	Cleared int `json:"cleared"`
 }
 
 // ViewportIngest is a page-viewport capture obtained from the runtime.

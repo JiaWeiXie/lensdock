@@ -59,34 +59,44 @@
   color: var(--ink-3);
   display: block;
 }
+
 .glyph--human {
   color: var(--teal-bright);
 }
+
 .glyph--agent {
   color: var(--agent);
 }
+
 .glyph--handoff {
   color: var(--amber-bright);
   animation: latch 1.6s ease-in-out infinite;
 }
+
 .glyph--capture {
   color: var(--amber-bright);
   animation: latch 2.2s ease-in-out infinite;
 }
+
 .glyph--maint {
   color: var(--ink-3);
 }
+
 .glyph--locked {
   color: #ff8a80;
 }
+
 .glyph--idle {
   color: #6d879c;
 }
+
 @keyframes latch {
+
   0%,
   100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.55;
   }
@@ -122,7 +132,7 @@
   padding: 0 var(--sp-2);
 }
 
-.rail__meta > div {
+.rail__meta>div {
   display: grid;
   gap: 1px;
   text-align: center;
@@ -170,6 +180,7 @@
 .rail__stream.is-live {
   color: var(--teal-bright);
 }
+
 .rail__stream.is-live .rail__dot {
   background: var(--teal-bright);
   border-color: var(--teal-bright);
@@ -210,7 +221,7 @@
   display: none;
 }
 
-.top--compact > .top__row > .btn {
+.top--compact>.top__row>.btn {
   padding: 4px 8px;
   font-size: var(--fs-xs);
 }
@@ -226,7 +237,7 @@
   align-items: stretch;
 }
 
-.drawing-split > .drawing-launch {
+.drawing-split>.drawing-launch {
   border-start-end-radius: 0;
   border-end-end-radius: 0;
 }
@@ -235,11 +246,11 @@
   display: inline-flex;
 }
 
-.drawing-split__options > .popover {
+.drawing-split__options>.popover {
   display: inline-flex;
 }
 
-.drawing-split__options > .popover > .btn {
+.drawing-split__options>.popover>.btn {
   height: 100%;
   padding-inline: 6px;
   border-start-start-radius: 0;
@@ -248,7 +259,7 @@
 }
 
 /* The trigger keeps its label for assistive tech and the tooltip; only the chevron is drawn. */
-.drawing-split__options > .popover > .btn > .btn__label {
+.drawing-split__options>.popover>.btn>.btn__label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -380,21 +391,25 @@
   border-color: #9fd6d1;
   color: var(--teal-strong);
 }
+
 .chip--ok {
   background: var(--ok-tint);
   border-color: #a9d8c0;
   color: var(--ok);
 }
+
 .chip--amber {
   background: var(--amber-tint);
   border-color: var(--amber-line);
   color: var(--amber);
 }
+
 .chip--danger {
   background: var(--danger-tint);
   border-color: var(--danger-line);
   color: var(--danger);
 }
+
 .chip--agent {
   background: var(--agent-tint);
   border-color: #b8cdf7;
@@ -450,6 +465,7 @@
   border-color: var(--teal-strong);
   color: #fff;
 }
+
 .btn--primary:hover:not(:disabled) {
   background: var(--teal-strong);
   border-color: var(--teal-strong);
@@ -460,6 +476,7 @@
   border-color: var(--amber-line);
   color: #7a4d00;
 }
+
 .btn--warn:hover:not(:disabled) {
   background: #fae4b4;
 }
@@ -469,6 +486,7 @@
   border-color: var(--danger-line);
   color: #8a2822;
 }
+
 .btn--danger:hover:not(:disabled) {
   background: #f5cdc8;
 }
@@ -478,6 +496,7 @@
   border-color: transparent;
   color: var(--ink-2);
 }
+
 .btn--ghost:hover:not(:disabled) {
   background: rgb(11 37 64 / 6%);
   border-color: transparent;
@@ -497,6 +516,7 @@
   background: transparent;
   color: var(--ink-3);
 }
+
 .icon-btn:hover:not(:disabled) {
   background: rgb(11 37 64 / 8%);
   color: var(--ink);
@@ -853,7 +873,7 @@ textarea.input {
   color: var(--ink-2);
 }
 
-.seg__btn + .seg__btn {
+.seg__btn+.seg__btn {
   border-left: 1px solid var(--line-strong);
 }
 
@@ -887,6 +907,7 @@ textarea.input {
 }
 
 .stage__screen {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -894,10 +915,18 @@ textarea.input {
   overflow: hidden;
 }
 
-/* noVNC inserts its own div/canvas; keep them from overflowing the frame. */
-.stage__screen > div {
-  flex: 1;
+/* One layer per RFB (owned by the controller); noVNC inserts its own div/canvas inside it. */
+.rfb-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
   min-width: 0;
+}
+
+/* Last frame of the previous stream, kept above the connecting one until that has painted. Not interactive. */
+.rfb-layer--frozen {
+  z-index: 1;
+  pointer-events: none;
 }
 
 .stage__screen canvas {
@@ -1171,21 +1200,25 @@ textarea.input {
   border-color: var(--amber-line);
   color: #6b4300;
 }
+
 .notice--danger {
   background: var(--danger-tint);
   border-color: var(--danger-line);
   color: #7d2823;
 }
+
 .notice--teal {
   background: var(--teal-tint);
   border-color: #9fd6d1;
   color: var(--teal-strong);
 }
+
 .notice--ok {
   background: var(--ok-tint);
   border-color: #a9d8c0;
   color: var(--ok);
 }
+
 .notice--neutral {
   background: #eef3f7;
   border-color: var(--line-strong);
@@ -1218,12 +1251,15 @@ textarea.input {
 .toast--ok {
   border-left: 3px solid var(--ok);
 }
+
 .toast--warn {
   border-left: 3px solid var(--amber);
 }
+
 .toast--error {
   border-left: 3px solid var(--danger);
 }
+
 .toast--info {
   border-left: 3px solid var(--teal);
 }
@@ -1425,6 +1461,7 @@ textarea.input {
 .meter--amber .meter__fill {
   background: var(--amber-bright);
 }
+
 .meter--danger .meter__fill {
   background: var(--danger);
 }
@@ -1548,12 +1585,14 @@ textarea.input {
   border-left-color: var(--ok);
   color: var(--ink-2);
 }
+
 .stepper__step--current {
   border-left-color: var(--teal);
   background: var(--teal-tint);
   color: var(--ink);
   font-weight: 600;
 }
+
 .stepper__step--skipped {
   border-left-color: var(--danger-line);
   text-decoration: line-through;
@@ -1576,6 +1615,7 @@ textarea.input {
   border-color: var(--ok);
   color: var(--ok);
 }
+
 .stepper__step--current .stepper__dot {
   background: var(--teal);
   border-color: var(--teal-strong);
@@ -1725,7 +1765,7 @@ textarea.input {
   overflow: visible;
 }
 
-.health__rows li > span:first-child {
+.health__rows li>span:first-child {
   color: var(--ink-3);
   font-weight: 600;
   text-transform: uppercase;
@@ -1806,7 +1846,7 @@ textarea.input {
   align-items: start;
 }
 
-.settings__grid > .field {
+.settings__grid>.field {
   min-width: 0;
   margin-bottom: 0;
 }
@@ -1950,10 +1990,12 @@ textarea.input {
 /* --------------------------------------------------------------- responsive */
 
 @media (max-width: 1180px) {
-  .top--compact .top__status > .chip:first-child,
-  .top--compact .top__tools > :not(:first-child) {
+
+  .top--compact .top__status>.chip:first-child,
+  .top--compact .top__tools> :not(:first-child) {
     display: none;
   }
+
   .health {
     grid-template-columns: 1fr;
   }
@@ -1963,14 +2005,17 @@ textarea.input {
   .app {
     grid-template-columns: var(--rail-w) minmax(0, 1fr);
   }
+
   .rail__meta,
   .rail__holder {
     display: none;
   }
+
   .workspace__main {
     position: relative;
     grid-template-columns: 1fr;
   }
+
   .dock {
     position: absolute;
     inset: 0 0 0 auto;
@@ -1978,14 +2023,17 @@ textarea.input {
     z-index: 12;
     box-shadow: var(--shadow-2);
   }
+
   .dock--collapsed {
     position: static;
     width: auto;
     box-shadow: none;
   }
+
   .top__browser {
     display: none;
   }
+
   .targets__fg {
     display: none;
   }
@@ -1995,91 +2043,112 @@ textarea.input {
   .app:has(.app__main--workspace) {
     grid-template-columns: minmax(0, 1fr);
   }
-  .app:has(.app__main--workspace) > .rail {
+
+  .app:has(.app__main--workspace)>.rail {
     display: none;
   }
+
   .top--compact .top__id,
-  .top--compact .top__status > .chip:not(.chip--owner),
-  .top--compact .top__tools > :not(:first-child) {
+  .top--compact .top__status>.chip:not(.chip--owner),
+  .top--compact .top__tools> :not(:first-child) {
     display: none;
   }
+
   /* The two primary actions stay visible on a phone; long labels wrap instead of widening the page. */
-  .top__row > .btn,
-  .top__row > .drawing-split,
-  .top__row > .drawing-split .drawing-launch {
+  .top__row>.btn,
+  .top__row>.drawing-split,
+  .top__row>.drawing-split .drawing-launch {
     min-width: 0;
     max-width: 100%;
   }
-  .top__row > .btn,
-  .top__row > .drawing-split .drawing-launch {
+
+  .top__row>.btn,
+  .top__row>.drawing-split .drawing-launch {
     white-space: normal;
     text-align: start;
     overflow-wrap: anywhere;
   }
+
   .top--compact .top__status {
     min-width: min-content;
     flex: 1 1 auto;
   }
+
   .top--compact .chip--owner {
     white-space: normal;
     overflow: visible;
   }
+
   .top__actions,
   .top__tools,
   .targets {
     flex-wrap: wrap;
     min-width: 0;
   }
-  .top__row--actions > .top__actions,
-  .top__row--actions > .targets {
+
+  .top__row--actions>.top__actions,
+  .top__row--actions>.targets {
     flex: 1 1 100%;
   }
+
   .workspace__main.workspace__main--dock-collapsed {
     grid-template-columns: minmax(0, 1fr);
   }
+
   .dock--collapsed {
     inset: 3px 3px auto auto;
     position: absolute;
     width: 30px;
     padding: 0;
   }
+
   .dock--collapsed .btn:not(:first-child) {
     display: none;
   }
+
   .stage__bar {
     padding-right: 38px;
   }
+
   .stage__view-controls,
   .stage__readout {
     display: none;
   }
+
   .stage__mobile-controls {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 4px;
   }
+
   .top__row {
     flex-wrap: wrap;
     padding: 4px;
   }
+
   .top__status {
     margin-left: 0;
     justify-content: flex-start;
   }
+
   .top__tools {
     border-left: 0;
     padding-left: 0;
   }
+
   .workspace {
     padding: 4px;
   }
+
   .taskform__pair {
     grid-template-columns: 1fr;
   }
+
   .kv__row {
     grid-template-columns: 1fr;
   }
+
   .table--audit thead {
     position: absolute;
     width: 1px;
@@ -2090,15 +2159,18 @@ textarea.input {
     clip-path: inset(50%);
     white-space: nowrap;
   }
+
   .table--audit tbody {
     display: grid;
     gap: var(--sp-2);
   }
+
   .table--audit tbody tr {
     display: block;
     padding-block: var(--sp-2);
     border-bottom: 1px solid var(--line);
   }
+
   .table--audit td {
     display: grid;
     grid-template-columns: minmax(0, 30%) minmax(0, 1fr);
@@ -2106,20 +2178,24 @@ textarea.input {
     padding: 3px 0;
     border: 0;
   }
+
   .table--audit td::before {
     content: attr(data-label);
     color: var(--ink-3);
     font-family: var(--font-ui);
     font-weight: 600;
   }
+
   .settings,
   .route-note,
   .agent-note {
     padding: var(--sp-2);
   }
+
   .cmd {
     grid-template-columns: 1fr auto;
   }
+
   .cmd__label {
     grid-column: 1 / -1;
   }
@@ -2135,6 +2211,7 @@ textarea.input {
   font-weight: 700;
   letter-spacing: 0.01em;
 }
+
 .btn.agent-ctl--pause:hover:not(:disabled) {
   background: #8f2a23;
   border-color: #6f201b;
@@ -2179,7 +2256,7 @@ textarea.input {
   padding-inline-start: 8px;
 }
 
-.agent-banner--paused > .notice {
+.agent-banner--paused>.notice {
   border-start-start-radius: 0;
   border-end-start-radius: 0;
   border-inline-start-width: 0;
@@ -2189,7 +2266,7 @@ textarea.input {
   margin: 0;
 }
 
-.agent-banner--paused .notice__body p + p {
+.agent-banner--paused .notice__body p+p {
   margin-top: 4px;
 }
 
@@ -2313,6 +2390,7 @@ textarea.input {
     width: 100%;
     justify-content: flex-start;
   }
+
   .agent-guard {
     padding: var(--sp-2);
   }
@@ -2320,6 +2398,7 @@ textarea.input {
 
 /* Fullscreen keeps the stage only, so hide chrome that would overlap. */
 @media print {
+
   .rail,
   .dock,
   .drawer,

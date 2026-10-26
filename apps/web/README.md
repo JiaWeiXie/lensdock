@@ -97,6 +97,10 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
   capture and unavailable runtimes remain noninteractive. Drain timeout exposes an
   explicit force option. Heartbeats, epoch/generation fencing and server disconnects
   remain authoritative; a capture-replaced lease is adopted before further input.
+  During a same-workspace, same-generation stream handoff, the last painted
+  canvas stays visible until the replacement paints, for at most four seconds.
+  The retained canvas is inert and cannot be captured; the old connection is
+  disconnected immediately. Failed reconnects still show their error state.
 - **Capture**: the always-visible Capture & annotate button grabs the live
   framebuffer, uploads the desktop PNG and opens a blank annotation draft in
   one action (no lease or control change). Draft retries reuse a successful
@@ -181,8 +185,21 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
   RESOLVED is Done awaiting verification; VERIFIED records the human's approval.
   Automatic workspace routing, verify/reject, cancellation, revision creation and
   artifact/bundle downloads remain available. Agent results are untrusted until verified.
-- **Input/files**: manual UTF-8 clipboard bridge (explicit read/send, no logging)
-  plus “send and paste” with one Ctrl+V. Clipboard bytes and file count, size and
+  Humans and admins can clear one revision from the list or detail view, or
+  clear all history for the current workspace across every filter and page.
+  Confirmation explains that this hides history without cancelling work or
+  deleting published evidence. The choice is stored on the server and survives
+  reloads; later publications remain visible. The UI lists with `history=visible`;
+  default API, CLI and MCP listings still include cleared revisions.
+  Mutations are `POST /feedback/{id}/history/clear {revision}` and
+  `POST /feedback/history/clear {workspaceId}`, with an `Idempotency-Key`.
+- **Input/files**: local-to-remote UTF-8 clipboard bridge (explicit read/send,
+  no logging), plus “send and paste” with one Ctrl+V. Remote-to-local text sync
+  is on by default while this page is focused and holds control, including
+  when the panel is closed. Turn it off in Input & files; only that preference
+  is saved. Denied clipboard writes show a notice, a manual-copy field and
+  “Copy latest remote text”. Re-enabling sync does not replay old text.
+  View-only streams never carry clipboard text. Clipboard bytes and file count, size and
   storage quotas are optional and default to unlimited. Upload/download keeps
   name validation, overwrite opt-in and progress/cancel; usage meters show
   usage alone when no quota is configured.

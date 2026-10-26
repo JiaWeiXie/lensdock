@@ -230,7 +230,14 @@ export function DesktopStage({ stageRef }: { stageRef: RefObject<HTMLDivElement 
           </div>
         ) : null}
 
-        {rfb.phase !== 'connected' ? (
+        {rfb.handoff && (rfb.phase === 'idle' || rfb.phase === 'connecting') ? (
+          // The previous frame stays visible (not live) while the next stream starts: a small status, no scrim.
+          <div className="stage__chip" role="status">
+            <Icon name="plug" size={14} /> {t('stage.connecting')}
+          </div>
+        ) : null}
+
+        {rfb.phase !== 'connected' && !(rfb.handoff && (rfb.phase === 'idle' || rfb.phase === 'connecting')) ? (
           <div className="stage__overlay" role="status">
             {rfb.phase === 'connecting' ? <p>{t('stage.connecting')}</p> : null}
             {rfb.phase === 'idle' ? <p>{t('stage.idle')}</p> : null}

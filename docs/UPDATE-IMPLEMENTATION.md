@@ -210,7 +210,7 @@ bin/lensdock release manifest --dev --uncommitted \
   --agent-browser-version 0.39.2 \
   --cli-version development \
   --gateway-version development \
-  --gateway-db 2 --min-gateway-db 1
+  --gateway-db 3 --min-gateway-db 1
 ```
 
 Notes on the flags:
@@ -361,6 +361,13 @@ Schema 2 lets the Gateway store a standalone drawing capture with no Runtime, ta
 - the old Gateway reports schema 1 and previously published feedback reads back identical;
 - reading a drawing capture created after the upgrade returns 404, because it was not part of the restored schema 1 database;
 - to move forward again, create a new plan for the same release with a new `--output` name and apply it.
+
+Schema 3 adds persisted visibility markers for cleared feedback history.
+Published revisions, artifacts and delivery records retain their existing
+immutability rules. Build release evidence with `GATEWAY_DB=3 MIN_GATEWAY_DB=1`.
+Rolling back to a schema-2 Gateway requires the paired pre-update database
+checkpoint; never start that binary against the schema-3 database. History
+visibility then returns to the checkpoint state.
 
 ## Recovery
 

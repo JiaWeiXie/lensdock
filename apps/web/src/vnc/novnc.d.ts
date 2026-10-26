@@ -11,6 +11,11 @@ declare module '@novnc/novnc' {
     wsProtocols?: string[];
   }
 
+  /** `detail` of the RFB `clipboard` event: the server's clipboard text, exactly as noVNC decoded it. */
+  export interface RFBClipboardEventDetail {
+    text: string;
+  }
+
   export default class RFB extends EventTarget {
     constructor(target: HTMLElement, urlOrChannel: string | WebSocket | RTCDataChannel, options?: RFBOptions);
 
@@ -28,6 +33,7 @@ declare module '@novnc/novnc' {
 
     disconnect(): void;
     sendCredentials(credentials: { username?: string; password?: string; target?: string }): void;
+    clipboardPasteFrom(text: string): void;
     sendKey(keysym: number, code: string | null, down?: boolean): void;
     sendCtrlAltDel(): void;
     focus(options?: FocusOptions): void;

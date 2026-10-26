@@ -230,7 +230,7 @@ func (s *Service) GetDelivery(ctx context.Context, fbID string, rev int) (Delive
 	return out, s.internal("delivery.read", rows.Err())
 }
 
-func (s *Service) summaries(ctx context.Context, p Principal, workspaceID, feedbackID, state string, cursor int64, limit int) (FeedbackList, error) {
+func (s *Service) summaries(ctx context.Context, p Principal, workspaceID, feedbackID, state string, cursor int64, limit int, visibleOnly bool) (FeedbackList, error) {
 	where := "d.workspace_id = ?"
 	args := []any{workspaceID}
 	if feedbackID != "" {
@@ -244,6 +244,9 @@ func (s *Service) summaries(ctx context.Context, p Principal, workspaceID, feedb
 	if cursor > 0 {
 		where += " AND d.seq < ?"
 		args = append(args, cursor)
+	}
+	if visibleOnly {
+		where += " AND NOT EXISTS (SELECT 1 FROM history_hidden h WHERE h.feedback_id = d.feedback_id AND h.revision = d.revision)"
 	}
 	if p.Role == RoleAgent {
 		where += " AND d.agent_id = ? AND d.state IN ('QUEUED','ACKNOWLEDGED','IN_PROGRESS','RESOLVED')"
@@ -296,6 +299,9 @@ func (s *Service) ListPublished(ctx context.Context, q ListQuery) (FeedbackList,
 	if q.State != "" && !validState(q.State) {
 		return FeedbackList{}, badRequest("unknown state filter")
 	}
+	if q.History != "" && q.History != HistoryVisible {
+		return FeedbackList{}, badRequest("history must be " + HistoryVisible)
+	}
 	var cursor int64
 	if q.Cursor != "" {
 		cursor, err = strconv.ParseInt(q.Cursor, 10, 64)
@@ -307,7 +313,7 @@ func (s *Service) ListPublished(ctx context.Context, q ListQuery) (FeedbackList,
 	if limit < 1 || limit > 100 {
 		limit = 50
 	}
-	return s.summaries(ctx, p, q.WorkspaceID, "", q.State, cursor, limit)
+	return s.summaries(ctx, p, q.WorkspaceID, "", q.State, cursor, limit, q.History == HistoryVisible)
 }
 
 // ListRevisions lists every authorized revision of one feedback item, newest
@@ -328,7 +334,7 @@ func (s *Service) ListRevisions(ctx context.Context, fbID string) (FeedbackList,
 	if err != nil {
 		return FeedbackList{}, s.internal("revision.list", err)
 	}
-	return s.summaries(ctx, p, ws, fbID, "", 0, 100)
+	return s.summaries(ctx, p, ws, fbID, "", 0, 100, false)
 }
 
 // ---- transitions -----------------------------------------------------------

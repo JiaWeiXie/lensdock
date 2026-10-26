@@ -731,6 +731,14 @@ paths:
           - RESOLVED
           - VERIFIED
           - CANCELLED
+      - name: history
+        in: query
+        description: visible omits revisions cleared from the history. Omit it for
+          the complete listing (Agent queue, CLI, evidence lookups).
+        schema:
+          type: string
+          enum:
+          - visible
       responses:
         '200':
           description: Success
@@ -1381,6 +1389,136 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/Cancel'
+  /api/v1/feedback/{feedbackId}/history/clear:
+    post:
+      operationId: clearFeedbackHistory
+      summary: Hide one published revision from the history listing
+      description: Human Operator or administrator only. Visibility-only - the published
+        revision, its artifacts, delivery, task and drafts are not changed, deleted
+        or cancelled, and direct reads keep working. Only GET /api/v1/feedback with
+        history=visible omits it. Cookie-authenticated mutations also require CSRF
+        protection.
+      parameters:
+      - name: feedbackId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '200':
+          description: Success. cleared is 1, or 0 when it was already cleared.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryCleared'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient role or scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Unknown revision, unpublished revision or another workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Idempotency-Key was used with a different request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClearHistory'
+  /api/v1/feedback/history/clear:
+    post:
+      operationId: clearWorkspaceFeedbackHistory
+      summary: Hide every currently published revision of a workspace from the history
+        listing
+      description: Human Operator or administrator only. Selects all published revisions
+        of the workspace at the time of the call in one transaction, whatever their
+        delivery state, UI filter or page. Visibility-only - published revisions,
+        artifacts, deliveries, tasks and drafts are not changed, deleted or cancelled.
+        Revisions published later stay visible, also when the request is retried with
+        the same Idempotency-Key. Cookie-authenticated mutations also require CSRF
+        protection.
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryCleared'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient role or wrong workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Unknown workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Idempotency-Key was used with a different request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClearWorkspaceHistory'
   /api/v1/feedback/{feedbackId}/artifacts/{name}:
     get:
       operationId: getShareArtifact
@@ -2500,6 +2638,36 @@ components:
           minLength: 1
       required:
       - revision
+    ClearHistory:
+      type: object
+      additionalProperties: false
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+      required:
+      - revision
+    ClearWorkspaceHistory:
+      type: object
+      additionalProperties: false
+      properties:
+        workspaceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+      required:
+      - workspaceId
+    HistoryCleared:
+      type: object
+      additionalProperties: false
+      properties:
+        cleared:
+          type: integer
+          minimum: 0
+          description: Revisions newly hidden by this call. A replay with the same
+            Idempotency-Key returns the original count.
+      required:
+      - cleared
     Delivery:
       type: object
       additionalProperties: false

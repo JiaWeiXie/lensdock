@@ -422,6 +422,10 @@ export interface FeedbackList {
   nextCursor: string | null;
 }
 
+export interface ClearHistoryResult {
+  cleared: number;
+}
+
 export interface RevisionList {
   items: FeedbackSummary[];
 }

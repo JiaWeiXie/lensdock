@@ -192,7 +192,7 @@ func Migrate(ctx context.Context, db *storage.DB) error {
 // manifest (lensdock release manifest --gateway-db, GATEWAY_DB in
 // tools/release/platform-evidence.sh); an older Gateway refuses a database at
 // this version, so rolling back needs the pre-update snapshot.
-const DatabaseSchemaVersion = 2
+const DatabaseSchemaVersion = 3
 
 // New applies the feedback migrations, removes unreferenced files left by a
 // crash and returns the service. The caller owns (and closes) the store.
