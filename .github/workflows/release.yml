@@ -295,9 +295,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor, which the
-      # Chromium sandbox inside the container needs. This only relaxes the throwaway runner
+      # opt-in Chromium sandbox inside the container needs. This only relaxes the throwaway runner
       # host; the container keeps its seccomp profile, capability drop and no-new-privileges,
-      # and the smoke test fails if Chromium would run without its sandbox.
+      # and the smoke test fails if the enabled sandbox would run without it.
       - name: Allow user namespaces on the runner host
         run: |
           knob=/proc/sys/kernel/apparmor_restrict_unprivileged_userns

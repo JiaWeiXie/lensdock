@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/JiaWeiXie/lensdock/internal/update"
 )
 
 func truncate(s string, n int) string {
@@ -51,7 +53,8 @@ func cloneInventory(inv *Inventory) *Inventory {
 		return nil
 	}
 	out := *inv
-	out.Unbounded = slices.Clone(inv.Unbounded)
+	out.UnboundedMemory = slices.Clone(inv.UnboundedMemory)
+	out.UnboundedCPU = slices.Clone(inv.UnboundedCPU)
 	out.Projects = nil
 	return &out
 }
@@ -86,13 +89,25 @@ func (s *server) usableLocked(pid string) error {
 	return nil
 }
 
-func (s *server) authorize(path string) (Response, error) {
+func (s *server) authorize(path string, automatic bool) (Response, error) {
 	real, id, err := canonicalDir(path)
 	if err != nil {
 		return Response{}, rpcErrf(http.StatusBadRequest, "%v", err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if automatic {
+		if s.cfg.Policy.RequireProjectAuthorization {
+			return Response{}, rpcErrf(http.StatusForbidden, "project authorization is required by manager policy")
+		}
+		if registered := s.reg.projectForPath(real); registered != nil {
+			if err := s.usableLocked(registered.ID); err != nil {
+				return Response{}, err
+			}
+			project, _ := s.projectLocked(registered.ID)
+			return Response{Project: &project}, nil
+		}
+	}
 	var same *projectRecord
 	for _, p := range s.reg.Projects {
 		switch {
@@ -111,6 +126,9 @@ func (s *server) authorize(path string) (Response, error) {
 		if !same.Revoked {
 			project, _ := s.projectLocked(same.ID)
 			return Response{Project: &project}, nil
+		}
+		if automatic {
+			return Response{}, rpcErrf(http.StatusForbidden, "the grant for project %s was revoked", same.ID)
 		}
 		if err := s.checkOverlapLocked(same.Root, same.ID); err != nil {
 			return Response{}, err
@@ -237,7 +255,8 @@ func (s *server) list() Response {
 	}
 	policy := s.cfg.Policy
 	resp.Policy = &policy
-	hold, refuse := s.admissionStateLocked(false)
+	hold := s.admissionHoldLocked(false)
+	refuse := s.unboundedRefusalLocked(s.warningDemandLocked())
 	for _, w := range []string{hold, refuse} {
 		if w != "" {
 			resp.Warnings = append(resp.Warnings, w)
@@ -317,7 +336,7 @@ func (s *server) setPolicy(p *Policy) (Response, error) {
 	if err := validatePolicy(*p); err != nil {
 		return Response{}, rpcErrf(http.StatusBadRequest, "%v", err)
 	}
-	if p.Helpers != s.cfg.Policy.Helpers {
+	if p.Helpers != s.cfg.Policy.Helpers || p.HelperPidsLimit != s.cfg.Policy.HelperPidsLimit {
 		helper, busy, err := tryFlock(helperLockPath(s.root))
 		if err != nil {
 			return Response{}, err
@@ -331,8 +350,13 @@ func (s *server) setPolicy(p *Policy) (Response, error) {
 	for _, rec := range s.reg.Projects {
 		reserved = addRes(reserved, s.reg.effective(rec))
 	}
-	if !reserved.fitsIn(p.Budget) {
+	if !reserved.fitsLimit(p.Budget) {
 		return Response{}, rpcErrf(http.StatusConflict, "current reservations exceed the new budget; stop projects first, running projects are never shrunk")
+	}
+	for _, rec := range s.reg.Projects {
+		if msg := missingBudgetCap(rec.Limits, p.Budget); msg != "" {
+			return Response{}, rpcErrf(http.StatusConflict, "project %s: %s; change its limits with the limits action first", rec.ID, msg)
+		}
 	}
 	next := s.cfg
 	next.Policy = *p
@@ -343,6 +367,82 @@ func (s *server) setPolicy(p *Policy) (Response, error) {
 	s.kick()
 	current := s.cfg.Policy
 	return Response{Policy: &current}, nil
+}
+
+// limits deliberately reconfigures the Runtime and Gateway caps of one project.
+// It never resizes a live browser: the project must be positively stopped, have
+// no unresolved or approval-pending operation and hold no capacity. A non-nil
+// expected snapshot must equal the current limits, checked under the registry
+// lock before anything is mutated, so a read-modify-write cannot overwrite a
+// concurrent change. Under the project lifecycle lock an existing resource
+// profile is reconciled only when it is still exactly the profile of the
+// current limits, so a tampered profile is still refused.
+func (s *server) limits(ctx context.Context, pid string, want, expected *Limits) (Response, error) {
+	if want == nil {
+		return Response{}, rpcErrf(http.StatusBadRequest, "limits are required")
+	}
+	if !want.Runtime.valid() || !want.Gateway.valid() {
+		return Response{}, rpcErrf(http.StatusBadRequest, "limits must be between 0 and 2^60 for every quantity")
+	}
+	s.mu.Lock()
+	known := s.reg.Projects[pid] != nil
+	s.mu.Unlock()
+	if !known {
+		return Response{}, rpcErrf(http.StatusNotFound, "unknown project")
+	}
+	// Only a successful inspection can show that nothing is running.
+	if err := s.refresh(ctx); err != nil {
+		return Response{}, rpcErrf(http.StatusConflict, "cannot confirm the project is stopped: %s", truncate(err.Error(), 240))
+	}
+	lock, busy, err := tryFlock(projectLockPath(s.root, pid))
+	if err != nil {
+		return Response{}, err
+	}
+	if busy {
+		return Response{}, rpcErrf(http.StatusConflict, "a worker or one of its child processes holds the project lifecycle lock; limits can change only while the project is idle")
+	}
+	defer lock.Close()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec := s.reg.Projects[pid]
+	if rec == nil {
+		return Response{}, rpcErrf(http.StatusNotFound, "unknown project")
+	}
+	if expected != nil && rec.Limits != *expected {
+		return Response{}, rpcErrf(http.StatusConflict, "the project's limits changed since they were read; read them again and retry")
+	}
+	if msg := budgetBlocker(*want, s.cfg.Policy.Budget); msg != "" {
+		return Response{}, rpcErrf(http.StatusBadRequest, "%s", msg)
+	}
+	if op := s.reg.unresolvedOp(pid); op != nil {
+		return Response{}, &rpcError{status: http.StatusConflict, msg: fmt.Sprintf("project has an unresolved %s operation (%s, %s); limits can change only while the project is stopped and idle", op.Kind, op.ID, op.Phase), resp: Response{Operation: opView(op)}}
+	}
+	if last := s.reg.Ops[rec.LastOp]; last != nil && last.Phase == PhaseAwaitingApproval {
+		return Response{}, rpcErrf(http.StatusConflict, "update %s awaits approval; approve or abort it before changing limits", last.ID)
+	}
+	switch {
+	case rec.SettledRevision > s.refreshedRev:
+		return Response{}, rpcErrf(http.StatusConflict, "an operation finished after the last inspection; retry")
+	case rec.Observed != "" && rec.Observed != StateStopped:
+		return Response{}, rpcErrf(http.StatusConflict, "project is %s; limits are never changed under a running browser, stop it first", rec.Observed)
+	case !s.reg.effective(rec).isZero():
+		return Response{}, rpcErrf(http.StatusConflict, "project still holds reserved capacity; retry after it settles")
+	}
+	if rec.Limits != *want {
+		current, _ := s.projectLocked(pid)
+		if err := reconcileResourceProfile(s.cfg, current, *want); err != nil {
+			return Response{}, rpcErrf(http.StatusConflict, "%v", err)
+		}
+		if err := s.commitLocked(func(r *registry) error {
+			r.Projects[pid].Limits = *want
+			return nil
+		}); err != nil {
+			return Response{}, err
+		}
+	}
+	project, _ := s.projectLocked(pid)
+	return Response{Project: &project}, nil
 }
 
 func (s *server) recoverOp(pid, opID string) (Response, error) {
@@ -427,22 +527,17 @@ func (s *server) status(pid, opID string, p principal) (Response, error) {
 	return resp, nil
 }
 
-func normalizeDeadline(now, deadline time.Time, fallback time.Duration) (time.Time, error) {
-	if deadline.IsZero() {
-		return now.Add(fallback), nil
-	}
-	if !deadline.After(now) {
+// A zero deadline waits until cancellation; heartbeats still reap dead clients.
+func normalizeDeadline(now, deadline time.Time) (time.Time, error) {
+	if !deadline.IsZero() && !deadline.After(now) {
 		return time.Time{}, rpcErrf(http.StatusBadRequest, "the deadline has already passed")
-	}
-	if deadline.After(now.Add(maxWaitDeadline)) {
-		deadline = now.Add(maxWaitDeadline)
 	}
 	return deadline, nil
 }
 
 func (s *server) ensure(ctx context.Context, pid string, deadline time.Time) (Response, error) {
 	now := s.now()
-	deadline, err := normalizeDeadline(now, deadline, defaultWaitDeadline)
+	deadline, err := normalizeDeadline(now, deadline)
 	if err != nil {
 		return Response{}, err
 	}
@@ -470,6 +565,10 @@ func (s *server) ensure(ctx context.Context, pid string, deadline time.Time) (Re
 	switch {
 	case op != nil && op.Phase == PhaseBlocked:
 		return Response{}, &rpcError{status: http.StatusConflict, msg: fmt.Sprintf("project is blocked by operation %s: %s", op.ID, op.Error), resp: Response{Operation: opView(op)}}
+	case op != nil && isHousekeeping(op) && refreshErr == nil && rec.Observed == StateRunning:
+		// Automatic housekeeping never makes a running project wait or fail.
+		project, _ := s.projectLocked(pid)
+		return Response{Project: &project}, nil
 	case op != nil && op.Kind != KindStart:
 		return Response{}, &rpcError{status: http.StatusConflict, msg: fmt.Sprintf("project has a %s operation in progress (%s)", op.Kind, op.ID), resp: Response{Operation: opView(op)}}
 	case op != nil:
@@ -480,8 +579,8 @@ func (s *server) ensure(ctx context.Context, pid string, deadline time.Time) (Re
 	case rec.Observed == StateUnknown:
 		return Response{}, rpcErrf(http.StatusConflict, "project state is unknown: %s", rec.ObservedBlocker)
 	default:
-		if !pairOf(rec.Limits).fitsIn(s.cfg.Policy.Budget) {
-			return Response{}, rpcErrf(http.StatusConflict, "the project exceeds the managed resource budget")
+		if msg := budgetBlocker(rec.Limits, s.cfg.Policy.Budget); msg != "" {
+			return Response{}, rpcErrf(http.StatusConflict, "%s", msg)
 		}
 		suffix, err := randomHex(8)
 		if err != nil {
@@ -527,7 +626,7 @@ func (s *server) heartbeat(pid, waiterID string) (Response, error) {
 		return Response{}, rpcErrf(http.StatusNotFound, "unknown waiter: it expired, was canceled or never existed")
 	}
 	now := s.now()
-	if !now.Before(w.Deadline) {
+	if !w.Deadline.IsZero() && !now.Before(w.Deadline) {
 		resp := s.waiterResponseLocked(waiterID)
 		if err := s.removeWaitersLocked([]string{waiterID}, now); err != nil {
 			return Response{}, err
@@ -571,9 +670,6 @@ func (s *server) cancelWaiter(pid, waiterID string) (Response, error) {
 
 func (s *server) stop(ctx context.Context, p principal, req Request) (Response, error) {
 	pid := req.ProjectID
-	if !req.DiscardPageState {
-		return Response{}, rpcErrf(http.StatusBadRequest, "stopping discards live page, form and network state; set discardPageState to acknowledge")
-	}
 	switch {
 	case req.Force && !p.admin:
 		return Response{}, rpcErrf(http.StatusForbidden, "overriding active control requires the human admin credential")
@@ -583,6 +679,10 @@ func (s *server) stop(ctx context.Context, p principal, req Request) (Response, 
 		return Response{}, rpcErrf(http.StatusBadRequest, "expectedGeneration applies only to a forced stop")
 	}
 	s.mu.Lock()
+	if s.cfg.Policy.RequireStopConfirmation && !req.DiscardPageState {
+		s.mu.Unlock()
+		return Response{}, rpcErrf(http.StatusBadRequest, "stop-confirmation policy requires discardPageState to acknowledge loss of live page state")
+	}
 	if s.reg.Projects[pid] == nil {
 		s.mu.Unlock()
 		return Response{}, rpcErrf(http.StatusNotFound, "unknown project")
@@ -650,6 +750,9 @@ func validateUpdateAction(a *UpdateAction) error {
 	if a == nil {
 		return rpcErrf(http.StatusBadRequest, "an update action is required")
 	}
+	if a.Automatic {
+		return rpcErrf(http.StatusBadRequest, "the automatic marker is reserved for the manager's own housekeeping")
+	}
 	for _, v := range []string{a.PlanFile, a.UpdateID, a.CheckpointID, a.Volume} {
 		if len(v) > 4096 || strings.ContainsAny(v, "\x00\n\r") {
 			return rpcErrf(http.StatusBadRequest, "update action fields must be single-line values below 4 KiB")
@@ -683,6 +786,22 @@ func validateUpdateAction(a *UpdateAction) error {
 		return need(a.CheckpointID != "", "a checkpoint ID")
 	case UpdatePrune:
 		return nil
+	case UpdatePolicy:
+		if err := need(a.AfterDays != nil, "an age in days"); err != nil {
+			return err
+		}
+		if *a.AfterDays < 0 || *a.AfterDays > update.MaxExpireAfterDays {
+			return rpcErrf(http.StatusBadRequest, "afterDays must be between 0 (disabled) and %d", update.MaxExpireAfterDays)
+		}
+		return need(a.Confirmed, "confirmation")
+	case UpdateExpire:
+		if _, err := update.ParseExpiryScopes(a.Scopes); err != nil {
+			return rpcErrf(http.StatusBadRequest, "%v", err)
+		}
+		if a.AfterDays != nil && (*a.AfterDays < 0 || *a.AfterDays > update.MaxExpireAfterDays) {
+			return rpcErrf(http.StatusBadRequest, "afterDays must be between 0 (disabled) and %d", update.MaxExpireAfterDays)
+		}
+		return need(a.Confirmed || a.DryRun, "confirmation or a dry run")
 	case UpdateDelete:
 		if err := need(a.Volume != "", "a volume"); err != nil {
 			return err
@@ -711,7 +830,7 @@ func (s *server) update(_ context.Context, req Request) (Response, error) {
 	}
 	pid := req.ProjectID
 	now := s.now()
-	deadline, err := normalizeDeadline(now, req.Deadline, defaultUpdateWait)
+	deadline, err := normalizeDeadline(now, req.Deadline)
 	if err != nil {
 		return Response{}, err
 	}
@@ -730,7 +849,11 @@ func (s *server) update(_ context.Context, req Request) (Response, error) {
 	}
 	if needsCandidate(req.Update) {
 		limits := rec.Limits
-		if !addRes(s.reg.effective(rec), pairOf(limits)).fitsIn(s.cfg.Policy.Budget) {
+		budget := s.cfg.Policy.Budget
+		if msg := budgetBlocker(limits, budget); msg != "" {
+			return Response{}, rpcErrf(http.StatusConflict, "%s", msg)
+		}
+		if !addRes(s.reg.effective(rec), pairOf(limits)).fitsLimit(budget) {
 			return Response{}, rpcErrf(http.StatusConflict, "the candidate pair cannot fit in the managed budget even when other projects are stopped")
 		}
 	}

@@ -147,7 +147,7 @@ export function useSendFlow(editor: DraftEditor, onSent: (p: PublishedFeedback) 
       } else if (err instanceof FontNotReadyError) {
         setProblem({ kind: 'failed', message: text('publish.err.fonts') });
       } else if (err instanceof ExportError) {
-        setProblem({ kind: 'failed', message: text(err.reason === 'too-large' ? 'publish.err.tooLarge' : 'publish.err.encode') });
+        setProblem({ kind: 'failed', message: text('publish.err.encode') });
       } else if (err instanceof ApiError && (err.status === 412 || err.code === 'PRECONDITION_FAILED')) {
         attemptRef.current = null;
         setProblem({ kind: 'stale', message: text('send.err.stale') });

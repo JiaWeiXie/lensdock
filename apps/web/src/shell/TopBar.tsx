@@ -6,6 +6,7 @@ import { CAPTURE_STEP_KEYS, useCapture } from '@/capture/CaptureProvider';
 import { DrawingButton } from '@/capture/DrawingButton';
 import { AgentControlButton } from '@/agent/AgentControlButton';
 import { useAgentControl } from '@/agent/AgentControlProvider';
+import { describeError } from '@/errors';
 import { useI18n, type Lang } from '@/i18n';
 import { useControl } from '@/state/control';
 import { useSession } from '@/state/session';
@@ -21,12 +22,12 @@ export function TopBar(): ReactNode {
   const { t, lang, setLang } = useI18n();
   const { actor, logout } = useSession();
   const { workspace, workspaceId, feedStatus } = useWorkspace();
-  const { lease, release, busy, blocked, error: controlError, take } = useControl();
+  const { lease, release, busy, error: controlError } = useControl();
   const owner = useOwner();
   const rfb = useRfb();
   const capture = useCapture();
   const { collaborationVisible: collaboration } = useAgentControl();
-  const { setDockTab, setTakeoverOpen } = useUi();
+  const { setDockTab } = useUi();
   const [route, navigate] = useRoute();
   const [toolsExpanded, setToolsExpanded] = useState(false);
 
@@ -55,15 +56,7 @@ export function TopBar(): ReactNode {
         ? { tone: 'ok', text: t('top.health.ready') }
         : { tone: 'amber', text: t('top.health.notReady') };
 
-  const idle = owner.state === 'IDLE';
-  const takeLabel = idle ? t('top.acquire') : t('top.takeover');
   const stepKey = CAPTURE_STEP_KEYS[capture.step];
-
-  // Direct acquisition needs no reason; a takeover does, so it goes through the dialog.
-  const onTake = (): void => {
-    if (idle) void take('');
-    else setTakeoverOpen(true);
-  };
 
   return (
     <header className={`top${toolsExpanded ? ' top--expanded' : ' top--compact'}`}>
@@ -81,11 +74,7 @@ export function TopBar(): ReactNode {
           <Button small variant="warn" icon="release" busy={busy} onClick={() => void release()}>
             {t('top.release')}
           </Button>
-        ) : (
-          <Button small variant="primary" icon="hand" busy={busy} disabledReason={blocked ? t(blocked) : null} onClick={onTake}>
-            {takeLabel}
-          </Button>
-        )}
+        ) : null}
         <AgentControlButton variant="toolbar" />
         {collaboration ? (
           <>
@@ -194,7 +183,7 @@ export function TopBar(): ReactNode {
           </Button>
         </div>
       ) : null}
-      {controlError ? <p className="top__error" role="alert">{controlError.message}</p> : null}
+      {controlError ? <p className="top__error" role="alert">{describeError(controlError, t)}</p> : null}
     </header>
   );
 }

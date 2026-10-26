@@ -59,7 +59,7 @@ a lease capability token, and no credential appears in a URL.
 | Targets | `GET /workspaces/{ws}/targets` → `{targets:[{id,type,title,url,visible}]}` |
 | Lease | `POST /workspaces/{ws}/leases {mode,ttlSeconds?}` (+`X-LensDock-Takeover-ID`), `POST .../leases/{id}/renew {epoch,runtimeGeneration}`, `DELETE .../leases/{id}`, `GET .../leases/current`; response modelled as `{lease}` only |
 | Takeover | `POST /workspaces/{ws}/takeover {reason,force}` → `{status,requestId}`, `GET` → `{status:DRAINING|READY|DRAIN_TIMEOUT,drained,forced,priorLease,expiresAt}`, `DELETE` |
-| Capture | `POST /workspaces/{ws}/captures {source:'desktop'}` → `{captureId,...}`; `PUT /api/v1/captures/{id}/image` (PNG, `X-LensDock-Captured-At`); `POST /workspaces/{ws}/captures {source:'page-viewport',targetId,leaseId,allowInterrupt?}`; `POST /workspaces/{ws}/captures {source:'drawing',imageWidthPx,imageHeightPx}` (integers 64..4096, no lease, no target, answers a ready capture); `GET /captures/{id}`, `GET /captures/{id}/image`, `POST /captures/{id}/crop {x,y,width,height}` |
+| Capture | `POST /workspaces/{ws}/captures {source:'desktop'}` → `{captureId,...}`; `PUT /api/v1/captures/{id}/image` (PNG, `X-LensDock-Captured-At`); `POST /workspaces/{ws}/captures {source:'page-viewport',targetId,leaseId,allowInterrupt?}`; `POST /workspaces/{ws}/captures {source:'drawing',imageWidthPx,imageHeightPx}` (positive representable integers, optional configured image limits, no lease or target, answers a ready capture); `GET /captures/{id}`, `GET /captures/{id}/image`, `POST /captures/{id}/crop {x,y,width,height}` |
 | Clipboard | `PUT /workspaces/{ws}/clipboard` `text/plain; charset=utf-8` with `X-LensDock-Lease-Epoch` + `X-LensDock-Runtime-Generation` |
 | Resolution | `GET /workspaces/{ws}/resolution` → `{current,supported[]}`; `PUT` `{width,height}` with the same lease-epoch headers, returns the size read back |
 | Files | `GET /workspaces/{ws}/files?area=downloads|uploads` → `{area,files,usage}`; `GET|DELETE /files/{area}/{name}`; `PUT /files/uploads/{name}?overwrite=1` octet-stream (XHR for progress) |
@@ -75,11 +75,12 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
 
 ## Feature map
 
-- **Login & session**: normal token pairing → HttpOnly cookie, CSRF on mutations,
-  eight-hour session lifetime, no credential in URL/storage. Explicit local
-  `LENSDOCK_DEMO_NO_AUTH=1` automatically creates a same-origin `demo-human`
-  browser session with no expiry or idle logout. It never bypasses API CSRF,
-  workspace scope or control leases. Logout offers explicit token-free re-entry.
+- **Login & session**: a local, single-workspace Gateway automatically creates a
+  same-origin `local-human` browser session. `LENSDOCK_REQUIRE_PAIRING=1` opts
+  into token entry. Both use HttpOnly cookies and CSRF on mutations, with no
+  credential in URL/storage. Session expiry and count caps are optional
+  `sessionLimits` settings, disabled by default. Logout requires explicit
+  re-entry. Workspace scope and control leases always remain enforced.
 - **Workspace**: health chip, runtime readiness, lock/maintenance/capture/
   handoff notices, controller and holder, tab list with foreground honesty
   (an Agent-held target is stated as untracked, not guessed).
@@ -88,24 +89,28 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
   backoff; freshness gate (last frame age, Gateway state age) before any
   capture; fit/actual size, fullscreen, quality/compression, remote resolution
   picker (only advertised sizes), combo keys, release-all-modifiers.
-- **Control**: acquire, takeover handshake with drain polling, explicit forced
-  takeover after `DRAIN_TIMEOUT`, cancel, release, 10 s heartbeat, epoch/
-  generation fencing, stream closed by the server (4001/4002) triggers lease
-  re-read; after a page capture the new lease id/epoch is adopted before any
-  further lease-bound request.
+- **Control**: deliberate desktop pointer input or typing automatically requests
+  a lease and starts graceful takeover when needed. The first gesture is consumed,
+  never replayed into a changed page. Concurrent intentions share one request.
+  Mounting or resuming does not take control. Release remains explicit; after control
+  ends, a fresh pointer gesture re-arms typing without a cooldown. Viewers, maintenance,
+  capture and unavailable runtimes remain noninteractive. Drain timeout exposes an
+  explicit force option. Heartbeats, epoch/generation fencing and server disconnects
+  remain authoritative; a capture-replaced lease is adopted before further input.
 - **Capture**: the always-visible Capture & annotate button grabs the live
   framebuffer, uploads the desktop PNG and opens a blank annotation draft in
   one action (no lease or control change). Draft retries reuse a successful
   upload. The source, frozen-image, target and consistency warnings remain
   visible as toasts. Page-viewport capture remains an advanced per-target
-  flow with an explicit interruption warning. Limits remain 32 MiB / 24 MP.
+  flow with an explicit interruption warning. Image bytes, dimensions and pixels
+  have no default product cap; optional server limits are reported as errors.
 - **Standalone drawing**: New drawing immediately creates a 1600×900 white
   canvas and opens its draft. The adjacent options button supports a custom
-  title and 64 to 4096 px per side. It needs neither the browser nor a lease, so it works while
+  title and positive integer pixel dimensions. It needs neither the browser nor a lease, so it works while
   the runtime is unavailable. The capture is a generated canvas with no target,
   navigation or page, and its consistency is unknown. Cropping a drawing gives
   a new drawing draft; the annotations are not copied and the dialog says so.
-- **Annotation editor**: self-built, with no tldraw or Excalidraw dependency.
+- **Annotation editor**: repository-owned React/SVG and Canvas rendering.
   Tools and shortcuts: select (V), pan (H), rectangle (R), filled rectangle (F),
   ellipse (O), diamond (D), line (L), arrow (A), freehand (P), text (T, local
   IME, never interrupted), step counter (N, wire kind `pin`, with comments),
@@ -166,15 +171,17 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
   effect size, opacity or smoothing fields; otherwise the 0.1.0 or 0.2.0 rule
   above still applies. New revisions do not carry blur and pixelate annotations
   over, because their effect is already in the shared base image.
-- **Feedback delivery**: distinct states READY → QUEUED → ACKNOWLEDGED →
-  IN_PROGRESS → RESOLVED → VERIFIED (+CANCELLED) with per-step owner and
-  timestamps, automatic routing to the configured workspace Agent,
-  human verify/reject, cancel, revision creation, artifact/bundle download, and
-  Agent results marked untrusted until verified.
-- **Input/files**: manual UTF-8 clipboard bridge (explicit read/send, 64 KiB
-  limit, no logging) plus “send and paste” with one Ctrl+V; controlled
-  upload/download with quota meters, name validation, overwrite opt-in and
-  progress/cancel.
+- **Feedback delivery**: the main panel shows Sent, In progress, Done or Cancelled.
+  Details retain READY → QUEUED → ACKNOWLEDGED → IN_PROGRESS → RESOLVED → VERIFIED
+  and per-step timestamps. ACKNOWLEDGED is still Sent, with “read, not started” detail.
+  RESOLVED is Done awaiting verification; VERIFIED records the human's approval.
+  Automatic workspace routing, verify/reject, cancellation, revision creation and
+  artifact/bundle downloads remain available. Agent results are untrusted until verified.
+- **Input/files**: manual UTF-8 clipboard bridge (explicit read/send, no logging)
+  plus “send and paste” with one Ctrl+V. Clipboard bytes and file count, size and
+  storage quotas are optional and default to unlimited. Upload/download keeps
+  name validation, overwrite opt-in and progress/cancel; usage meters show
+  usage alone when no quota is configured.
 - **Diagnostics/settings**: layered health, CPU (cumulative → delta), memory,
   disk free/total with unknown≠0, feedback queue/latency/artifact failures,
   live events, admin-only audit, release manifest verification state, update
@@ -191,10 +198,11 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
   from `GET .../agent/setup`. The prompt has no token, cookie or lease; it
   needs an installed `lensdock` CLI and an approved Agent token file that the
   user provisions privately (it shows a placeholder path), and it covers
-  `lensdock workspace watch`, a fresh AGENT lease and Bridge only after an
-  explicit human resume, feedback and image reading, ACK, the shared noVNC
-  browser, the stop errors, untrusted page content and image-only coordinates.
-  Whether a model reads or follows it is not guaranteed.
+  `lensdock workspace watch`, automatic Agent leases for full-desktop commands and
+  the CDP bridge, fresh visual observation, feedback authorization and ACK.
+  Native browser menus and extensions use the same browser as noVNC.
+  Pause/resume and stale-connection rules still apply. Whether a model reads or
+  follows the prompt is not guaranteed.
 - **Pause control**: a prominent Pause and Resume button is in the workspace
   top toolbar, in Settings and in the editor toolbar (`AgentControlButton`,
   variants toolbar, panel and compact), hidden in `NOVNC`. Pause is one click
@@ -284,8 +292,8 @@ or distorted.
 - Publishing sends the annotations as they are; the Gateway applies blur and
   pixelate to `screenshot.redacted.png` and re-encodes the uploaded annotated
   PNG without filtering it again. The UI relies on the Gateway for the schema
-  version choice and for server-side limits (including 100 million affected
-  pixels for blur and pixelate).
+  version choice and any configured size, pixel or effect limits; product quotas
+  are disabled by default.
 
 ## Deliberate non-features (surface must not pretend)
 
@@ -295,7 +303,6 @@ or distorted.
   queued item was read by an Agent.
 - Agent accounts use the CLI/MCP; the web UI shows them an explanatory notice
   instead of a desktop.
-- No whiteboard SDK: the editor does not depend on tldraw or Excalidraw.
 - Native IME composition has been verified only for macOS Zhuyin: composed 你
   reached the local clipboard field, went through Send and paste, and an
   independent Agent CDP readback returned exactly that value. The
@@ -306,3 +313,11 @@ or distorted.
   website actions cannot be undone.
 - No image import or upload, multiple images, backgrounds or rotation in the
   editor, and no screen eyedropper.
+
+## Operations and removal
+
+You or an authorized host Agent can use the Admin CLI for updates, expiry policy
+and removal; the web UI does not receive Host Admin credentials. System-data
+expiry preserves feedback, downloads and active browser data.
+See [Uninstall and data removal](../../docs/UPDATE-RUNBOOK.md#uninstall-and-data-removal)
+for stopping clients, removing the application and optionally deleting data.

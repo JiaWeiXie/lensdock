@@ -150,5 +150,5 @@ description = "Stop the complete product, keeping persistent volumes"
 run = 'go run ./cmd/lensdock update compose --deployment "$LENSDOCK_STATE_DIR/deployment.json" -- down'
 
 [tasks."gateway:dev"]
-description = "Serve the built UI with M0 host runtime for development"
+description = "Serve the built UI with a host-accessible runtime for development"
 run = "go run ./cmd/gateway serve --config $LENSDOCK_STATE_DIR/product/gateway-host.json"

@@ -73,19 +73,13 @@ func DefaultRoot() (string, error) {
 	return filepath.Join(home, ".local", "share", "lensdock-manager"), nil
 }
 
-// DefaultPolicy holds the candidate limits: three Runtime/Gateway pairs, one
-// helper allowance and VM headroom, with no unbounded external allowance.
-func DefaultPolicy() Policy {
-	return Policy{
-		Budget:   Resources{MemoryBytes: 6*gib + 768*mib, NanoCPUs: 7_500_000_000},
-		Helpers:  Resources{MemoryBytes: gib, NanoCPUs: 1_000_000_000},
-		Headroom: Resources{MemoryBytes: 2 * gib, NanoCPUs: 1_000_000_000},
-		ProjectLimits: Limits{
-			Runtime: Resources{MemoryBytes: 2 * gib, NanoCPUs: 2_000_000_000},
-			Gateway: Resources{MemoryBytes: 256 * mib, NanoCPUs: 500_000_000},
-		},
-	}
-}
+// DefaultPolicy has no resource limits: no manager budget, helper allowance,
+// headroom, project caps or helper PID cap. Zero means unlimited in each
+// dimension; every limit is an explicit opt-in. It allows uncapped external
+// containers, so opting into one project cap never adds an unrelated
+// prohibition; AllowUnboundedExternal=false remains an explicit option.
+// Initialize stores exactly the policy it is given.
+func DefaultPolicy() Policy { return Policy{AllowUnboundedExternal: true} }
 
 // AdminTokenFile is the human credential file of the manager at root.
 func AdminTokenFile(root string) string { return filepath.Join(root, adminTokenName) }
@@ -116,33 +110,87 @@ func maxRes(a, b Resources) Resources {
 	return Resources{MemoryBytes: max(a.MemoryBytes, b.MemoryBytes), NanoCPUs: max(a.NanoCPUs, b.NanoCPUs)}
 }
 
-// fitsIn reports whether a is within b on every dimension.
-func (a Resources) fitsIn(b Resources) bool {
-	return a.MemoryBytes <= b.MemoryBytes && a.NanoCPUs <= b.NanoCPUs
+// maxQuantity bounds every configured quantity so sums of quantities cannot
+// overflow.
+const maxQuantity = int64(1) << 60
+
+// fitsLimit reports whether a is within limit on every configured dimension.
+// A zero limit dimension is unlimited and always fits.
+func (a Resources) fitsLimit(limit Resources) bool {
+	return (limit.MemoryBytes == 0 || a.MemoryBytes <= limit.MemoryBytes) &&
+		(limit.NanoCPUs == 0 || a.NanoCPUs <= limit.NanoCPUs)
 }
 
 func (a Resources) isZero() bool { return a.MemoryBytes == 0 && a.NanoCPUs == 0 }
 
-func (a Resources) positive() bool { return a.MemoryBytes > 0 && a.NanoCPUs > 0 }
+func (a Resources) valid() bool {
+	return a.MemoryBytes >= 0 && a.MemoryBytes <= maxQuantity && a.NanoCPUs >= 0 && a.NanoCPUs <= maxQuantity
+}
 
-func (a Resources) nonNegative() bool { return a.MemoryBytes >= 0 && a.NanoCPUs >= 0 }
+// fitsEngine reports whether total is within capacity in every dimension that
+// demand reserves. A dimension the operation does not reserve is unlimited and
+// has no physical-capacity requirement.
+func fitsEngine(total, capacity, demand Resources) bool {
+	return (demand.MemoryBytes == 0 || total.MemoryBytes <= capacity.MemoryBytes) &&
+		(demand.NanoCPUs == 0 || total.NanoCPUs <= capacity.NanoCPUs)
+}
 
+// missingBudgetCap explains which budgeted dimension has no positive cap on
+// both the Runtime and the Gateway, or returns an empty string. Without those
+// caps a budget would be unenforceable.
+func missingBudgetCap(l Limits, budget Resources) string {
+	for _, d := range []struct {
+		name           string
+		budget, rt, gw int64
+	}{
+		{"memory", budget.MemoryBytes, l.Runtime.MemoryBytes, l.Gateway.MemoryBytes},
+		{"CPU", budget.NanoCPUs, l.Runtime.NanoCPUs, l.Gateway.NanoCPUs},
+	} {
+		if d.budget > 0 && (d.rt <= 0 || d.gw <= 0) {
+			return fmt.Sprintf("the project has no %[1]s limit on its Runtime or Gateway while the manager enforces a %[1]s budget; set both %[1]s limits or remove the budget", d.name)
+		}
+	}
+	return ""
+}
+
+// budgetBlocker explains why limits cannot be accounted in budget, or returns
+// an empty string.
+func budgetBlocker(l Limits, budget Resources) string {
+	if msg := missingBudgetCap(l, budget); msg != "" {
+		return msg
+	}
+	if !pairOf(l).fitsLimit(budget) {
+		return "the project's Runtime and Gateway limits exceed the managed resource budget"
+	}
+	return ""
+}
+
+// validatePolicy checks structure only. Every quantity is optional: zero means
+// no configured limit, and positive values are enforced as stated.
 func validatePolicy(p Policy) error {
-	switch {
-	case !p.Budget.positive():
-		return errors.New("policy: managed budget memory and CPU must be positive")
-	case !p.Helpers.positive():
-		return errors.New("policy: helper allowance memory and CPU must be positive")
-	case !p.Headroom.nonNegative():
-		return errors.New("policy: headroom must not be negative")
-	case !p.UnboundedExternalAllowance.nonNegative():
-		return errors.New("policy: unbounded external allowance must not be negative")
-	case !p.UnboundedExternalAllowance.isZero() && !p.AllowUnboundedExternal:
+	for _, q := range []struct {
+		label string
+		r     Resources
+	}{
+		{"managed budget", p.Budget},
+		{"helper allowance", p.Helpers},
+		{"headroom", p.Headroom},
+		{"unbounded external allowance", p.UnboundedExternalAllowance},
+		{"project Runtime limits", p.ProjectLimits.Runtime},
+		{"project Gateway limits", p.ProjectLimits.Gateway},
+	} {
+		if !q.r.valid() {
+			return fmt.Errorf("policy: %s must be between 0 and 2^60", q.label)
+		}
+	}
+	if p.HelperPidsLimit < 0 || p.HelperPidsLimit > maxQuantity {
+		return errors.New("policy: helper PID limit must be between 0 and 2^60")
+	}
+	if !p.UnboundedExternalAllowance.isZero() && !p.AllowUnboundedExternal {
 		return errors.New("policy: an unbounded external allowance requires allowUnboundedExternal")
-	case !p.ProjectLimits.Runtime.positive() || !p.ProjectLimits.Gateway.positive():
-		return errors.New("policy: project Runtime and Gateway limits must be positive")
-	case !pairOf(p.ProjectLimits).fitsIn(p.Budget):
-		return errors.New("policy: one project pair does not fit in the managed budget")
+	}
+	if msg := budgetBlocker(p.ProjectLimits, p.Budget); msg != "" {
+		return errors.New("policy: " + msg)
 	}
 	return nil
 }
@@ -272,9 +320,6 @@ func Initialize(cfg Config) (Config, error) {
 	}
 	if cfg.PortFirst == 0 && cfg.PortLast == 0 {
 		cfg.PortFirst, cfg.PortLast = defaultPortFirst, defaultPortLast
-	}
-	if cfg.Policy == (Policy{}) {
-		cfg.Policy = DefaultPolicy()
 	}
 	source := cfg.BundleDir
 	if !filepath.IsAbs(source) || filepath.Clean(source) != source {

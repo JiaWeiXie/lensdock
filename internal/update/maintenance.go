@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // InitDeployment prepares the directories and backup key of dep. It refuses
@@ -45,42 +44,23 @@ func (e *Engine) VerifyCheckpoint(id string) (Checkpoint, error) {
 	return cp, nil
 }
 
-// protectedCheckpoints returns ids referenced by in-flight journals and the
-// checkpoint of the last successful update (the default rollback target).
-func protectedCheckpoints(d *Deployment, now func() time.Time) map[string]bool {
-	out := map[string]bool{}
-	js, _ := listJournals(d, now)
-	currentID := ""
-	if st, ok, err := LoadState(d); err == nil && ok {
-		currentID = st.LastUpdateID
-	}
-	for _, j := range js {
-		if j.CheckpointID == "" {
-			continue
-		}
-		switch j.Status {
-		case JournalRunning, JournalAwaitingApproval, JournalHeld:
-			out[j.CheckpointID] = true
-		case JournalCompleted:
-			// Only an update journal whose intent is the running generation
-			// is its paired rollback checkpoint. A newer failed candidate or
-			// an earlier completed update must not displace it.
-			if j.Kind == "update" && j.ID == currentID {
-				out[j.CheckpointID] = true
-			}
-		}
-	}
-	return out
-}
-
-// PruneCheckpoints applies the configured retention policy.
+// PruneCheckpoints applies the configured retention policy. It protects the
+// same checkpoints age expiry does (unfinished operations and the one paired
+// with the running generation) and, like expiry, refuses to delete anything
+// when state or journals are unreadable or the running generation's producer
+// journal is missing or inconsistent: the count policy must not discard the
+// rollback checkpoint just because its record is gone.
 func (e *Engine) PruneCheckpoints() ([]string, error) {
 	unlock, err := lockFile(e.Dep.lockPath())
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	return (CheckpointStore{Dir: e.Dep.BackupDir}).Prune(e.Dep.RetainCheckpoints, protectedCheckpoints(e.Dep, e.Now))
+	w, err := loadExpiryWorld(e.Dep, e.Now)
+	if err != nil {
+		return nil, err
+	}
+	return (CheckpointStore{Dir: e.Dep.BackupDir}).Prune(e.Dep.RetainCheckpoints, w.protectedCheckpoints())
 }
 
 // DeleteBranch explicitly deletes a managed branch volume. It refuses a volume
@@ -131,6 +111,9 @@ func (e *Engine) DeleteBranch(ctx context.Context, volume string) error {
 	}
 	if info.Labels[LabelManaged] != "true" && !knownRetired {
 		return fmt.Errorf("refusing to remove volume %s: it is neither managed by lensdock update nor recorded as a retired branch", volume)
+	}
+	if !knownRetired && !volumeOwned(volume, info.Labels, js) {
+		return fmt.Errorf("refusing to remove volume %s: no operation of this deployment created or retired it", volume)
 	}
 	if knownRetired {
 		return e.Docker.do(ctx, "volume", "rm", volume)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -332,5 +333,74 @@ func TestDirectoriesAreNotFiles(t *testing.T) {
 	// The uploads directory itself is addressable only through its area.
 	if _, err := get(t, s, AreaDownloads, "uploads"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get(downloads/uploads) = %v", err)
+	}
+}
+
+func TestListReturnsEveryFile(t *testing.T) {
+	s, dir := newStore(t, Limits{})
+	const n = 2100 // above the former 2000-entry listing cut
+	for i := range n {
+		if err := os.WriteFile(filepath.Join(dir, "f"+strconv.Itoa(i)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, err := s.List(ctx, AreaDownloads)
+	if err != nil || len(l.Files) != n {
+		t.Fatalf("List = %d files, %v, want all %d", len(l.Files), err, n)
+	}
+}
+
+func TestNoLimitsUnlessConfigured(t *testing.T) {
+	// The body is empty on purpose: every declared size below is refused by
+	// the size check when a limit applies, and otherwise fails only on the
+	// length mismatch, after all limit checks passed.
+	s, _ := newStore(t, Limits{})
+	for _, size := range []int64{600 << 20, 3 << 30} { // above the former 512 MiB per-file and 2 GiB total caps
+		if _, err := s.Put(ctx, "big", strings.NewReader(""), size, false); !errors.Is(err, ErrSizeMismatch) {
+			t.Fatalf("Put of %d declared bytes without limits = %v, want a length mismatch only", size, err)
+		}
+	}
+
+	// More than the former 1000 files.
+	dir := t.TempDir()
+	for i := range 1001 {
+		if err := os.WriteFile(filepath.Join(dir, "f"+strconv.Itoa(i)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := put(t, NewDirStore(dir, Limits{}), "one-more", "x", false); err != nil {
+		t.Fatalf("Put beyond 1000 files without limits = %v", err)
+	}
+	// A configured count is an exact boundary: 1002 files exist now.
+	if _, err := put(t, NewDirStore(dir, Limits{MaxFiles: 1002}), "over", "x", false); !errors.Is(err, ErrTooMany) {
+		t.Fatalf("Put over MaxFiles = %v, want ErrTooMany", err)
+	}
+	if _, err := put(t, NewDirStore(dir, Limits{MaxFiles: 1003}), "fits", "x", false); err != nil {
+		t.Fatalf("Put at MaxFiles = %v", err)
+	}
+}
+
+func TestConfiguredLimitsAreIndependent(t *testing.T) {
+	// Only a per-file limit: no quota or count applies.
+	s, _ := newStore(t, Limits{MaxFileBytes: 4})
+	if _, err := put(t, s, "a", "1234", false); err != nil {
+		t.Fatalf("Put at the per-file limit = %v", err)
+	}
+	if _, err := put(t, s, "b", "12345", false); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("Put over the per-file limit = %v, want ErrTooLarge", err)
+	}
+	for i := range 20 {
+		if _, err := put(t, s, "n"+strconv.Itoa(i), "1234", false); err != nil {
+			t.Fatalf("file %d: %v (no count or quota was configured)", i, err)
+		}
+	}
+
+	// Only a quota.
+	q, _ := newStore(t, Limits{QuotaBytes: 8})
+	if _, err := put(t, q, "a", "12345678", false); err != nil {
+		t.Fatalf("Put at the quota = %v", err)
+	}
+	if _, err := put(t, q, "b", "1", false); !errors.Is(err, ErrQuota) {
+		t.Fatalf("Put over the quota = %v, want ErrQuota", err)
 	}
 }

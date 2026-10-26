@@ -2,8 +2,8 @@ import { useId, useState, type ReactNode } from 'react';
 import type { FeedbackIntent, FeedbackKind, TaskFields } from '@/api/types';
 import { Button, Field } from '@/components/ui';
 import { useI18n } from '@/i18n';
-import { codePointLength, truncateToCodePoints } from '@/util/text';
-import { FEEDBACK_INTENTS, FEEDBACK_KINDS, TASK_LIMITS, type TaskIssue } from './task';
+import { codePointLength } from '@/util/text';
+import { FEEDBACK_INTENTS, FEEDBACK_KINDS, type TaskIssue } from './task';
 
 export interface PinRef {
   number: number;
@@ -36,11 +36,11 @@ export function TaskForm({
   const [expanded, setExpanded] = useState(false);
   // Advanced fields stay mounted while collapsed (native <details>), so text is never cleared.
   // A validation issue inside them forces the disclosure open so the error is visible.
-  const advancedIssue = issues.some((i) => i !== 'title.tooLong' && i !== 'description.tooLong');
+  const advancedIssue = issues.length > 0;
 
   const setStep = (index: number, text: string): void => {
     const next = [...value.reproductionSteps];
-    next[index] = truncateToCodePoints(text, TASK_LIMITS.step);
+    next[index] = text;
     onChange({ ...value, reproductionSteps: next });
   };
   const moveStep = (index: number, delta: -1 | 1): void => {
@@ -58,7 +58,6 @@ export function TaskForm({
     onChange({ ...value, reproductionSteps: value.reproductionSteps.filter((_, i) => i !== index) });
   };
   const addStep = (text = ''): void => {
-    if (value.reproductionSteps.length >= TASK_LIMITS.stepCount) return;
     onChange({ ...value, reproductionSteps: [...value.reproductionSteps, text] });
   };
 
@@ -67,8 +66,7 @@ export function TaskForm({
       <Field
         label={t('task.title.optional')}
         htmlFor={id('title')}
-        hint={t('common.count', { n: codePointLength(value.title), max: TASK_LIMITS.title })}
-        error={has('title.tooLong') ? t('task.err.tooLong') : null}
+        hint={t('common.count', { n: codePointLength(value.title) })}
       >
         <input
           id={id('title')}
@@ -76,17 +74,16 @@ export function TaskForm({
           disabled={disabled}
           placeholder={t('task.title.placeholder')}
           value={value.title}
-          onChange={(e) => onChange({ ...value, title: truncateToCodePoints(e.target.value, TASK_LIMITS.title) })}
+          onChange={(e) => onChange({ ...value, title: e.target.value })}
         />
       </Field>
 
       <Field
         label={t('task.notes.optional')}
         htmlFor={id('desc')}
-        hint={t('common.count', { n: codePointLength(value.description), max: TASK_LIMITS.description })}
-        error={has('description.tooLong') ? t('task.err.tooLong') : null}
+        hint={t('common.count', { n: codePointLength(value.description) })}
       >
-        <textarea id={id('desc')} className="input" rows={compact ? 3 : 4} disabled={disabled} value={value.description} onChange={(e) => onChange({ ...value, description: truncateToCodePoints(e.target.value, TASK_LIMITS.description) })} />
+        <textarea id={id('desc')} className="input" rows={compact ? 3 : 4} disabled={disabled} value={value.description} onChange={(e) => onChange({ ...value, description: e.target.value })} />
       </Field>
 
       <details
@@ -123,18 +120,16 @@ export function TaskForm({
                 <Field
                   label={t('task.expected')}
                   htmlFor={id('exp')}
-                  hint={t('common.count', { n: codePointLength(value.expectedResult), max: TASK_LIMITS.expectedResult })}
-                  error={has('expected.tooLong') ? t('task.err.tooLong') : null}
+                  hint={t('common.count', { n: codePointLength(value.expectedResult) })}
                 >
-                  <textarea id={id('exp')} className="input" rows={3} disabled={disabled} value={value.expectedResult} onChange={(e) => onChange({ ...value, expectedResult: truncateToCodePoints(e.target.value, TASK_LIMITS.expectedResult) })} />
+                  <textarea id={id('exp')} className="input" rows={3} disabled={disabled} value={value.expectedResult} onChange={(e) => onChange({ ...value, expectedResult: e.target.value })} />
                 </Field>
                 <Field
                   label={t('task.actual')}
                   htmlFor={id('act')}
-                  hint={t('common.count', { n: codePointLength(value.actualResult), max: TASK_LIMITS.actualResult })}
-                  error={has('actual.tooLong') ? t('task.err.tooLong') : null}
+                  hint={t('common.count', { n: codePointLength(value.actualResult) })}
                 >
-                  <textarea id={id('act')} className="input" rows={3} disabled={disabled} value={value.actualResult} onChange={(e) => onChange({ ...value, actualResult: truncateToCodePoints(e.target.value, TASK_LIMITS.actualResult) })} />
+                  <textarea id={id('act')} className="input" rows={3} disabled={disabled} value={value.actualResult} onChange={(e) => onChange({ ...value, actualResult: e.target.value })} />
                 </Field>
               </div>
 
@@ -162,7 +157,7 @@ export function TaskForm({
                 </ol>
                 {has('steps.empty') ? <p className="field__error">{t('task.err.stepEmpty')}</p> : null}
                 <div className="steps__add">
-                  <Button small icon="check" disabled={disabled || value.reproductionSteps.length >= TASK_LIMITS.stepCount} onClick={() => addStep()}>
+                  <Button small icon="check" disabled={disabled} onClick={() => addStep()}>
                     {t('task.steps.add')}
                   </Button>
                   {pins.length > 0 ? (

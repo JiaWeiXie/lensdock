@@ -86,7 +86,13 @@ func cloneStringMap(m map[string]string) map[string]string {
 
 // LoadState reads the state file. A missing file yields ok=false.
 func LoadState(d *Deployment) (State, bool, error) {
-	data, err := readFileLimit(d.stateFile(), 4<<20)
+	return readStateFile(d.stateFile())
+}
+
+// readStateFile strictly decodes one state.json (the current one or a
+// generation copy). A missing file yields ok=false.
+func readStateFile(path string) (State, bool, error) {
+	data, err := readFileLimit(path, 4<<20)
 	if errors.Is(err, os.ErrNotExist) {
 		return State{}, false, nil
 	}

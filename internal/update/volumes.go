@@ -44,8 +44,6 @@ func (h VolumeHelper) base(interactive bool, caps ...string) []string {
 	}
 	return append(a,
 		"--security-opt", "no-new-privileges:true",
-		"--pids-limit", "128",
-		"--memory", "512m",
 		"--user", "0:0",
 	)
 }

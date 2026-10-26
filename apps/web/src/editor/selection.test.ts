@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Annotation, EllipseAnnotation, NormRect, Point } from '@/api/types';
-import { MAX_ANNOTATIONS, boundsOf, fillOf, hitTest, moveBy, toWire, validateAnnotations } from './model';
+import { boundsOf, fillOf, hitTest, moveBy, toWire, validateAnnotations } from './model';
 import {
   alignSelection,
   duplicateSelection,
@@ -354,12 +354,12 @@ describe('duplicateSelection', () => {
     expect(annotations[1]?.style).not.toBe(list[0]?.style);
   });
 
-  it('duplicates nothing when the group would exceed the annotation limit', () => {
-    const list = Array.from({ length: MAX_ANNOTATIONS - 1 }, (_, i) => box(`r${i}`, 'rectangle', { x: 0.1, y: 0.1, width: 0.1, height: 0.1 }));
+  it('duplicates past 100 annotations without any cap', () => {
+    const list = Array.from({ length: 150 }, (_, i) => box(`r${i}`, 'rectangle', { x: 0.1, y: 0.1, width: 0.1, height: 0.1 }));
     const { annotations, selectedIds } = duplicateSelection(list, ids('r0', 'r1'), SIZE);
-    expect(annotations).toHaveLength(list.length);
-    expect(selectedIds).toEqual(['r0', 'r1']);
-    expect(duplicateSelection(list, ids('r0'), SIZE).annotations).toHaveLength(MAX_ANNOTATIONS);
+    expect(annotations).toHaveLength(152);
+    expect(selectedIds).toHaveLength(2);
+    expect(validateAnnotations(annotations)).toEqual([]);
   });
 
   it('keeps pin numbers unique when duplicating the last free numbers', () => {

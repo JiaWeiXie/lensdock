@@ -22,10 +22,10 @@ export function WorkspaceView(): ReactNode {
   const { t } = useI18n();
   const { actor } = useSession();
   const { workspace, error } = useWorkspace();
-  const { take, lease, release } = useControl();
+  const { take, lease, release, blocked } = useControl();
   const capture = useCapture();
   const agent = useAgentControl();
-  const { shortcuts, setDockCollapsed, dockCollapsed, takeoverOpen, setTakeoverOpen } = useUi();
+  const { shortcuts, setDockCollapsed, dockCollapsed } = useUi();
   const controller = useRfbController();
   const stage = useRef<HTMLDivElement | null>(null);
 
@@ -33,8 +33,7 @@ export function WorkspaceView(): ReactNode {
     () => ({
       toggleControl: (): void => {
         if (lease) void release();
-        else if (workspace?.controlState === 'IDLE') void take('');
-        else setTakeoverOpen(true);
+        else if (!blocked) void take();
       },
       captureDesktop: (): void => {
         if (agent.collaborationVisible) void capture.annotateDesktop();
@@ -46,7 +45,7 @@ export function WorkspaceView(): ReactNode {
       toggleFit: (): void => controller.setOptions({ fit: !controller.getSnapshot().options.fit }),
       toggleDock: (): void => setDockCollapsed(!dockCollapsed),
     }),
-    [lease, release, take, capture, controller, stage, dockCollapsed, setDockCollapsed, workspace, setTakeoverOpen, agent.collaborationVisible],
+    [lease, release, take, blocked, capture, controller, stage, dockCollapsed, setDockCollapsed, agent.collaborationVisible],
   );
   useShortcuts(shortcuts, actions);
 
@@ -84,7 +83,7 @@ export function WorkspaceView(): ReactNode {
           <Dock />
         </div>
         <Drawer />
-        <TakeoverDialog open={takeoverOpen} onClose={() => setTakeoverOpen(false)} />
+        <TakeoverDialog />
       </div>
     </>
   );

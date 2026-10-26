@@ -6,9 +6,10 @@ info:
     Core flow contract of the LensDock Gateway. The Gateway serves every
     operation in this file from one origin. The web UI authenticates with the
     sessionCookie scheme (pairing, login and logout at /api/v1/session are not
-    described here; with the opt-in local demo no-auth, see
-    README.md#local-demo-without-token-entry, a same-origin browser fetch of GET /api/v1/session
-    also starts a workspace-scoped human demo session) and the CLI, MCP server and Agents authenticate with
+    described here; see README.md#optional-access-and-quota-settings). By default,
+    a same-origin browser fetch of GET /api/v1/session starts a workspace-scoped
+    human session on a loopback, single-workspace Gateway; requirePairing disables
+    this automatic entry. The CLI, MCP server and Agents authenticate with
     bearerAuth. The Browser Runtime implements getWorkspace, acquireLease,
     renewLease and releaseLease itself and accepts bearer tokens only; in the
     full product only the Gateway reaches it, over mutual TLS. The Gateway
@@ -126,7 +127,10 @@ paths:
         caller receives the capability token once and must not log it; a
         cookie-authenticated browser session receives only the lease, because
         the Gateway keeps the token on the server. Agent mode grants
-        high-trust browser control, not read-only CDP. Idempotency-Key must be
+        control of the same full browser through CDP, native-desktop VNC input
+        and UTF-8 clipboard, including browser menus and extensions.
+        Clients may acquire and renew leases automatically; the Runtime still
+        rejects stale epochs and closes revoked connections. Idempotency-Key must be
         1-256 printable ASCII characters. The Runtime never replays a grant:
         reusing the key of the still-active lease returns 409
         IDEMPOTENCY_REPLAY without a token, and any other key while a lease is
@@ -434,8 +438,9 @@ paths:
         and no lease; they never change lease state and await an authenticated PNG
         upload. CDP viewport capture requires targetId and the current human lease
         or an explicitly authorized capture lease. A drawing (source drawing) requires
-        imageWidthPx and imageHeightPx, each an integer from 64 to 4096 within the
-        shared pixel and size limits (413 IMAGE_TOO_LARGE above them; nothing is clipped
+        imageWidthPx and imageHeightPx, each a positive integer and within any
+        configured shared pixel, dimension and size limits (none by default; 413 IMAGE_TOO_LARGE
+        above a configured limit or when the canvas buffer cannot be represented; nothing is clipped
         or defaulted). The Gateway creates an opaque white PNG itself and answers with
         a ready private capture (provenance generated-canvas, empty runtimeGeneration,
         null targetId and navigationId, no page); it never contacts the browser runtime
@@ -1887,7 +1892,7 @@ components:
         encoded as 32 lowercase hexadecimal characters, of the UTF-8 string
         "lensdock-cookie-namespace-v1" + NUL + configured origin + NUL +
         deploymentId. Browsers use the actual Set-Cookie name. Session and
-        demo-signout cookies are scoped independently by exact origin and
+        local-signout cookies are scoped independently by exact origin and
         deployment identity; legacy unscoped cookies are not accepted.
   schemas:
     Error:
@@ -2195,12 +2200,10 @@ components:
           type: boolean
         imageWidthPx:
           type: integer
-          minimum: 64
-          maximum: 4096
+          minimum: 1
         imageHeightPx:
           type: integer
-          minimum: 64
-          maximum: 4096
+          minimum: 1
       required:
       - source
       allOf:
@@ -2294,11 +2297,9 @@ components:
         imageWidthPx:
           type: integer
           minimum: 1
-          maximum: 32768
         imageHeightPx:
           type: integer
           minimum: 1
-          maximum: 32768
         capturedAt:
           type: string
           format: date-time
@@ -2447,14 +2448,11 @@ components:
         summary:
           type: string
           minLength: 1
-          maxLength: 12000
         verification:
           type: string
           minLength: 1
-          maxLength: 12000
         resultFeedbackIds:
           type: array
-          maxItems: 10
           items:
             type: string
             minLength: 1
@@ -2477,7 +2475,6 @@ components:
         reason:
           type: string
           minLength: 1
-          maxLength: 12000
       required:
       - revision
       - outcome
@@ -2501,7 +2498,6 @@ components:
         reason:
           type: string
           minLength: 1
-          maxLength: 12000
       required:
       - revision
     Delivery:

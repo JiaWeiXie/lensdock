@@ -23,82 +23,135 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/JiaWeiXie/lensdock/internal/storage"
 )
 
-// Limits are the product limits; zero values select the defaults.
+// Limits are the optional, user-visible restrictions. The zero value of every
+// field means no limit: arbitrary image size, dimensions, pixel counts, JSON
+// body size, storage, draft and capture counts, and drafts that never expire.
+// A positive value is enforced exactly; a negative value is refused by New.
 type Limits struct {
-	MaxImageBytes          int64         // 32 MiB, per upload and per shared image
-	MaxPixels              int           // 24,000,000
-	MaxDimension           int           // 32768 per side
-	MaxJSONBody            int64         // 8 MiB
-	DraftTTL               time.Duration // 24h from the last modification
+	MaxImageBytes         int64 `json:"maxImageBytes,omitempty"`         // per upload and per shared image
+	MaxPixels             int   `json:"maxPixels,omitempty"`             // width times height of one image
+	MaxDimension          int   `json:"maxDimension,omitempty"`          // per side
+	MaxJSONBody           int64 `json:"maxJsonBody,omitempty"`           // bytes of a JSON request
+	DraftTTLSeconds       int64 `json:"draftTtlSeconds,omitempty"`       // lifetime from the last modification of a draft or unbound capture
+	MaxDraftsPerWorkspace int   `json:"maxDraftsPerWorkspace,omitempty"` // open drafts
+	MaxOpenCaptures       int   `json:"maxOpenCaptures,omitempty"`       // captures not yet published
+	MaxPrivateBytes       int64 `json:"maxPrivateBytes,omitempty"`       // private image bytes per workspace
+	MaxSharedBytes        int64 `json:"maxSharedBytes,omitempty"`        // published artifact bytes per workspace
+	MaxEffectPixels       int64 `json:"maxEffectPixels,omitempty"`       // summed area of all blur and pixelate regions of one render
+}
+
+// Environment variables that opt in to a feedback limit; see LimitsFromEnv.
+const (
+	EnvMaxImageBytes         = "LENSDOCK_FEEDBACK_MAX_IMAGE_BYTES"
+	EnvMaxPixels             = "LENSDOCK_FEEDBACK_MAX_PIXELS"
+	EnvMaxDimension          = "LENSDOCK_FEEDBACK_MAX_DIMENSION"
+	EnvMaxJSONBody           = "LENSDOCK_FEEDBACK_MAX_JSON_BYTES"
+	EnvDraftTTLSeconds       = "LENSDOCK_FEEDBACK_DRAFT_TTL_SECONDS"
+	EnvMaxDraftsPerWorkspace = "LENSDOCK_FEEDBACK_MAX_DRAFTS"
+	EnvMaxOpenCaptures       = "LENSDOCK_FEEDBACK_MAX_OPEN_CAPTURES"
+	EnvMaxPrivateBytes       = "LENSDOCK_FEEDBACK_MAX_PRIVATE_BYTES"
+	EnvMaxSharedBytes        = "LENSDOCK_FEEDBACK_MAX_SHARED_BYTES"
+	EnvMaxEffectPixels       = "LENSDOCK_FEEDBACK_MAX_EFFECT_PIXELS"
+)
+
+// LimitsFromEnv overlays every limit set in the environment onto base. An
+// unset or empty variable keeps base; "0" explicitly removes a limit; anything
+// that is not a non-negative integer is an error naming the variable.
+func LimitsFromEnv(base Limits, getenv func(string) string) (Limits, error) {
+	set := func(name string, dst any) error {
+		v := getenv(name)
+		if v == "" {
+			return nil
+		}
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			return fmt.Errorf("%s must be a non-negative integer, got %q", name, v)
+		}
+		switch p := dst.(type) {
+		case *int64:
+			*p = n
+		case *int:
+			if n > math.MaxInt32 {
+				return fmt.Errorf("%s is too large", name)
+			}
+			*p = int(n)
+		}
+		return nil
+	}
+	for _, f := range []struct {
+		name string
+		dst  any
+	}{
+		{EnvMaxImageBytes, &base.MaxImageBytes}, {EnvMaxPixels, &base.MaxPixels}, {EnvMaxDimension, &base.MaxDimension},
+		{EnvMaxJSONBody, &base.MaxJSONBody}, {EnvDraftTTLSeconds, &base.DraftTTLSeconds},
+		{EnvMaxDraftsPerWorkspace, &base.MaxDraftsPerWorkspace}, {EnvMaxOpenCaptures, &base.MaxOpenCaptures},
+		{EnvMaxPrivateBytes, &base.MaxPrivateBytes}, {EnvMaxSharedBytes, &base.MaxSharedBytes}, {EnvMaxEffectPixels, &base.MaxEffectPixels},
+	} {
+		if err := set(f.name, f.dst); err != nil {
+			return Limits{}, err
+		}
+	}
+	return base, nil
+}
+
+func (l Limits) validate() error {
+	if l.MaxImageBytes < 0 || l.MaxPixels < 0 || l.MaxDimension < 0 || l.MaxJSONBody < 0 || l.DraftTTLSeconds < 0 ||
+		l.MaxDraftsPerWorkspace < 0 || l.MaxOpenCaptures < 0 || l.MaxPrivateBytes < 0 || l.MaxSharedBytes < 0 || l.MaxEffectPixels < 0 {
+		return errors.New("feedback: limits must not be negative (use 0 for no limit)")
+	}
+	if l.DraftTTLSeconds > math.MaxInt64/int64(time.Second) {
+		return errors.New("feedback: draft TTL is too large")
+	}
+	return nil
+}
+
+// draftTTL is the lifetime of a draft or unbound capture; zero means never.
+func (l Limits) draftTTL() time.Duration { return time.Duration(l.DraftTTLSeconds) * time.Second }
+
+// Operations are operational protocol deadlines, retention and concurrency
+// settings. They protect the service itself and are not user restrictions: a
+// zero field selects the documented default.
+type Operations struct {
 	ReservationTTL         time.Duration // 15m for an awaiting-upload desktop capture
-	ExpiryWarning          time.Duration // 2h: DRAFT_EXPIRING warning window
+	ExpiryWarning          time.Duration // 2h: DRAFT_EXPIRING warning window (only with a draft TTL)
 	CaptureSkew            time.Duration // 30s tolerated client clock skew
-	MaxDraftsPerWorkspace  int           // 50 open drafts
-	MaxOpenCaptures        int           // 100 captures not yet published
-	MaxPrivateBytes        int64         // 1 GiB of private images per workspace
-	MaxSharedBytes         int64         // 4 GiB of published artifacts per workspace
-	ImageWorkers           int           // 2 concurrent image operations
+	ImageWorkers           int           // 2 concurrent image operations (decode memory)
 	IdempotencyRetention   time.Duration // 48h
 	OrphanGrace            time.Duration // 10m before unreferenced files are deleted
 	FailedCaptureRetention time.Duration // 1h
 }
 
-func (l Limits) withDefaults() Limits {
-	if l.MaxImageBytes <= 0 {
-		l.MaxImageBytes = defaultMaxImageBytes
+func (o Operations) withDefaults() Operations {
+	if o.ReservationTTL <= 0 {
+		o.ReservationTTL = 15 * time.Minute
 	}
-	if l.MaxPixels <= 0 {
-		l.MaxPixels = defaultMaxPixels
+	if o.ExpiryWarning <= 0 {
+		o.ExpiryWarning = 2 * time.Hour
 	}
-	if l.MaxDimension <= 0 {
-		l.MaxDimension = defaultMaxDimension
+	if o.CaptureSkew <= 0 {
+		o.CaptureSkew = 30 * time.Second
 	}
-	if l.MaxJSONBody <= 0 {
-		l.MaxJSONBody = 8 << 20
+	if o.ImageWorkers <= 0 {
+		o.ImageWorkers = 2
 	}
-	if l.DraftTTL <= 0 {
-		l.DraftTTL = 24 * time.Hour
+	if o.IdempotencyRetention <= 0 {
+		o.IdempotencyRetention = 48 * time.Hour
 	}
-	if l.ReservationTTL <= 0 {
-		l.ReservationTTL = 15 * time.Minute
+	if o.OrphanGrace <= 0 {
+		o.OrphanGrace = 10 * time.Minute
 	}
-	if l.ExpiryWarning <= 0 {
-		l.ExpiryWarning = 2 * time.Hour
+	if o.FailedCaptureRetention <= 0 {
+		o.FailedCaptureRetention = time.Hour
 	}
-	if l.CaptureSkew <= 0 {
-		l.CaptureSkew = 30 * time.Second
-	}
-	if l.MaxDraftsPerWorkspace <= 0 {
-		l.MaxDraftsPerWorkspace = 50
-	}
-	if l.MaxOpenCaptures <= 0 {
-		l.MaxOpenCaptures = 100
-	}
-	if l.MaxPrivateBytes <= 0 {
-		l.MaxPrivateBytes = 1 << 30
-	}
-	if l.MaxSharedBytes <= 0 {
-		l.MaxSharedBytes = 4 << 30
-	}
-	if l.ImageWorkers <= 0 {
-		l.ImageWorkers = 2
-	}
-	if l.IdempotencyRetention <= 0 {
-		l.IdempotencyRetention = 48 * time.Hour
-	}
-	if l.OrphanGrace <= 0 {
-		l.OrphanGrace = 10 * time.Minute
-	}
-	if l.FailedCaptureRetention <= 0 {
-		l.FailedCaptureRetention = time.Hour
-	}
-	return l
+	return o
 }
 
 // Options configure a Service.
@@ -112,6 +165,7 @@ type Options struct {
 	RuntimeGeneration func(workspaceID string) string
 	ViewportCapturer  ViewportCapturer
 	Limits            Limits
+	Operations        Operations
 }
 
 // Service is the feedback module.
@@ -119,6 +173,7 @@ type Service struct {
 	st     *storage.Store
 	opt    Options
 	lim    Limits
+	ops    Operations
 	now    func() time.Time
 	log    *slog.Logger
 	locks  keyedLocks
@@ -148,14 +203,20 @@ func New(ctx context.Context, st *storage.Store, o Options) (*Service, error) {
 	if err := Migrate(ctx, st.DB); err != nil {
 		return nil, err
 	}
-	s := &Service{st: st, opt: o, lim: o.Limits.withDefaults(), now: o.Now, log: o.Logger}
+	if err := o.Limits.validate(); err != nil {
+		return nil, err
+	}
+	s := &Service{st: st, opt: o, lim: o.Limits, ops: o.Operations.withDefaults(), now: o.Now, log: o.Logger}
 	if s.now == nil {
 		s.now = time.Now
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
-	s.imgSem = make(chan struct{}, s.lim.ImageWorkers)
+	s.imgSem = make(chan struct{}, s.ops.ImageWorkers)
+	if err := s.alignDraftExpiry(ctx); err != nil {
+		return nil, err
+	}
 	if err := s.reconcile(ctx); err != nil {
 		return nil, err
 	}

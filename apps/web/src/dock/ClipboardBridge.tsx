@@ -9,8 +9,7 @@ import { graphemeLength, utf8ByteLength } from '@/util/text';
 import { XK } from '@/vnc/keys';
 import { useClock, useRfb, useRfbController } from '@/vnc/DesktopProvider';
 
-/** Runtime clipboard limit (64 KiB) and selection lifetime (60 s). The server enforces both. */
-const MAX_BYTES = 64 * 1024;
+/** Selection lifetime (60 s). The server enforces it; text size is limited only when the administrator configures a limit. */
 const SELECTION_TTL_S = 60;
 
 /**
@@ -39,8 +38,7 @@ export function ClipboardBridge(): ReactNode {
 
   const inputLive = rfb.phase === 'connected' && rfb.mode === 'control';
   const bytes = utf8ByteLength(text);
-  const tooLarge = bytes > MAX_BYTES;
-  const disabledReason = inputLive ? (text.length === 0 ? t('clip.empty') : tooLarge ? t('clip.tooLarge') : null) : t('clip.needControl');
+  const disabledReason = inputLive ? (text.length === 0 ? t('clip.empty') : null) : t('clip.needControl');
   const remaining = sentAt !== null ? Math.max(0, SELECTION_TTL_S - Math.floor((now - sentAt) / 1000)) : null;
 
   const readLocal = async (): Promise<void> => {
@@ -80,8 +78,7 @@ export function ClipboardBridge(): ReactNode {
       <Field
         label={t('clip.label')}
         htmlFor="clip-text"
-        hint={t('clip.count', { g: graphemeLength(text), b: bytes, max: MAX_BYTES })}
-        error={tooLarge ? t('clip.tooLarge') : null}
+        hint={t('clip.count', { g: graphemeLength(text), b: bytes })}
       >
         <textarea
           id="clip-text"

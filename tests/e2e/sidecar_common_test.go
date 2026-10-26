@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JiaWeiXie/lensdock/internal/rfb"
 	"github.com/JiaWeiXie/lensdock/tests/e2e/internal/harness"
-	"github.com/JiaWeiXie/lensdock/tests/e2e/internal/rfb"
 )
 
 const (

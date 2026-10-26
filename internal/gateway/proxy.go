@@ -124,9 +124,24 @@ func newRuntimeEdge(c RuntimeConfig, streams *streamGroup) (*runtimeEdge, error)
 	}}
 	return e, nil
 }
+
+// call is a short control request to the runtime; it has a fixed deadline.
 func (e *runtimeEdge) call(ctx context.Context, method, path, credential, holder string, body []byte, headers http.Header) (int, http.Header, []byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
+	return e.roundTrip(ctx, 20*time.Second, method, path, credential, holder, body, headers)
+}
+
+// callTransfer fetches user data (a viewport screenshot) whose size is not
+// limited. It has no deadline unless RuntimeConfig.TransferTimeoutSeconds sets one.
+func (e *runtimeEdge) callTransfer(ctx context.Context, method, path, credential, holder string, body []byte, headers http.Header) (int, http.Header, []byte, error) {
+	return e.roundTrip(ctx, time.Duration(e.config.TransferTimeoutSeconds)*time.Second, method, path, credential, holder, body, headers)
+}
+
+func (e *runtimeEdge) roundTrip(ctx context.Context, timeout time.Duration, method, path, credential, holder string, body []byte, headers http.Header) (int, http.Header, []byte, error) {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	u := *e.url
 	u.Path, u.RawQuery, _ = strings.Cut(path, "?")
 	r, err := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(body))
@@ -148,12 +163,12 @@ func (e *runtimeEdge) call(ctx context.Context, method, path, credential, holder
 		return 0, nil, nil, errors.New("runtime unavailable")
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 34<<20))
+	// The runtime is a fixed trusted peer and every call has a deadline, so
+	// the response is read in full: a large viewport screenshot must not be
+	// refused by an implicit size quota (limits are opt-in at the source).
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, nil, nil, errors.New("runtime response failed")
-	}
-	if len(b) >= 34<<20 {
-		return 0, nil, nil, errors.New("runtime response exceeds limit")
 	}
 	return resp.StatusCode, resp.Header, b, nil
 }

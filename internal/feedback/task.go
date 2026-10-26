@@ -13,16 +13,6 @@ import (
 	"unicode/utf8"
 )
 
-// Task field limits from schemas/feedback.schema.json.
-const (
-	maxTitle       = 200
-	maxDescription = 12000
-	maxExpected    = 6000
-	maxActual      = 6000
-	maxSteps       = 30
-	maxStep        = 2000
-)
-
 func marshalCompact(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -67,9 +57,10 @@ func validIntent(i string) bool {
 // untrusted content.
 const DefaultTitle = "Visual feedback"
 
-// validateTask checks enums, lengths and characters. Every prose field is
-// optional: a draft, and a published revision, may carry a drawing and no
-// words at all.
+// validateTask checks enums, minimum lengths and characters. Every prose field
+// is optional: a draft, and a published revision, may carry a drawing and no
+// words at all. Text length and step count are not capped here; use the
+// optional JSON body limit (Limits.MaxJSONBody) to bound request size.
 func validateTask(t *Task) error {
 	if !validKind(t.Kind) {
 		return badRequest("task.kind is not one of bug, task, question, visual-regression")
@@ -77,27 +68,24 @@ func validateTask(t *Task) error {
 	if !validIntent(t.Intent) {
 		return badRequest("task.intent is not one of analyze-only, reproduce, modify-and-verify")
 	}
-	if !validText(t.Title, maxTitle, false) {
-		return badRequest("task.title is too long or has control characters")
+	if !validText(t.Title, 0, false) {
+		return badRequest("task.title has invalid characters")
 	}
-	if !validText(t.Description, maxDescription, true) {
-		return badRequest("task.description is too long or has control characters")
+	if !validText(t.Description, 0, true) {
+		return badRequest("task.description has invalid characters")
 	}
-	if !validText(t.ExpectedResult, maxExpected, true) {
-		return badRequest("task.expectedResult is too long or has control characters")
+	if !validText(t.ExpectedResult, 0, true) {
+		return badRequest("task.expectedResult has invalid characters")
 	}
-	if !validText(t.ActualResult, maxActual, true) {
-		return badRequest("task.actualResult is too long or has control characters")
+	if !validText(t.ActualResult, 0, true) {
+		return badRequest("task.actualResult has invalid characters")
 	}
 	if t.ReproductionSteps == nil {
 		t.ReproductionSteps = []string{}
 	}
-	if len(t.ReproductionSteps) > maxSteps {
-		return badRequest("task.reproductionSteps has too many steps")
-	}
 	for _, s := range t.ReproductionSteps {
-		if utf8.RuneCountInString(s) < 1 || !validText(s, maxStep, false) {
-			return badRequest("a reproduction step is empty, too long or has control characters")
+		if utf8.RuneCountInString(s) < 1 || !validText(s, 0, false) {
+			return badRequest("a reproduction step is empty or has invalid characters")
 		}
 	}
 	return nil

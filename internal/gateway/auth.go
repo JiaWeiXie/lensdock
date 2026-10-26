@@ -23,35 +23,35 @@ type Identity struct {
 	TokenSHA256 string `json:"tokenSHA256,omitempty"`
 }
 
-const (
-	demoActorID     = "demo-human"
-	sessionTTL      = 8 * time.Hour
-	maxSessions     = 1024
-	maxDemoSessions = 16
-)
+const localActorID = "local-human"
 
-// session.Expires is meaningful only for token sessions; demo sessions never expire.
-type session struct {
-	Actor   Identity
-	CSRF    string
-	Expires time.Time
-	Created time.Time
-	Demo    bool
+// SessionLimits are optional session restrictions; zero leaves each dimension unlimited.
+type SessionLimits struct {
+	TTLSeconds  int64 `json:"ttlSeconds,omitempty"`
+	MaxSessions int   `json:"maxSessions,omitempty"`
 }
 
-// identities holds sessions. sessionCookie and demoOffCookie are namespaced by
+type session struct {
+	Actor       Identity
+	CSRF        string
+	Expires     time.Time
+	LocalAccess bool
+}
+
+// identities holds sessions. sessionCookie and localOffCookie are namespaced by
 // origin and deployment ID so same-host Gateways on other ports do not clobber
 // each other's cookies.
 type identities struct {
-	mu            sync.Mutex
-	users         []Identity
-	sessions      map[string]session
-	origin        string
-	host          string
-	secure        bool
-	sessionCookie string
-	demoOffCookie string
-	demo          *Identity
+	mu             sync.Mutex
+	users          []Identity
+	sessions       map[string]session
+	origin         string
+	host           string
+	secure         bool
+	sessionCookie  string
+	localOffCookie string
+	localAccess    *Identity
+	limits         SessionLimits
 }
 
 func randomToken() (string, error) {
@@ -64,15 +64,15 @@ func randomToken() (string, error) {
 func digest(s string) string { b := sha256.Sum256([]byte(s)); return hex.EncodeToString(b[:]) }
 func equal(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
 
-// cookieNames derives the session and demo-signout cookie names from the exact
+// cookieNames derives the session and local-signout cookie names from the exact
 // configured origin and deployment ID. Cookies are shared across ports of one
 // host, so Gateways on the same hostname must not use the same names. Hashing
 // keeps the names stable, valid cookie tokens and free of configuration text.
 // An empty deploymentID yields an origin-only namespace.
-func cookieNames(origin, deploymentID string) (sessionName, demoOffName string) {
+func cookieNames(origin, deploymentID string) (sessionName, localOffName string) {
 	sum := sha256.Sum256([]byte("lensdock-cookie-namespace-v1\x00" + origin + "\x00" + deploymentID))
 	ns := hex.EncodeToString(sum[:16])
-	return "lensdock-session-" + ns, "lensdock-demo-off-" + ns
+	return "lensdock-session-" + ns, "lensdock-local-off-" + ns
 }
 
 func newIdentities(users []Identity, origin, deploymentID string) (*identities, error) {
@@ -103,8 +103,8 @@ func newIdentities(users []Identity, origin, deploymentID string) (*identities, 
 	if len(users) == 0 {
 		return nil, errors.New("gateway: at least one identity required")
 	}
-	sessionCookie, demoOffCookie := cookieNames(origin, deploymentID)
-	return &identities{users: users, sessions: make(map[string]session), origin: origin, secure: u.Scheme == "https", sessionCookie: sessionCookie, demoOffCookie: demoOffCookie}, nil
+	sessionCookie, localOffCookie := cookieNames(origin, deploymentID)
+	return &identities{users: users, sessions: make(map[string]session), origin: origin, secure: u.Scheme == "https", sessionCookie: sessionCookie, localOffCookie: localOffCookie}, nil
 }
 func (a *identities) bearer(token string) (Identity, bool) {
 	h := digest(token)
@@ -148,40 +148,40 @@ func (a *identities) lookup(r *http.Request) (session, bool) {
 	defer a.mu.Unlock()
 	key := digest(c.Value)
 	s, ok := a.sessions[key]
-	if ok && !s.Demo && !time.Now().Before(s.Expires) {
+	if ok && !s.Expires.IsZero() && !time.Now().Before(s.Expires) {
 		delete(a.sessions, key)
 		return session{}, false
 	}
 	return s, ok
 }
 
-// enableDemo turns on explicit local demo no-auth for one workspace. It only
-// accepts a loopback public origin and never overrides a configured identity.
-func (a *identities) enableDemo(workspaceID string) error {
+// enableLocalAccess lets same-origin local browsers enter one workspace without
+// pairing. It never overrides a configured identity.
+func (a *identities) enableLocalAccess(workspaceID string) error {
 	u, err := url.Parse(a.origin)
 	if err != nil {
 		return errors.New("gateway: invalid origin")
 	}
 	if h := u.Hostname(); h != "127.0.0.1" && h != "localhost" && h != "::1" {
-		return errors.New("gateway: demo no-auth requires a loopback origin")
+		return errors.New("gateway: automatic access requires a loopback origin")
 	}
 	if workspaceID == "" {
-		return errors.New("gateway: demo no-auth requires one workspace")
+		return errors.New("gateway: automatic access requires one workspace")
 	}
 	for _, p := range a.users {
-		if p.ID == demoActorID {
-			return errors.New("gateway: identity ID reserved for demo no-auth")
+		if p.ID == localActorID {
+			return errors.New("gateway: identity ID reserved for automatic local access")
 		}
 	}
-	a.demo = &Identity{ID: demoActorID, Role: "human", WorkspaceID: workspaceID}
+	a.localAccess = &Identity{ID: localActorID, Role: "human", WorkspaceID: workspaceID}
 	a.host = u.Host
 	return nil
 }
 
-// demoFetch accepts only a same-origin browser fetch()/XHR to the configured
+// localFetch accepts only a same-origin browser fetch()/XHR to the configured
 // Host. Browsers cannot forge Sec-Fetch-*; cross-site pages, subresource loads,
 // navigations and non-browser clients all fail it.
-func (a *identities) demoFetch(r *http.Request) bool {
+func (a *identities) localFetch(r *http.Request) bool {
 	h := r.Header
 	if r.Host != a.host || h.Get("Sec-Fetch-Site") != "same-origin" || h.Get("Sec-Fetch-Mode") != "cors" || h.Get("Sec-Fetch-Dest") != "empty" {
 		return false
@@ -218,10 +218,8 @@ func decode(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
 	return true
 }
 
-// serveSession handles pairing, probing and logout. Demo no-auth (enableDemo)
-// adds exactly two ways to obtain a session without a token, both limited to
-// same-origin browser fetches: GET (automatic entry) and POST {"demo":true}
-// (explicit entry after a demo logout). Every other path is unchanged.
+// serveSession handles pairing, probing and logout. Local access adds automatic
+// GET entry and explicit POST {"localAccess":true} re-entry after logout.
 func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "POST":
@@ -230,26 +228,26 @@ func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var in struct {
-			Token string `json:"token"`
-			Demo  bool   `json:"demo,omitempty"`
+			Token       string `json:"token"`
+			LocalAccess bool   `json:"localAccess,omitempty"`
 		}
 		if !decode(w, r, &in, 8192) {
 			return
 		}
-		if in.Demo {
+		if in.LocalAccess {
 			if in.Token != "" {
-				fail(w, 400, "INVALID_ARGUMENT", "demo entry takes no token")
+				fail(w, 400, "INVALID_ARGUMENT", "local entry takes no token")
 				return
 			}
-			if a.demo == nil {
+			if a.localAccess == nil {
 				fail(w, 401, "UNAUTHENTICATED", "human or viewer pairing token required")
 				return
 			}
-			if !a.demoFetch(r) {
+			if !a.localFetch(r) {
 				fail(w, 403, "FORBIDDEN", "origin rejected")
 				return
 			}
-			a.issue(w, *a.demo, true)
+			a.issue(w, *a.localAccess, true)
 			return
 		}
 		actor, ok := a.bearer(in.Token)
@@ -262,20 +260,19 @@ func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 		s, ok := a.lookup(r)
 		if ok && a.sameOrigin(r) {
 			reply := map[string]any{"actor": s.Actor, "csrfToken": s.CSRF}
-			if s.Demo {
-				reply["demo"] = true
+			if s.LocalAccess {
+				reply["localAccess"] = true
 			}
 			jsonReply(w, 200, reply)
 			return
 		}
-		if a.demo != nil && a.demoFetch(r) {
-			// A demo logout leaves a marker so a reload does not silently re-enter;
-			// only the explicit POST above does, and it clears the marker.
-			if _, err := r.Cookie(a.demoOffCookie); err == nil {
-				fail(w, 401, "DEMO_SIGNED_OUT", "demo sign-in is available")
+		if a.localAccess != nil && a.localFetch(r) {
+			// Logout remains effective across reloads until explicit re-entry.
+			if _, err := r.Cookie(a.localOffCookie); err == nil {
+				fail(w, 401, "LOCAL_SIGNED_OUT", "local sign-in is available")
 				return
 			}
-			a.issue(w, *a.demo, true)
+			a.issue(w, *a.localAccess, true)
 			return
 		}
 		fail(w, 401, "UNAUTHENTICATED", "session required")
@@ -290,8 +287,8 @@ func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 		delete(a.sessions, digest(c.Value))
 		a.mu.Unlock()
 		http.SetCookie(w, &http.Cookie{Name: a.sessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
-		if s.Demo {
-			http.SetCookie(w, &http.Cookie{Name: a.demoOffCookie, Value: "1", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
+		if s.LocalAccess {
+			http.SetCookie(w, &http.Cookie{Name: a.localOffCookie, Value: "1", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
 		}
 		w.WriteHeader(204)
 	default:
@@ -300,10 +297,8 @@ func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// issue creates one session and its cookie. Token sessions expire after
-// sessionTTL. Demo sessions never expire server-side and use a browser-session
-// cookie (no Max-Age); their count is capped by evicting the oldest demo session.
-func (a *identities) issue(w http.ResponseWriter, actor Identity, demo bool) {
+// issue creates a browser session, applying only explicitly configured limits.
+func (a *identities) issue(w http.ResponseWriter, actor Identity, localAccess bool) {
 	token, err := randomToken()
 	if err != nil {
 		fail(w, 500, "INTERNAL", "session creation failed")
@@ -315,43 +310,34 @@ func (a *identities) issue(w http.ResponseWriter, actor Identity, demo bool) {
 		return
 	}
 	now := time.Now()
-	s := session{Actor: actor, CSRF: csrf, Created: now, Demo: demo}
-	if !demo {
-		s.Expires = now.Add(sessionTTL)
+	s := session{Actor: actor, CSRF: csrf, LocalAccess: localAccess}
+	if a.limits.TTLSeconds > 0 {
+		s.Expires = now.Add(time.Duration(a.limits.TTLSeconds) * time.Second)
 	}
 	a.mu.Lock()
-	demos, oldest := 0, ""
-	for k, v := range a.sessions {
-		if !v.Demo && !now.Before(v.Expires) {
-			delete(a.sessions, k)
-			continue
-		}
-		if v.Demo {
-			demos++
-			if oldest == "" || v.Created.Before(a.sessions[oldest].Created) {
-				oldest = k
+	if a.limits.TTLSeconds > 0 {
+		for k, v := range a.sessions {
+			if !v.Expires.IsZero() && !now.Before(v.Expires) {
+				delete(a.sessions, k)
 			}
 		}
 	}
-	if demo && demos >= maxDemoSessions {
-		delete(a.sessions, oldest)
-	}
-	if len(a.sessions) >= maxSessions {
+	if a.limits.MaxSessions > 0 && len(a.sessions) >= a.limits.MaxSessions {
 		a.mu.Unlock()
-		fail(w, 429, "RESOURCE_LIMIT", "session capacity reached")
+		fail(w, 429, "RESOURCE_LIMIT", "configured session capacity reached")
 		return
 	}
 	a.sessions[digest(token)] = s
 	a.mu.Unlock()
 	cookie := &http.Cookie{Name: a.sessionCookie, Value: token, Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode}
-	if !demo {
-		cookie.MaxAge = int(sessionTTL / time.Second)
+	if a.limits.TTLSeconds > 0 {
+		cookie.MaxAge = int(a.limits.TTLSeconds)
 	}
 	http.SetCookie(w, cookie)
 	reply := map[string]any{"actor": actor, "csrfToken": csrf}
-	if demo {
-		http.SetCookie(w, &http.Cookie{Name: a.demoOffCookie, Value: "", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
-		reply["demo"] = true
+	if localAccess {
+		http.SetCookie(w, &http.Cookie{Name: a.localOffCookie, Value: "", Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+		reply["localAccess"] = true
 	}
 	jsonReply(w, 200, reply)
 }

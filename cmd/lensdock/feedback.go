@@ -10,7 +10,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/JiaWeiXie/lensdock/internal/delivery"
 )
@@ -20,7 +22,16 @@ const (
 	// overrides it like for the other commands.
 	defaultGatewayAPI = "http://127.0.0.1:18081"
 	envTokenFile      = "LENSDOCK_TOKEN_FILE"
-	maxTextArgBytes   = 64 << 10
+
+	// Optional client-side size limits; unset or 0 means no limit.
+	envMaxArtifactBytes    = "LENSDOCK_CLIENT_MAX_ARTIFACT_BYTES"
+	envMaxBundleBytes      = "LENSDOCK_CLIENT_MAX_BUNDLE_BYTES"
+	envMaxJSONBytes        = "LENSDOCK_CLIENT_MAX_JSON_BYTES"
+	envMaxInlineImageBytes = "LENSDOCK_MCP_MAX_INLINE_IMAGE_BYTES"
+
+	// Optional request deadlines; unset or 0 means none.
+	envJSONTimeout     = "LENSDOCK_CLIENT_JSON_TIMEOUT"
+	envArtifactTimeout = "LENSDOCK_CLIENT_ARTIFACT_TIMEOUT"
 )
 
 // feedbackUsageText is appended to the CLI usage text.
@@ -35,8 +46,13 @@ const feedbackUsageText = `  lensdock feedback list (--workspace W | --project P
       (--verification T | --verification-file F|-) [--result-feedback-id ID]... [--token-file F] [--api URL]
       the bearer token is only ever read from a private (0600) token file, --token-file or $LENSDOCK_TOKEN_FILE;
       --api defaults to $LENSDOCK_API or ` + defaultGatewayAPI + `
-      --project PATH uses that managed project's Gateway API, workspace and Agent credential instead; it conflicts
-      with --api, --workspace, --token-file, a non-empty $LENSDOCK_API or $LENSDOCK_TOKEN_FILE, and never starts the project
+      --project PATH uses that managed project's Gateway API, workspace and Agent credential instead. It ignores a stale
+      $LENSDOCK_API or $LENSDOCK_TOKEN_FILE, forbids an explicit --api, --workspace or --token-file, and by default
+      initializes, registers and starts the project unless the manager's explicit-start or authorization policy applies
+      No size limits apply by default. Opt in with --max-artifact-bytes N, --max-bundle-bytes N (sum of one revision's
+      artifacts) and --max-json-bytes N (or $LENSDOCK_CLIENT_MAX_ARTIFACT_BYTES, _MAX_BUNDLE_BYTES, _MAX_JSON_BYTES); 0 means no limit
+      Requests have no overall deadline by default; opt in with --json-timeout D and --artifact-timeout D
+      (or $LENSDOCK_CLIENT_JSON_TIMEOUT, $LENSDOCK_CLIENT_ARTIFACT_TIMEOUT), Go durations such as 5m; 0 means no deadline
 `
 
 // feedbackCommand dispatches "lensdock feedback ...".
@@ -58,6 +74,43 @@ type feedbackFlags struct {
 	revision  int
 	project   *projectFlag
 	fs        *flag.FlagSet
+	// Optional size limits (zero: none) and the first malformed default from
+	// the environment, reported when the client is built.
+	maxArtifact, maxBundle, maxJSON int64
+	limitEnvErr                     error
+	timeouts                        delivery.Timeouts
+}
+
+// limits returns the optional delivery limits selected by flags or environment.
+func (ff *feedbackFlags) limits() delivery.Limits {
+	return delivery.Limits{MaxArtifactBytes: ff.maxArtifact, MaxBundleBytes: ff.maxBundle, MaxJSONBytes: ff.maxJSON}
+}
+
+// envInt64 reads an optional non-negative integer environment default. A
+// malformed value is returned as an error naming the variable.
+func (c *cli) envInt64(name string) (int64, error) {
+	v := c.getenv(name)
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < 0 {
+		return 0, usageErrorf("$%s must be a non-negative integer, got %q", name, v)
+	}
+	return n, nil
+}
+
+// envDuration reads an optional non-negative Go duration environment default.
+func (c *cli) envDuration(name string) (time.Duration, error) {
+	v := c.getenv(name)
+	if v == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 0 {
+		return 0, usageErrorf("$%s must be a non-negative Go duration such as 5m, got %q", name, v)
+	}
+	return d, nil
 }
 
 func (c *cli) addFeedbackFlags(fs *flag.FlagSet, workspace, revision bool) *feedbackFlags {
@@ -75,6 +128,37 @@ func (c *cli) addFeedbackFlags(fs *flag.FlagSet, workspace, revision bool) *feed
 	}
 	if revision {
 		fs.IntVar(&ff.revision, "revision", 0, "revision number (default: the revision the server assigned to you)")
+	}
+	for _, l := range []struct {
+		dst         *int64
+		flag, env   string
+		description string
+	}{
+		{&ff.maxArtifact, "max-artifact-bytes", envMaxArtifactBytes, "refuse artifacts larger than this many bytes"},
+		{&ff.maxBundle, "max-bundle-bytes", envMaxBundleBytes, "refuse a revision whose artifacts total more than this many bytes"},
+		{&ff.maxJSON, "max-json-bytes", envMaxJSONBytes, "refuse JSON responses larger than this many bytes"},
+	} {
+		def, err := c.envInt64(l.env)
+		if err != nil && ff.limitEnvErr == nil {
+			ff.limitEnvErr = err
+		}
+		*l.dst = def
+		fs.Int64Var(l.dst, l.flag, def, l.description+" (default $"+l.env+"; 0 means no limit)")
+	}
+	for _, d := range []struct {
+		dst         *time.Duration
+		flag, env   string
+		description string
+	}{
+		{&ff.timeouts.JSON, "json-timeout", envJSONTimeout, "deadline for one JSON request"},
+		{&ff.timeouts.Artifact, "artifact-timeout", envArtifactTimeout, "deadline for one artifact download"},
+	} {
+		def, err := c.envDuration(d.env)
+		if err != nil && ff.limitEnvErr == nil {
+			ff.limitEnvErr = err
+		}
+		*d.dst = def
+		fs.DurationVar(d.dst, d.flag, def, d.description+" (default $"+d.env+"; 0 means no deadline)")
 	}
 	ff.project, ff.fs = addProjectFlag(fs), fs
 	return ff
@@ -97,6 +181,9 @@ func (c *cli) useProject(ctx context.Context, ff *feedbackFlags) error {
 // private file only, never from argv or the environment; a missing or
 // non-private file fails here, before any request.
 func (c *cli) feedbackClient(ff *feedbackFlags) (*delivery.Client, error) {
+	if ff.limitEnvErr != nil {
+		return nil, ff.limitEnvErr
+	}
 	path := ff.tokenFile
 	if path == "" {
 		path = c.getenv(envTokenFile)
@@ -108,7 +195,7 @@ func (c *cli) feedbackClient(ff *feedbackFlags) (*delivery.Client, error) {
 	if _, err := tokens(); err != nil {
 		return nil, err
 	}
-	client, err := delivery.New(ff.api.value, tokens, nil)
+	client, err := delivery.New(ff.api.value, tokens, nil, delivery.WithLimits(ff.limits()), delivery.WithTimeouts(ff.timeouts))
 	if err != nil {
 		return nil, usageErrorf("%v", err)
 	}
@@ -278,7 +365,7 @@ func (c *cli) feedbackAck(ctx context.Context, args []string) error {
 		return err
 	}
 	if *bundle != "" {
-		m, err := delivery.VerifyBundle(*bundle)
+		m, err := delivery.VerifyBundle(*bundle, ff.limits())
 		if err != nil {
 			return fmt.Errorf("bundle %s: %w", *bundle, err)
 		}
@@ -311,7 +398,7 @@ func (c *cli) feedbackResolve(ctx context.Context, args []string) error {
 	verification := fs.String("verification", "", "the verification you actually performed")
 	verificationFile := fs.String("verification-file", "", "file (or - for stdin) holding the verification")
 	var results []string
-	fs.Func("result-feedback-id", "published feedback holding new evidence (repeatable, at most 10)", func(s string) error {
+	fs.Func("result-feedback-id", "published feedback holding new evidence (repeatable)", func(s string) error {
 		results = append(results, s)
 		return nil
 	})
@@ -374,12 +461,9 @@ func (c *cli) textArg(name, value, file string) (string, error) {
 		defer f.Close()
 		r = f
 	}
-	data, err := io.ReadAll(io.LimitReader(r, maxTextArgBytes+1))
+	data, err := io.ReadAll(r)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", name, err)
-	}
-	if len(data) > maxTextArgBytes {
-		return "", usageErrorf("%s exceeds %d bytes", name, maxTextArgBytes)
 	}
 	text := strings.TrimRight(string(data), "\r\n")
 	if text == "" {

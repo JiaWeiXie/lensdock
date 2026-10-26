@@ -56,7 +56,7 @@ func (c *captureRow) state() CaptureState {
 		Source: c.Source, Provenance: c.Provenance, RuntimeGeneration: c.Gen,
 		TargetID: strPtr(c.TargetID), NavigationID: strPtr(c.NavigationID),
 		CapturedAt: ptrTime(c.CapturedAt), ServerReceivedAt: ptrTime(c.ReceivedAt),
-		ExpiresAt: fromMS(c.Expires),
+		ExpiresAt: expiryTime(c.Expires),
 	}
 	if c.Width > 0 && c.Height > 0 {
 		st.ImageWidthPx, st.ImageHeightPx = c.Width, c.Height
@@ -131,22 +131,25 @@ func (s *Service) privateBytes(ctx context.Context, q storage.Querier, ws string
 	return a + b, err
 }
 
-// checkCaptureQuota blocks new captures when the workspace is full; it never
-// deletes existing evidence.
+// checkCaptureQuota blocks new captures when the workspace is full (only with
+// a configured MaxOpenCaptures or MaxPrivateBytes); it never deletes existing
+// evidence.
 func (s *Service) checkCaptureQuota(ctx context.Context, q storage.Querier, ws string, addBytes int64) error {
-	var n int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM captures WHERE workspace_id = ? AND status != 'failed'
-		AND (object_key IS NOT NULL OR status IN ('awaiting-upload','capturing'))`, ws).Scan(&n); err != nil {
-		return err
-	}
-	if n >= s.lim.MaxOpenCaptures {
-		return ErrQuotaExceeded
+	if s.lim.MaxOpenCaptures > 0 {
+		var n int
+		if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM captures WHERE workspace_id = ? AND status != 'failed'
+			AND (object_key IS NOT NULL OR status IN ('awaiting-upload','capturing'))`, ws).Scan(&n); err != nil {
+			return err
+		}
+		if n >= s.lim.MaxOpenCaptures {
+			return ErrQuotaExceeded
+		}
 	}
 	return s.checkBytesQuota(ctx, q, ws, addBytes)
 }
 
 func (s *Service) checkBytesQuota(ctx context.Context, q storage.Querier, ws string, addBytes int64) error {
-	if addBytes <= 0 {
+	if addBytes <= 0 || s.lim.MaxPrivateBytes <= 0 {
 		return nil
 	}
 	used, err := s.privateBytes(ctx, q, ws)
@@ -219,7 +222,7 @@ func (s *Service) CreateCapture(ctx context.Context, workspaceID string, in Crea
 		c := &captureRow{
 			ID: newID("cap_"), WorkspaceID: workspaceID, OwnerID: p.ID, Source: SourceDesktop, Provenance: ProvClientFB,
 			Status: StatusAwaiting, Consistency: ConsUnknown, Gen: s.generation(workspaceID),
-			Created: s.ms(now), Updated: s.ms(now), Expires: s.ms(now.Add(s.lim.ReservationTTL)),
+			Created: s.ms(now), Updated: s.ms(now), Expires: s.ms(now.Add(s.ops.ReservationTTL)),
 		}
 		err := s.st.DB.InTx(ctx, func(tx *sql.Tx) error {
 			if err := s.checkCaptureQuota(ctx, tx, workspaceID, 0); err != nil {
@@ -241,14 +244,18 @@ func (s *Service) CreateCapture(ctx context.Context, workspaceID string, in Crea
 	})
 }
 
-// checkDrawingSize validates the requested drawing size: each side within the
-// drawing range and the product's dimension and pixel limits. Nothing is
-// clipped or defaulted.
+// checkDrawingSize validates the requested drawing size: both sides must be
+// positive integers and the RGBA buffer must be representable (the overflow
+// guard is never optional). Configured dimension and pixel limits apply on
+// top. Nothing is clipped or defaulted.
 func (s *Service) checkDrawingSize(w, h int) error {
-	if w < minDrawingDimension || w > maxDrawingDimension || h < minDrawingDimension || h > maxDrawingDimension {
-		return badRequest("imageWidthPx and imageHeightPx must each be integers from 64 to 4096")
+	if w < 1 || h < 1 {
+		return badRequest("imageWidthPx and imageHeightPx must be positive integers")
 	}
-	if w > s.lim.MaxDimension || h > s.lim.MaxDimension || int64(w)*int64(h) > int64(s.lim.MaxPixels) {
+	if w > math.MaxInt/4/h {
+		return ErrImageTooLarge
+	}
+	if (s.lim.MaxDimension > 0 && (w > s.lim.MaxDimension || h > s.lim.MaxDimension)) || (s.lim.MaxPixels > 0 && int64(w)*int64(h) > int64(s.lim.MaxPixels)) {
 		return ErrImageTooLarge
 	}
 	return nil
@@ -277,7 +284,7 @@ func (s *Service) createDrawing(ctx context.Context, p Principal, ws string, in 
 		CapturedAt: sql.NullInt64{Int64: s.ms(now), Valid: true}, ReceivedAt: sql.NullInt64{Int64: s.ms(now), Valid: true},
 		Width: in.ImageWidthPx, Height: in.ImageHeightPx,
 		ObjectKey: nullStr(objKey), SHA: nullStr(sum), Size: int64(len(png)),
-		Created: s.ms(now), Updated: s.ms(now), Expires: s.ms(now.Add(s.lim.DraftTTL)),
+		Created: s.ms(now), Updated: s.ms(now), Expires: s.draftExpiry(now),
 	}
 	err = s.st.DB.InTx(ctx, func(tx *sql.Tx) error {
 		if err := s.checkCaptureQuota(ctx, tx, ws, int64(len(png))); err != nil {
@@ -300,7 +307,7 @@ func (s *Service) createDrawing(ctx context.Context, p Principal, ws string, in 
 }
 
 // blankPNG renders an opaque white w x h canvas as a metadata-free PNG under
-// the shared image-worker bound and the shared encoded-size limit.
+// the optional encoded-size limit.
 func (s *Service) blankPNG(ctx context.Context, w, h int) ([]byte, error) {
 	release, err := s.acquireImage(ctx)
 	if err != nil {
@@ -320,7 +327,7 @@ func (s *Service) blankPNG(ctx context.Context, w, h int) ([]byte, error) {
 
 // discardObject removes a private object whose database record was not
 // committed. A failure is logged and left to the orphan reconciliation of the
-// janitor, which deletes unreferenced files after Limits.OrphanGrace.
+// janitor, which deletes unreferenced files after Operations.OrphanGrace.
 func (s *Service) discardObject(op, key string) {
 	if err := s.st.Private.Delete(key); err != nil {
 		s.log.Warn("private object cleanup failed; orphan reconciliation will remove it", "op", op, "error", err.Error())
@@ -377,7 +384,7 @@ func (s *Service) ingestViewport(ctx context.Context, p Principal, ws string, in
 	if len(gen) > 128 {
 		return CaptureState{}, badRequest("invalid runtime generation")
 	}
-	if in.CapturedAt.IsZero() || in.CapturedAt.After(now.Add(s.lim.CaptureSkew)) {
+	if in.CapturedAt.IsZero() || in.CapturedAt.After(now.Add(s.ops.CaptureSkew)) {
 		return CaptureState{}, badRequest("invalid capture time")
 	}
 	pg := in.Page
@@ -411,7 +418,7 @@ func (s *Service) ingestViewport(ctx context.Context, p Principal, ws string, in
 		ReceivedAt: sql.NullInt64{Int64: s.ms(now), Valid: true},
 		Width:      w, Height: h, PageJSON: sql.NullString{String: string(pageJSON), Valid: true},
 		ObjectKey: nullStr(key), SHA: nullStr(sum), Size: int64(len(png)),
-		Created: s.ms(now), Updated: s.ms(now), Expires: s.ms(now.Add(s.lim.DraftTTL)),
+		Created: s.ms(now), Updated: s.ms(now), Expires: s.draftExpiry(now),
 	}
 	err = s.st.DB.InTx(ctx, func(tx *sql.Tx) error {
 		if err := s.checkCaptureQuota(ctx, tx, ws, int64(len(png))); err != nil {
@@ -479,7 +486,7 @@ func (s *Service) UploadCaptureImage(ctx context.Context, captureID string, data
 		at := now
 		if capturedAt != nil {
 			at = capturedAt.UTC()
-			if at.After(now.Add(s.lim.CaptureSkew)) || at.Before(fromMS(c.Created).Add(-s.lim.CaptureSkew)) {
+			if at.After(now.Add(s.ops.CaptureSkew)) || at.Before(fromMS(c.Created).Add(-s.ops.CaptureSkew)) {
 				return CaptureState{}, ErrStaleCapture
 			}
 		}
@@ -502,7 +509,7 @@ func (s *Service) UploadCaptureImage(ctx context.Context, captureID string, data
 			}
 			res, err := tx.ExecContext(ctx, `UPDATE captures SET status = 'ready', object_key = ?, sha256 = ?, size_bytes = ?, width = ?, height = ?,
 				captured_at = ?, server_received_at = ?, updated_at = ?, expires_at = ? WHERE id = ? AND status = 'awaiting-upload'`,
-				objKey, sum, len(png), w, h, s.ms(at), s.ms(now), s.ms(now), s.ms(now.Add(s.lim.DraftTTL)), c.ID)
+				objKey, sum, len(png), w, h, s.ms(at), s.ms(now), s.ms(now), s.draftExpiry(now), c.ID)
 			if err != nil {
 				return err
 			}
@@ -611,7 +618,7 @@ func (s *Service) CropCapture(ctx context.Context, captureID string, in CropInpu
 		child.FeedbackID = sql.NullString{}
 		child.Width, child.Height = rect.Dx(), rect.Dy()
 		child.ObjectKey, child.SHA, child.Size = nullStr(objKey), nullStr(sum), int64(len(png))
-		child.Created, child.Updated, child.Expires = s.ms(now), s.ms(now), s.ms(now.Add(s.lim.DraftTTL))
+		child.Created, child.Updated, child.Expires = s.ms(now), s.ms(now), s.draftExpiry(now)
 		pt, _ := json.Marshal(ParentTransform{Kind: TransformCrop, ParentCaptureID: c.ID, ParentWidthPx: c.Width, ParentHeightPx: c.Height,
 			CropXPx: rect.Min.X, CropYPx: rect.Min.Y, CropWidthPx: rect.Dx(), CropHeightPx: rect.Dy()})
 		child.ParentJSON = sql.NullString{String: string(pt), Valid: true}

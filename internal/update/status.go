@@ -623,12 +623,17 @@ func (e *Engine) Branches(ctx context.Context) ([]Branch, error) {
 	if err != nil {
 		return nil, err
 	}
+	js, _ := listJournals(e.Dep, e.Now)
 	for _, v := range vs {
+		// The managed label is shared by every deployment on the engine: only
+		// volumes this deployment's journals or generation account for count.
+		if !used[v.Name] && !volumeOwned(v.Name, v.Labels, js) {
+			continue
+		}
 		byName[v.Name] = Branch{
 			Volume: v.Name, Role: v.Labels[LabelRole], UpdateID: v.Labels[LabelUpdate], Dataset: v.Labels[LabelDataset], CreatedAt: v.Labels[LabelCreated], InUse: used[v.Name],
 		}
 	}
-	js, _ := listJournals(e.Dep, e.Now)
 	for _, j := range js {
 		for _, name := range j.RetiredVolumes {
 			if b, ok := byName[name]; ok {

@@ -33,16 +33,30 @@ const (
 	// readable unchanged.
 	SchemaVersionLegacy = "0.1.0"
 
-	// MaxArtifactBytes is the per-artifact maximum of the share schema.
-	MaxArtifactBytes = 32 << 20
-	// MaxBundleBytes bounds the sum of all downloaded artifacts of one pull.
-	MaxBundleBytes = 64 << 20
-	// MaxJSONBody bounds every JSON API response.
-	MaxJSONBody = 2 << 20
-
-	maxPixels    = 100_000_000
-	maxDimension = 32768
+	// maxDeclaredBytes is the largest integer a JSON document represents
+	// exactly (2^53-1). It is a structural bound on a declared size, not a
+	// usage limit: it keeps size sums far from int64 overflow.
+	maxDeclaredBytes = 1<<53 - 1
 )
+
+// Limits are optional restrictions on what this client accepts. The zero value
+// of every field means no limit: the exact size, SHA-256, media type and PNG
+// shape of every artifact are verified regardless.
+type Limits struct {
+	// MaxArtifactBytes bounds one artifact.
+	MaxArtifactBytes int64
+	// MaxBundleBytes bounds the sum of all artifacts of one revision.
+	MaxBundleBytes int64
+	// MaxJSONBytes bounds one JSON API response and a bundle's feedback.json.
+	MaxJSONBytes int64
+}
+
+func (l Limits) validate() error {
+	if l.MaxArtifactBytes < 0 || l.MaxBundleBytes < 0 || l.MaxJSONBytes < 0 {
+		return errors.New("delivery: limits must not be negative (use 0 for no limit)")
+	}
+	return nil
+}
 
 // Fixed bundle file names. Nothing outside this set is ever written to or
 // accepted in a bundle directory.
@@ -213,16 +227,15 @@ type Resolution struct {
 	ResultFeedbackIDs []string
 }
 
-// Validate checks the field limits of the resolve request schema.
+// Validate checks the resolve request: both texts are required and valid
+// UTF-8, and result feedback IDs must be well-formed. Neither length nor the
+// number of result IDs is capped.
 func (r Resolution) Validate() error {
-	if err := checkText("summary", r.Summary, 1, 12000); err != nil {
+	if err := checkText("summary", r.Summary, 1); err != nil {
 		return err
 	}
-	if err := checkText("verification", r.Verification, 1, 12000); err != nil {
+	if err := checkText("verification", r.Verification, 1); err != nil {
 		return err
-	}
-	if len(r.ResultFeedbackIDs) > 10 {
-		return errors.New("at most 10 result feedback IDs are allowed")
 	}
 	for _, id := range r.ResultFeedbackIDs {
 		if err := ValidateID("result feedback ID", id); err != nil {
@@ -232,16 +245,13 @@ func (r Resolution) Validate() error {
 	return nil
 }
 
-func checkText(name, s string, min, max int) error {
+// checkText requires valid UTF-8 and at least min code points.
+func checkText(name, s string, min int) error {
 	if !utf8.ValidString(s) {
 		return fmt.Errorf("%s is not valid UTF-8", name)
 	}
-	n := utf8.RuneCountInString(s)
-	if n < min {
+	if utf8.RuneCountInString(s) < min {
 		return fmt.Errorf("%s must not be empty", name)
-	}
-	if n > max {
-		return fmt.Errorf("%s is %d characters, the limit is %d", name, n, max)
 	}
 	return nil
 }
@@ -313,7 +323,7 @@ func decodeDelivery(data []byte) (Delivery, error) {
 
 // decodeFeedback decodes and validates a published revision against the
 // request it answers.
-func decodeFeedback(data []byte, wantID string, wantRevision int) (*Feedback, error) {
+func decodeFeedback(data []byte, wantID string, wantRevision int, lim Limits) (*Feedback, error) {
 	var f Feedback
 	if err := decodeStrict(data, &f); err != nil {
 		return nil, err
@@ -348,7 +358,7 @@ func decodeFeedback(data []byte, wantID string, wantRevision int) (*Feedback, er
 	if !p.HumanApproved || !p.RedactionsApplied || p.IncludesRawImage {
 		return nil, errors.New("refusing feedback: share policy lacks human approval or redaction, or includes a raw image")
 	}
-	if err := f.validateArtifacts(); err != nil {
+	if err := f.validateArtifacts(lim); err != nil {
 		return nil, err
 	}
 	return &f, nil
@@ -428,30 +438,30 @@ func (t Task) validate(schemaVersion string) error {
 			minResult = 1
 		}
 	}
-	if err := checkText("task title", t.Title, 1, 200); err != nil {
+	if err := checkText("task title", t.Title, 1); err != nil {
 		return err
 	}
-	if err := checkText("task description", t.Description, minDescription, 12000); err != nil {
+	if err := checkText("task description", t.Description, minDescription); err != nil {
 		return err
 	}
-	if err := checkText("expected result", t.ExpectedResult, minResult, 6000); err != nil {
+	if err := checkText("expected result", t.ExpectedResult, minResult); err != nil {
 		return err
 	}
-	if err := checkText("actual result", t.ActualResult, minResult, 6000); err != nil {
+	if err := checkText("actual result", t.ActualResult, minResult); err != nil {
 		return err
 	}
-	if t.ReproductionSteps == nil || len(t.ReproductionSteps) > 30 {
-		return errors.New("malformed body: reproductionSteps must be an array of at most 30 steps")
+	if t.ReproductionSteps == nil {
+		return errors.New("malformed body: reproductionSteps must be an array")
 	}
 	for _, s := range t.ReproductionSteps {
-		if err := checkText("reproduction step", s, 1, 2000); err != nil {
+		if err := checkText("reproduction step", s, 1); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (f *Feedback) validateArtifacts() error {
+func (f *Feedback) validateArtifacts(lim Limits) error {
 	if n := len(f.Artifacts); n < 2 || n > 4 {
 		return fmt.Errorf("malformed body: %d artifacts, want 2 to 4", n)
 	}
@@ -468,8 +478,10 @@ func (f *Feedback) validateArtifacts() error {
 			return fmt.Errorf("refusing artifact %q: MIME type %q, want %q", a.Name, a.MimeType, want)
 		case !sha256Pattern.MatchString(a.SHA256):
 			return fmt.Errorf("refusing artifact %q: malformed sha256", a.Name)
-		case a.SizeBytes < 1 || a.SizeBytes > MaxArtifactBytes:
-			return fmt.Errorf("refusing artifact %q: size %d outside 1..%d", a.Name, a.SizeBytes, MaxArtifactBytes)
+		case a.SizeBytes < 1 || a.SizeBytes > maxDeclaredBytes:
+			return fmt.Errorf("refusing artifact %q: size %d outside 1..%d", a.Name, a.SizeBytes, int64(maxDeclaredBytes))
+		case lim.MaxArtifactBytes > 0 && a.SizeBytes > lim.MaxArtifactBytes:
+			return fmt.Errorf("refusing artifact %q: size %d is above the configured per-artifact limit of %d bytes", a.Name, a.SizeBytes, lim.MaxArtifactBytes)
 		}
 		seen[a.Name] = true
 		total += a.SizeBytes
@@ -477,8 +489,8 @@ func (f *Feedback) validateArtifacts() error {
 	if !seen[FileRedacted] || !seen[FileAnnotated] {
 		return errors.New("refusing feedback: both screenshot artifacts must be shared")
 	}
-	if total > MaxBundleBytes {
-		return fmt.Errorf("refusing feedback: artifacts total %d bytes, the limit is %d", total, MaxBundleBytes)
+	if lim.MaxBundleBytes > 0 && total > lim.MaxBundleBytes {
+		return fmt.Errorf("refusing feedback: artifacts total %d bytes, the configured limit is %d", total, lim.MaxBundleBytes)
 	}
 	return nil
 }

@@ -26,6 +26,7 @@ type ReadyDetail struct {
 		} `json:"units"`
 		ChromiumVersion string `json:"chromiumVersion"`
 		Sandbox         struct {
+			Enabled   bool              `json:"enabled"`
 			Verified  bool              `json:"verified"`
 			Processes []json.RawMessage `json:"processes"`
 		} `json:"sandbox"`

@@ -245,10 +245,14 @@ func basePage(t *testing.T, id string) *fakePage {
 	}
 }
 
-func newCapturer(t *testing.T, f *fakeChromium) *Capturer {
+func newCapturer(t *testing.T, f *fakeChromium, mod ...func(*Config)) *Capturer {
 	t.Helper()
-	c, err := New(Config{Endpoint: f.endpoint(), CallTimeout: 2 * time.Second, ScreenshotTimeout: 400 * time.Millisecond,
-		Now: func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) }})
+	cfg := Config{Endpoint: f.endpoint(), CallTimeout: 2 * time.Second, ScreenshotTimeout: 400 * time.Millisecond,
+		Now: func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) }}
+	for _, m := range mod {
+		m(&cfg)
+	}
+	c, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,14 +389,14 @@ func TestCaptureOfAHiddenTabFailsClearlyAndActivateIsExplicit(t *testing.T) {
 	}
 }
 
-func TestCaptureRejectsOversizedAndBrokenImages(t *testing.T) {
+func TestCaptureRejectsBrokenImages(t *testing.T) {
 	cases := map[string]struct {
 		shot []byte
 		want error
 	}{
-		"too many pixels": {headerOnlyPNG(5000, 5000), ErrImageLimit},
-		"not a png":       {[]byte("GIF89a not a png"), ErrCaptureFailed},
-		"empty":           {nil, ErrCaptureFailed},
+		"not a png":  {[]byte("GIF89a not a png"), ErrCaptureFailed},
+		"empty":      {nil, ErrCaptureFailed},
+		"overflowed": {headerOnlyPNG(1<<31-1, 1<<31-1), ErrCaptureFailed},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -404,12 +408,38 @@ func TestCaptureRejectsOversizedAndBrokenImages(t *testing.T) {
 			}
 		})
 	}
-	// 24 megapixels exactly is accepted.
+}
+
+func TestCaptureAcceptsLargeImagesWithoutConfiguredLimits(t *testing.T) {
+	// 50 megapixels, above the former 24 megapixel cap.
 	p := basePage(t, "AAAA1111")
-	p.shot = headerOnlyPNG(6000, 4000)
+	p.shot = headerOnlyPNG(10000, 5000)
 	f := newFakeChromium(t, p)
-	if res, _, err := newCapturer(t, f).Capture(context.Background(), "AAAA1111", Options{}); err != nil || res.Image.Width != 6000 {
-		t.Fatalf("24 MP capture = %+v, %v", res.Image, err)
+	if res, _, err := newCapturer(t, f).Capture(context.Background(), "AAAA1111", Options{}); err != nil || res.Image.Width != 10000 {
+		t.Fatalf("50 MP capture = %+v, %v", res.Image, err)
+	}
+}
+
+func TestConfiguredCaptureLimitsAreExactBoundaries(t *testing.T) {
+	shot := headerOnlyPNG(5000, 4000)
+	capture := func(mod func(*Config)) error {
+		p := basePage(t, "AAAA1111")
+		p.shot = shot
+		f := newFakeChromium(t, p)
+		_, _, err := newCapturer(t, f, mod).Capture(context.Background(), "AAAA1111", Options{})
+		return err
+	}
+	if err := capture(func(c *Config) { c.MaxImagePixels = 5000 * 4000 }); err != nil {
+		t.Fatalf("pixels at the limit: %v", err)
+	}
+	if err := capture(func(c *Config) { c.MaxImagePixels = 5000*4000 - 1 }); !errors.Is(err, ErrImageLimit) {
+		t.Fatalf("pixels above the limit: %v", err)
+	}
+	if err := capture(func(c *Config) { c.MaxImageBytes = int64(len(shot)) }); err != nil {
+		t.Fatalf("bytes at the limit: %v", err)
+	}
+	if err := capture(func(c *Config) { c.MaxImageBytes = int64(len(shot)) - 1 }); !errors.Is(err, ErrImageLimit) {
+		t.Fatalf("bytes above the limit: %v", err)
 	}
 }
 

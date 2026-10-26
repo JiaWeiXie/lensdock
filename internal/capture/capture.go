@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"image/png"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,10 +23,6 @@ import (
 )
 
 const (
-	// MaxImageBytes and MaxImagePixels bound screenshot resource use.
-	MaxImageBytes  = 32 << 20
-	MaxImagePixels = 24_000_000
-
 	maxAttempts       = 2
 	maxTargets        = 64
 	maxDiscoveryBytes = 4 << 20
@@ -43,8 +40,9 @@ var (
 	ErrTargetNotFound = errors.New("capture: target not found")
 	// ErrCaptureFailed reports a CDP failure while capturing.
 	ErrCaptureFailed = errors.New("capture: viewport capture failed")
-	// ErrImageLimit reports a screenshot beyond the size or pixel limit.
-	ErrImageLimit = errors.New("capture: screenshot exceeds the size limit")
+	// ErrImageLimit reports a screenshot beyond a configured size or pixel
+	// limit (Config.MaxImageBytes, Config.MaxImagePixels).
+	ErrImageLimit = errors.New("capture: screenshot exceeds the configured size limit")
 )
 
 var targetIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
@@ -56,6 +54,10 @@ type Config struct {
 	CallTimeout       time.Duration
 	ScreenshotTimeout time.Duration
 	Now               func() time.Time
+	// MaxImageBytes and MaxImagePixels optionally refuse larger screenshots
+	// with ErrImageLimit. Zero means no limit.
+	MaxImageBytes  int64
+	MaxImagePixels int64
 }
 
 // Options are the per-capture choices of the caller.
@@ -68,11 +70,13 @@ type Options struct {
 
 // Capturer talks to Chromium's DevTools endpoint on behalf of the runtime.
 type Capturer struct {
-	endpoint string
-	client   *http.Client
-	callTO   time.Duration
-	shotTO   time.Duration
-	now      func() time.Time
+	endpoint  string
+	client    *http.Client
+	callTO    time.Duration
+	shotTO    time.Duration
+	now       func() time.Time
+	maxBytes  int64
+	maxPixels int64
 }
 
 // New validates cfg and returns a Capturer.
@@ -86,6 +90,7 @@ func New(cfg Config) (*Capturer, error) {
 		callTO:   cfg.CallTimeout,
 		shotTO:   cfg.ScreenshotTimeout,
 		now:      cfg.Now,
+		maxBytes: cfg.MaxImageBytes, maxPixels: cfg.MaxImagePixels,
 		client: &http.Client{
 			Transport: &http.Transport{
 				Proxy:                 nil,
@@ -275,7 +280,7 @@ func (c *Capturer) Capture(ctx context.Context, targetID string, opts Options) (
 		if err != nil {
 			return Result{}, nil, err
 		}
-		cfg, err := decodeConfig(img)
+		cfg, err := c.decodeConfig(img)
 		if err != nil {
 			return Result{}, nil, err
 		}
@@ -313,15 +318,20 @@ func (c *Capturer) Capture(ctx context.Context, targetID string, opts Options) (
 	return res, data, nil
 }
 
-func decodeConfig(img []byte) (cfg struct{ Width, Height int }, err error) {
-	c, err := png.DecodeConfig(bytes.NewReader(img))
+// decodeConfig reads the PNG header. Dimensions must be positive and their
+// pixel count representable; a configured pixel limit is enforced on top.
+func (c *Capturer) decodeConfig(img []byte) (cfg struct{ Width, Height int }, err error) {
+	d, err := png.DecodeConfig(bytes.NewReader(img))
 	if err != nil {
 		return cfg, fmt.Errorf("%w: the browser returned an unreadable PNG", ErrCaptureFailed)
 	}
-	if c.Width <= 0 || c.Height <= 0 || c.Width*c.Height > MaxImagePixels {
+	if d.Width <= 0 || d.Height <= 0 || int64(d.Width)*int64(d.Height) > math.MaxInt64/4 {
+		return cfg, fmt.Errorf("%w: the browser returned a PNG with invalid dimensions", ErrCaptureFailed)
+	}
+	if c.maxPixels > 0 && int64(d.Width)*int64(d.Height) > c.maxPixels {
 		return cfg, ErrImageLimit
 	}
-	cfg.Width, cfg.Height = c.Width, c.Height
+	cfg.Width, cfg.Height = d.Width, d.Height
 	return cfg, nil
 }
 
@@ -380,14 +390,14 @@ func (c *Capturer) attempt(ctx context.Context, id string, opts Options) (pre, p
 		}
 		return State{}, State{}, nil, false, fmt.Errorf("%w: %w", ErrCaptureFailed, err)
 	}
-	if len(shot.Data) > base64.StdEncoding.EncodedLen(MaxImageBytes) {
+	if c.maxBytes > 0 && int64(len(shot.Data)) > (c.maxBytes+2)/3*4 {
 		return State{}, State{}, nil, false, ErrImageLimit
 	}
 	img, err = base64.StdEncoding.DecodeString(shot.Data)
 	if err != nil {
 		return State{}, State{}, nil, false, fmt.Errorf("%w: the browser returned invalid image data", ErrCaptureFailed)
 	}
-	if len(img) > MaxImageBytes {
+	if c.maxBytes > 0 && int64(len(img)) > c.maxBytes {
 		return State{}, State{}, nil, false, ErrImageLimit
 	}
 

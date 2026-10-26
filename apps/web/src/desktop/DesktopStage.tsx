@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObjec
 import { Button } from '@/components/ui';
 import { Icon } from '@/components/icons';
 import { Popover } from '@/components/Popover';
+import { describeError } from '@/errors';
 import { useI18n } from '@/i18n';
 import { OwnerBadge } from '@/shell/OwnerRail';
 import { useControl } from '@/state/control';
+import { isDeliberateKey } from '@/state/controlIntent';
 import { FONT_SIZES, useUi } from '@/state/ui';
 import { useWorkspace } from '@/state/workspace';
 import { KEY_COMBOS } from '@/vnc/keys';
@@ -37,8 +39,8 @@ export function DesktopStage({ stageRef }: { stageRef: RefObject<HTMLDivElement 
   const { fontSize, setFontSize } = useUi();
   const controller = useRfbController();
   const rfb = useRfb();
-  const { lease, release, busy } = useControl();
-  const { error: pollError, lastOkAt } = useWorkspace();
+  const { lease, release, busy, blocked, error: controlError, lost, takeover, interact } = useControl();
+  const { workspace, error: pollError, lastOkAt } = useWorkspace();
   const now = useClock();
   const screenRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -76,13 +78,34 @@ export function DesktopStage({ stageRef }: { stageRef: RefObject<HTMLDivElement 
     };
   }, [controller]);
 
+  // A gesture that asked for control left focus on the stage; once the control stream is up, typing continues there.
+  const controlLive = rfb.phase === 'connected' && rfb.mode === 'control';
+  useEffect(() => {
+    if (controlLive && document.activeElement === screenRef.current) controller.focus();
+  }, [controlLive, controller]);
+
   const toggleFullscreen = useCallback(async (): Promise<void> => {
     if (document.fullscreenElement) await document.exitFullscreen();
     else await stageRef.current?.requestFullscreen();
   }, [stageRef]);
 
-  const inputLive = rfb.phase === 'connected' && rfb.mode === 'control';
-  const keysBlocked = inputLive ? null : t('stage.keys.needControl');
+  const keysBlocked = controlLive ? null : t('stage.keys.needControl');
+  const acquiring = busy || takeover.phase === 'requesting' || takeover.phase === 'draining' || takeover.phase === 'acquiring';
+  // What a gesture on the view-only desktop will do, said before and while it happens.
+  const hint: string | null =
+    rfb.phase !== 'connected' || rfb.mode !== 'view'
+      ? null
+      : blocked
+        ? `${t('stage.viewOnly')} · ${t(blocked)}`
+        : acquiring
+          ? t('stage.hint.activating')
+          : lost
+            ? t('stage.hint.lost')
+            : workspace?.controlState === 'AGENT'
+              ? t('stage.hint.takeAgent')
+              : workspace?.controlState === 'HUMAN'
+                ? t('stage.hint.takeHuman')
+                : t('stage.hint.take');
   const lastFrame = controller.getLastActivityAt();
   const frameAge = lastFrame > 0 ? Math.max(0, Math.round((now - lastFrame) / 1000)) : null;
   const retrySeconds = rfb.nextRetryAt !== null ? Math.max(0, Math.ceil((rfb.nextRetryAt - now) / 1000)) : null;
@@ -180,12 +203,30 @@ export function DesktopStage({ stageRef }: { stageRef: RefObject<HTMLDivElement 
         </div>
       ) : null}
 
-      <div className="stage__frame">
-        <div className="stage__screen" ref={screenRef} />
+      {fullscreen && controlError ? (
+        <div className="stage__banner stage__banner--amber" role="alert">
+          <Icon name="warning" size={16} /> {describeError(controlError, t)} {t('stage.hint.retry')}
+        </div>
+      ) : null}
 
-        {rfb.phase === 'connected' && rfb.mode === 'view' ? (
-          <div className="stage__chip">
-            <Icon name="eye" size={14} /> {t('stage.viewOnly')}
+      <div className="stage__frame">
+        <div
+          className="stage__screen"
+          ref={screenRef}
+          tabIndex={0}
+          role="group"
+          aria-label={t('stage.screen')}
+          onPointerDownCapture={(e) => {
+            if (e.isTrusted) interact('pointer');
+          }}
+          onKeyDown={(e) => {
+            if (e.isTrusted && isDeliberateKey(e.nativeEvent)) interact('key');
+          }}
+        />
+
+        {hint ? (
+          <div className="stage__chip" role="status">
+            <Icon name={blocked ? 'eye' : 'hand'} size={14} /> {hint}
           </div>
         ) : null}
 

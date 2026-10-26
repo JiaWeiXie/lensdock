@@ -16,6 +16,11 @@ import (
 func (s *server) pass(ctx context.Context) {
 	s.passMu.Lock()
 	defer s.passMu.Unlock()
+	select {
+	case <-s.shutdownCh:
+		return
+	default:
+	}
 	s.expire()
 	s.reconcileWorkers()
 	s.admit(true)
@@ -28,6 +33,7 @@ func (s *server) pass(ctx context.Context) {
 	s.admit(false)
 	s.launchPending(ctx)
 	s.cleanReasons()
+	s.scheduleHousekeeping()
 }
 
 func (s *server) cleanReasons() {
@@ -48,6 +54,7 @@ func (s *server) commit(fn func(r *registry) error, onlyIfChanged bool) error {
 	if err := fn(next); err != nil {
 		return err
 	}
+	next.cancelSupersededHousekeeping(s.now())
 	if onlyIfChanged {
 		before, after := s.reg.Revision, next.Revision
 		s.reg.Revision, next.Revision = 0, 0
@@ -81,7 +88,9 @@ func finishOp(r *registry, op *opRecord, phase, msg string, now time.Time, settl
 	if settle {
 		if rec := r.Projects[op.ProjectID]; rec != nil {
 			rec.SettledRevision = r.Revision
-			rec.LastOp = op.ID
+			if !isHousekeeping(op) {
+				rec.LastOp = op.ID
+			}
 		}
 	}
 }
@@ -146,7 +155,7 @@ func (s *server) expireLocked(now time.Time) error {
 			seen = now
 			s.seen[id] = now
 		}
-		if !now.Before(w.Deadline) || now.Sub(seen) > s.opts.heartbeatTTL {
+		if (!w.Deadline.IsZero() && !now.Before(w.Deadline)) || now.Sub(seen) > s.opts.heartbeatTTL {
 			dead = append(dead, id)
 		}
 	}
@@ -393,43 +402,80 @@ func (s *server) applyInventoryLocked(inv Inventory, asked []string, snapRev uin
 	})
 }
 
-// admissionStateLocked reports why admissions must wait (hold) or are refused.
-func (s *server) admissionStateLocked(requireFresh bool) (hold, refuse string) {
+// admissionHoldLocked reports why admissions must wait. It depends only on
+// inventory freshness and Docker health, never on optional capacity policy.
+func (s *server) admissionHoldLocked(requireFresh bool) string {
 	switch {
 	case s.invErr != nil:
-		hold = "Docker cannot be inspected: " + truncate(s.invErr.Error(), 240)
+		return "Docker cannot be inspected: " + truncate(s.invErr.Error(), 240)
 	case s.inv == nil:
-		hold = "waiting for the first Docker inspection"
+		return "waiting for the first Docker inspection"
 	case requireFresh && s.now().Sub(s.invAt) > s.opts.inventoryMaxAge:
-		hold = "waiting for a fresh Docker inspection"
+		return "waiting for a fresh Docker inspection"
 	}
-	if s.inv != nil && len(s.inv.Unbounded) > 0 && !s.cfg.Policy.AllowUnboundedExternal {
-		refuse = "containers without resource caps are running (" + truncate(strings.Join(s.inv.Unbounded, ", "), 200) + "); a human must allow unbounded external demand or cap them"
-	}
-	return hold, refuse
+	return ""
 }
 
-// fitLocked evaluates the capacity formula for a project's target reservation:
-// managed reservations stay within the budget and, with helpers, declared
-// external demand, the unbounded allowance and headroom, within the engine.
-func (s *server) fitLocked(r *registry, pid string, target Resources) (impossible, wait string) {
+// unboundedRefusalLocked refuses demand that reserves a dimension in which an
+// uncapped external container runs, unless a human allowed unbounded external
+// demand. Demand that reserves nothing never depends on external containers.
+func (s *server) unboundedRefusalLocked(demand Resources) string {
+	if s.inv == nil || s.cfg.Policy.AllowUnboundedExternal {
+		return ""
+	}
+	var names []string
+	if demand.MemoryBytes > 0 {
+		names = append(names, s.inv.UnboundedMemory...)
+	}
+	if demand.NanoCPUs > 0 {
+		names = append(names, s.inv.UnboundedCPU...)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	slices.Sort(names)
+	names = slices.Compact(names)
+	return "containers without resource caps are running (" + truncate(strings.Join(names, ", "), 200) + "); a human must allow unbounded external demand or cap them"
+}
+
+// warningDemandLocked is the largest pair demand any current or future project
+// may place on the engine; list warnings mention uncapped external containers
+// only in dimensions that demand reserves.
+func (s *server) warningDemandLocked() Resources {
+	demand := pairOf(s.cfg.Policy.ProjectLimits)
+	for _, rec := range s.reg.Projects {
+		if !rec.Revoked {
+			demand = maxRes(demand, pairOf(rec.Limits))
+		}
+	}
+	return demand
+}
+
+// fitLocked evaluates the optional capacity policy for a project's target
+// reservation. Each dimension is checked only when configured: the budget
+// applies where it is positive, and the engine's physical capacity applies
+// where the operation itself reserves that dimension.
+func (s *server) fitLocked(r *registry, rec *projectRecord, target Resources) (impossible, wait string) {
 	pol := s.cfg.Policy
+	if msg := budgetBlocker(rec.Limits, pol.Budget); msg != "" {
+		return msg, ""
+	}
 	fixed := addRes(addRes(pol.Helpers, pol.Headroom), s.inv.External)
 	if pol.AllowUnboundedExternal {
 		fixed = addRes(fixed, pol.UnboundedExternalAllowance)
 	}
 	capacity := s.inv.Capacity
 	switch {
-	case !target.fitsIn(pol.Budget):
+	case !target.fitsLimit(pol.Budget):
 		return "the request exceeds the managed resource budget", ""
-	case !addRes(target, fixed).fitsIn(capacity):
+	case !fitsEngine(addRes(target, fixed), capacity, target):
 		return "the engine cannot hold this request next to helpers, external containers and headroom even when all managed projects are stopped", ""
 	}
-	total := addRes(r.reservedExcluding(pid), target)
+	total := addRes(r.reservedExcluding(rec.ID), target)
 	switch {
-	case !total.fitsIn(pol.Budget):
+	case !total.fitsLimit(pol.Budget):
 		return "", "waiting for managed budget"
-	case !addRes(total, fixed).fitsIn(capacity):
+	case !fitsEngine(addRes(total, fixed), capacity, target):
 		return "", "waiting for engine capacity"
 	}
 	return "", ""
@@ -457,7 +503,7 @@ func (s *server) admit(bypassOnly bool) {
 		s.log.Error("expire waiters before admission", "error", err)
 		return
 	}
-	hold, refuse := s.admissionStateLocked(true)
+	hold := s.admissionHoldLocked(true)
 	err := s.commitIfChangedLocked(func(r *registry) error {
 		blocked := ""
 		var admitted []*opRecord
@@ -482,6 +528,7 @@ func (s *server) admit(bypassOnly bool) {
 			if bypassOnly && !free {
 				continue
 			}
+			refusal := s.unboundedRefusalLocked(maxRes(target, pairOf(limits)))
 			switch {
 			case hold != "":
 				s.reasons[op.ID] = hold
@@ -489,8 +536,8 @@ func (s *server) admit(bypassOnly bool) {
 					blocked = hold
 				}
 				continue
-			case refuse != "":
-				finishOp(r, op, PhaseFailed, refuse, now, false)
+			case refusal != "":
+				finishOp(r, op, PhaseFailed, refusal, now, false)
 				continue
 			case op.Kind == KindStart && rec.Observed == StateRunning:
 				finishOp(r, op, PhaseSucceeded, "the project is already running", now, false)
@@ -500,7 +547,7 @@ func (s *server) admit(bypassOnly bool) {
 				continue
 			}
 			if !free {
-				impossible, wait := s.fitLocked(r, rec.ID, target)
+				impossible, wait := s.fitLocked(r, rec, target)
 				switch {
 				case impossible != "":
 					finishOp(r, op, PhaseFailed, impossible, now, false)

@@ -4,10 +4,10 @@ import { describeError } from '@/errors';
 import { useI18n, type Lang } from '@/i18n';
 import { useSession } from '@/state/session';
 
-/** Token pairing (exchanged for an HttpOnly session cookie, never kept). When the Gateway runs local demo no-auth, a signed-out browser is also offered an explicit demo entry. */
+/** Local re-entry after sign-out, with token pairing available when required. */
 export function Login(): ReactNode {
   const { t, lang, setLang } = useI18n();
-  const { login, enterDemo, demoAvailable, pairing, loginError, status, retry } = useSession();
+  const { login, enterLocal, localAvailable, pairing, loginError, status, retry } = useSession();
   const [token, setToken] = useState('');
 
   const submit = async (e: FormEvent): Promise<void> => {
@@ -36,17 +36,17 @@ export function Login(): ReactNode {
           </Notice>
         ) : (
           <>
-            {demoAvailable && (
+            {localAvailable && (
               <Notice
                 tone="neutral"
-                title={t('login.demoTitle')}
+                title={t('login.localTitle')}
                 actions={
-                  <Button small variant="primary" icon="lock" busy={pairing} onClick={() => void enterDemo()}>
-                    {t('login.demoEnter')}
+                  <Button small variant="primary" icon="lock" busy={pairing} onClick={() => void enterLocal()}>
+                    {t('login.localEnter')}
                   </Button>
                 }
               >
-                {t('login.demoNote')}
+                {t('login.localNote')}
               </Notice>
             )}
           <form onSubmit={(e) => void submit(e)} className="login__form">

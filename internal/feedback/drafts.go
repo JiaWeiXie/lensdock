@@ -106,12 +106,12 @@ func (s *Service) detail(r *revisionRow) (DraftDetail, error) {
 	}
 	d := DraftDetail{
 		Draft: r.draft(), CaptureID: r.CaptureID, Task: task, Annotations: annots,
-		PreviewReady: r.previewReady(), ExpiresAt: fromMS(r.Expires), RedactionCount: len(reds), Warnings: []string{},
+		PreviewReady: r.previewReady(), ExpiresAt: expiryTime(r.Expires), RedactionCount: len(reds), Warnings: []string{},
 	}
 	if len(reds) == 0 {
 		d.Warnings = append(d.Warnings, WarnNoRedaction)
 	}
-	if exp := fromMS(r.Expires); s.now().Before(exp) && exp.Sub(s.now()) <= s.lim.ExpiryWarning {
+	if exp := fromMS(r.Expires); r.Expires > 0 && s.now().Before(exp) && exp.Sub(s.now()) <= s.ops.ExpiryWarning {
 		d.Warnings = append(d.Warnings, WarnExpiring)
 	}
 	return d, nil
@@ -141,6 +141,9 @@ func (s *Service) authDraft(ctx context.Context, action, fbID string) (Principal
 }
 
 func (s *Service) draftQuota(ctx context.Context, q storage.Querier, ws string) error {
+	if s.lim.MaxDraftsPerWorkspace <= 0 {
+		return nil
+	}
 	var n int
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM revisions r JOIN feedback f ON f.id = r.feedback_id
 		WHERE f.workspace_id = ? AND r.status = 'DRAFT'`, ws).Scan(&n); err != nil {
@@ -208,7 +211,7 @@ func (s *Service) CreateDraft(ctx context.Context, in CreateDraftInput, key stri
 				fbID, in.WorkspaceID, p.ID, s.ms(now)); err != nil {
 				return err
 			}
-			exp := s.ms(now.Add(s.lim.DraftTTL))
+			exp := s.draftExpiry(now)
 			if _, err := tx.ExecContext(ctx, `INSERT INTO revisions (feedback_id, revision, owner_id, status, capture_id, task_json, annotations_json, version, created_at, updated_at, expires_at)
 				VALUES (?, 1, ?, 'DRAFT', ?, ?, '[]', 1, ?, ?, ?)`, fbID, p.ID, c.ID, string(taskJSON), s.ms(now), s.ms(now), exp); err != nil {
 				return err
@@ -336,7 +339,7 @@ func (s *Service) PatchDraft(ctx context.Context, fbID, ifMatch string, in Patch
 		}
 		var out Draft
 		err = s.st.DB.InTx(ctx, func(tx *sql.Tx) error {
-			exp := s.ms(now.Add(s.lim.DraftTTL))
+			exp := s.draftExpiry(now)
 			res, err := tx.ExecContext(ctx, `UPDATE revisions SET task_json = ?, annotations_json = ?, version = version + 1,
 				preview_key = NULL, preview_size = 0, preview_version = 0, updated_at = ?, expires_at = ?, warned = 0
 				WHERE feedback_id = ? AND revision = ? AND status = 'DRAFT' AND version = ?`,
@@ -414,7 +417,7 @@ func (s *Service) UploadPreview(ctx context.Context, fbID, ifMatch string, data 
 			if err := s.checkBytesQuota(ctx, tx, r.WorkspaceID, extra); err != nil {
 				return err
 			}
-			exp := s.ms(now.Add(s.lim.DraftTTL))
+			exp := s.draftExpiry(now)
 			res, err := tx.ExecContext(ctx, `UPDATE revisions SET preview_key = ?, preview_size = ?, preview_version = version, updated_at = ?, expires_at = ?, warned = 0
 				WHERE feedback_id = ? AND revision = ? AND status = 'DRAFT' AND version = ?`,
 				objKey, len(png), s.ms(now), exp, r.FeedbackID, r.Revision, r.Version)
@@ -507,7 +510,7 @@ func (s *Service) renderShared(ctx context.Context, r *revisionRow, c *captureRo
 			// Blur and pixelate belong to the base image only: the uploaded
 			// annotated PNG already contains them, so it is re-redacted but
 			// never filtered a second time.
-			if err := shareBase(img, set.Redactions, set.Effects); err != nil {
+			if err := shareBase(img, set.Redactions, set.Effects, s.lim.MaxEffectPixels); err != nil {
 				return nil, 0, 0, err
 			}
 		} else {
@@ -622,7 +625,7 @@ func (s *Service) NewRevision(ctx context.Context, fbID string, in NewRevisionIn
 			return Draft{}, ErrDraftExists
 		}
 		now := s.nowUTC()
-		exp := s.ms(now.Add(s.lim.DraftTTL))
+		exp := s.draftExpiry(now)
 		newRev := last.Revision + 1
 		task, annots := last.TaskJSON, last.AnnotationsJSON
 		var (

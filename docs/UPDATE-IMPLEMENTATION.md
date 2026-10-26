@@ -1,6 +1,6 @@
 # Host update implementation
 
-Command-level procedure for the policy in [UPDATE-RUNBOOK.md](UPDATE-RUNBOOK.md). Everything runs on the host. Runtime, Gateway and browser containers never mount the Docker socket.
+Command-level procedure for the policy in [UPDATE-RUNBOOK.md](UPDATE-RUNBOOK.md). Everything runs on the host. Runtime, Gateway and browser containers never mount the Docker socket. The commands need Host Admin authority: an authorized human, or a host Agent that a human lets run host `lensdock` commands. A browser or container Agent token never carries it. Removal and uninstall are in [Uninstall and data removal](UPDATE-RUNBOOK.md#uninstall-and-data-removal).
 
 Examples call `lensdock` from `PATH` and read the deployment file from `LENSDOCK_DEPLOYMENT`:
 
@@ -71,7 +71,8 @@ Optional keys and their defaults:
 | `backupDir` | `<stateDir>/backups` |
 | `releasesDir` | `<stateDir>/releases` |
 | `backupKeyFile` | `<stateDir>/keys/backup.key` (private 0600 file outside `backupDir`) |
-| `retainCheckpoints` | 3 |
+| `retainCheckpoints` | 3 (newest clean checkpoints an explicit `checkpoints prune` keeps; at least 1) |
+| `expireAfterDays` | 30 (age of unused old system data for expiry; an explicit `0` disables it; 0 to 36500; set with `update expiry --expire-after-days N`) |
 | `minFreeBytes` | 512 MiB |
 | `stopGraceSeconds` | 40 |
 | `drainTimeoutSeconds` | 45 |
@@ -135,7 +136,17 @@ lensdock update compose --deployment "$LENSDOCK_DEPLOYMENT" -- down
 
 The first compose argument must be one of `up`, `down`, `stop`, `start`, `restart`, `ps`, `logs` or `config`. Global Compose flags are refused because the deployment owns the project, files and env files. `down -v`, `--volumes`, `--rmi`, `up --build` and `up --pull` are also refused, because a generation runs images already verified by digest (`--pull=never` is accepted). `mise run product:up` and `mise run product:down` use the same command; `product:up` also runs the setup-only `config-init` step that prepares the credential volumes, which belongs to the first start. Restart a running deployment with `update compose`, not by repeating the first-start task.
 
-The Gateway keeps browser sessions in memory. After any Gateway restart (an update switch, a rollback, `restart gateway`, a host reboot) every browser session is gone. Open the UI and pair again with the human or viewer pairing token from the private product directory, and never put the token in a URL. Control leases do not survive a Runtime restart either, so humans and Agents acquire new ones.
+The Gateway keeps browser sessions in memory. After any Gateway restart (an update switch, a rollback, `restart gateway`, a host reboot) every browser session is gone. Default local access resumes automatically. If pairing is required, open the UI and pair again with the human or viewer token from the private product directory; never put the token in a URL. Control leases do not survive a Runtime restart either, so humans and Agents acquire new ones.
+
+### Stopping the host manager
+
+```bash
+lensdock admin manager stop
+```
+
+The command stops only the manager daemon of `${LENSDOCK_MANAGER_DIR:-~/.local/share/lensdock-manager}`. It asks the manager to shut down, then waits until the manager's handlers have returned and its singleton lock (`manager.lock`) is free. The manager refuses while any operation has an active worker, while a lifecycle helper holds the shared helper lock, or while any project's lock is held, and the command reports which one. Wait and retry. It never stops project containers, never removes data or images, and prints `"containersStopped": false`. With no manager running it returns at once. Stop the projects first with `project stop` if you want their browsers stopped as well.
+
+The manager runs only while someone keeps it running: project-bound commands (`project up`, `workspace status --project`, MCP with `--project`, and so on) start it again, and no boot service is installed.
 
 ## Release evidence
 
@@ -254,7 +265,8 @@ The command runs these steps in order, each journaled under `<stateDir>/updates/
 5. Stop the Runtime cleanly and require a clean result (see [Clean stop](#clean-stop)).
 6. Encrypt Profile, keyring and Gateway database into one authenticated checkpoint. Decrypt every checkpoint file and walk each tar before publishing it.
 7. Create new candidate volumes from the checkpoint and compare complete content and metadata fingerprints.
-8. Run the Gateway migration on the cloned database in a container with no network, a read-only root, no capabilities and the configured user. Retained datasets follow their `candidateAccess`, so the migration sees feedback artifacts and credentials read-only. Then start the candidate Runtime in its own Compose project on the cloned volumes, with no published ports, its own operator token, and its Runtime TLS variables forced empty so the local probe speaks plain HTTP. Its scratch usage policy starts in `AGENT` mode; the saved production mode and pause are untouched. The probe verifies readiness, sandbox, fonts, exact dpkg versions, Chromium, CDP and a built-in loopback-only UTF-8/PNG fixture.
+8. Run the Gateway migration on the cloned database in a container with no network, a read-only root, no capabilities and the configured user. Retained datasets follow their `candidateAccess`, so the migration sees feedback artifacts and credentials read-only. Then start the candidate Runtime in its own Compose project on the cloned volumes, with no published ports, its own operator token, and its Runtime TLS variables forced empty so the local probe speaks plain HTTP. Its scratch usage policy starts in `AGENT` mode; the saved production mode and pause are untouched. The probe verifies readiness, the Chromium sandbox (skipped when `LENSDOCK_CHROMIUM_SANDBOX` is off, a failure when it is on and unverified), fonts, exact dpkg versions, Chromium, CDP and a built-in loopback-only UTF-8/PNG fixture.
+   Candidate reports use `reason: "chromium-sandbox-disabled"` for the permitted sandbox skip. Admission uses that code, not the human-readable diagnostic text. A missing or unknown skip reason still blocks switching.
 9. Require the probe's egress check to pass (public addresses, DNS and the cloud metadata address are unreachable) and the candidate network to be internal. Then stop the candidate, check that its Profile has no lock files and a clean `profile.exit_type`, and remove its scratch volumes. The cloned volumes stay: they become the live volumes at the switch.
 10. Switch, after approval (below).
 11. Start the new generation and require health.
@@ -272,7 +284,7 @@ lensdock update abort --deployment "$LENSDOCK_DEPLOYMENT" --update UPDATE_ID
 
 `apply --approve-switch` approves the switch in the same invocation, after candidate verification passed. Use it only when no one needs to read the diff.
 
-The switch writes a new generation override with exact image digests and new snapshot volume names, then starts Runtime and Gateway and requires health. Every old control lease is gone and nothing resumes automatically. Because the Gateway restarts, browser sessions are gone too; pair the UI again.
+The switch writes a new generation override with exact image digests and new snapshot volume names, then starts Runtime and Gateway and requires health. Every old control lease is gone and nothing resumes automatically. Because the Gateway restarts, browser sessions are gone too; default local access resumes automatically, and a deployment that requires pairing must pair the UI again.
 
 ### Image retention
 
@@ -384,3 +396,52 @@ lensdock update branches delete VOLUME --deployment "$LENSDOCK_DEPLOYMENT" --yes
 ```
 
 `deployment-status.json` holds only release, update and checkpoint summaries. It never contains tokens, certificate or key paths, host paths, Docker volume names, or Profile and database content. The Gateway serves it read-only, so the web UI cannot apply or roll back an update. `status --publish` rewrites it atomically.
+
+## Cleanup of unused old system data
+
+`update cleanup` and the automatic triggers share one implementation (`Engine.ExpireUnused`). The runbook's [Retention and expiry](UPDATE-RUNBOOK.md#retention-and-expiry-of-unused-old-system-data) section has the policy, defaults, scopes, precedence and refusals; this section records what the code does.
+
+```bash
+lensdock update expiry --deployment "$LENSDOCK_DEPLOYMENT"                           # show policy and last run
+lensdock update expiry --deployment "$LENSDOCK_DEPLOYMENT" --expire-after-days 14    # store 14 days; 0 disables
+lensdock update cleanup --deployment "$LENSDOCK_DEPLOYMENT" --dry-run                # preview, nothing removed
+lensdock update cleanup --deployment "$LENSDOCK_DEPLOYMENT" --scope volumes --older-than-days 7 --yes
+```
+
+- The run takes the deployment lock (`<stateDir>/state/lock`). While an update or rollback holds it, the run returns the operation-in-progress error.
+- The run reads `state.json` and every journal first. If either is unreadable, or `state.json` is missing although completed operations exist, it deletes nothing.
+- Scopes run in the order `checkpoints`, `volumes`, `generations`, `staging`. A scope that cannot build its inventory records an entry in `scopeErrors` and the others continue. Items sort by id within a scope.
+- Age starts from: the checkpoint's `createdAt`; for a volume the `io.lensdock.created-at` label, moved forward to the finish of the journal that recorded it as retired (completed operations only) or, for a volume of an aborted or reverted operation, to that operation's finish; for a generation the `updatedAt` of the next valid generation record; for staging the UTC timestamp embedded in the checkpoint or plan id. A volume of a completed operation that no record says was retired is kept. A missing, unparsable or future time keeps the item. An item is due when its age is at least the configured number of days.
+- A volume must also be unmounted by every container at removal time. The check repeats immediately before `docker volume rm`, so a volume that gained a user after the preview is kept. Expiry never passes `--force`.
+- The report is written atomically (0600) to `<stateDir>/state/expiry-last.json` after each real run. `update expiry` prints it as `lastRun`, and a corrupt or unsupported file is reported as `lastRunError` rather than ignored.
+- `AutoExpire` skips when the age is 0 and when the last recorded run was automatic, clean (no failed item, no scope error) and less than 24 hours old. After a failed run it is attempted again at the next trigger. A manual run replaces the recorded last run.
+- Triggers: a standalone `update apply` that reaches `completed`, `update approve`, `update abort` and a real `update rollback` call it after success. For managed deployments the manager's housekeeping queues a typed `expire` update marked `automatic` once a day when it is idle; clients cannot set that marker. `update cleanup` without `--dry-run` goes through the manager as a confirmed typed operation.
+- `update expiry --expire-after-days N` rereads `deployment.json` under the deployment lock and changes only `expireAfterDays`, so a concurrent edit of another setting is kept. A managed deployment's file is written by the manager's worker as a typed policy operation, under the project and helper locks.
+
+## Deployment data on disk
+
+`<state>` is the directory of `deployment.json` (`~/.local/share/lensdock` for the installer, `<manager>/projects/<id>` for a managed project) and the deployment's `stateDir` is `<state>/product`.
+
+| Path under `<stateDir>` | Content | Removal notes |
+|---|---|---|
+| `operator-token`, `*-token`, `ca.crt`, `gateway.*`, `runtime.*`, `gateway.json` | Pairing tokens, Runtime certificates and keys, Gateway configuration | Written into the credential volumes at first start; keep together with the volumes |
+| `compose.env`, `runtime.env` | Compose and Runtime settings, including the pinned image references | Same |
+| `release/`, `images.pin.yaml` | Private copy of the release bundle and the first-start image pins | Same |
+| `state/` (`state.json`, `lock`, `expiry-last.json`) | Running generation and volume mapping | The only file that maps compose volume keys to the current generation's Docker volume names |
+| `updates/`, `generations/`, `plans/` | Journals, per-generation `state.json` and `compose.override.yaml`, saved plans | Expiry removes obsolete generations and old plans only |
+| `backups/` (or `backupDir`), `keys/backup.key` (or `backupKeyFile`) | Encrypted checkpoints and their key | A custom location is outside the state directory and survives its removal |
+| `releases/` (or `releasesDir`) | Installed release manifests used by later plans | Can be external |
+| `public/` | Sanitized `deployment-status.json` for the Gateway | Safe to regenerate with `update status --publish` |
+
+A deployment initialized from a source checkout keeps its state in the directory chosen at initialization (`.lensdock` by default) and points back at the checkout. Treat that directory like `<state>`; never remove the checkout itself.
+
+## Volume identity
+
+Docker volumes of a deployment come from four sources, and the inventory in the runbook uses their union:
+
+- The running generation: `<stateDir>/state/state.json`, `components.<service>.volumes`, maps each compose volume key to the Docker volume in use. Before the first switch the file is absent and the Compose project's own volumes (label `com.docker.compose.project`) are the running ones.
+- Compose-created volumes carry `com.docker.compose.project=<project>` and `com.docker.compose.volume=<key>`. The project is `lensdock-product` by default for a standalone deployment and `ld-<project id>` for a managed one. Volumes cloned by an update or rollback do not carry these labels.
+- Update-created volumes carry `io.lensdock.managed=true` plus `io.lensdock.update-id`, `io.lensdock.role`, `io.lensdock.dataset` and `io.lensdock.created-at`. The managed label is shared by every deployment on the engine and is not evidence of ownership; `update branches list` accepts a volume only when the running generation uses it, its `update-id` names one of this deployment's journals, or a journal records it as candidate, scratch or retired. It reports `volume`, `role`, `updateId`, `dataset`, `createdAt` and `inUse`, and includes retired baseline volumes that have no labels.
+- Containers of the project: `docker inspect` of its containers lists the mounted volumes while they exist. Managed containers also carry `io.lensdock.manager-id` and `io.lensdock.project-id`.
+
+`update branches delete VOLUME --yes` removes exactly one volume and refuses names that are invalid, used by the running generation, referenced by an unfinished operation, not managed, or not created or retired by this deployment. A volume that a journal records as retired is removed through plain `docker volume rm`, which Docker itself refuses while a container uses it. No LensDock command removes the running generation's volumes, runs a global prune or removes images; removal of those is the manual procedure in the runbook.

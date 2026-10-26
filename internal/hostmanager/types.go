@@ -8,16 +8,21 @@ import (
 	"time"
 )
 
+// Resources is a pair of optional quantities. Zero means no configured limit
+// for that dimension, independently for memory and CPU.
 type Resources struct {
 	MemoryBytes int64 `json:"memoryBytes"`
 	NanoCPUs    int64 `json:"nanoCpus"`
 }
 
+// Limits are the optional caps of one project's Runtime and Gateway.
 type Limits struct {
 	Runtime Resources `json:"runtime"`
 	Gateway Resources `json:"gateway"`
 }
 
+// Policy is the manager's optional resource and access policy. Every resource
+// quantity is zero (unlimited) unless a human opted in.
 type Policy struct {
 	Budget                     Resources `json:"budget"`
 	Helpers                    Resources `json:"helpers"`
@@ -25,6 +30,15 @@ type Policy struct {
 	UnboundedExternalAllowance Resources `json:"unboundedExternalAllowance"`
 	AllowUnboundedExternal     bool      `json:"allowUnboundedExternal"`
 	ProjectLimits              Limits    `json:"projectLimits"`
+	// HelperPidsLimit caps the processes of each lifecycle helper container.
+	// Zero means unlimited.
+	HelperPidsLimit int64 `json:"helperPidsLimit"`
+	// RequireProjectAuthorization and RequireExplicitStart are opt-in access
+	// restrictions owned by the access-policy code; resource code only
+	// preserves them.
+	RequireProjectAuthorization bool `json:"requireProjectAuthorization"`
+	RequireExplicitStart        bool `json:"requireExplicitStart"`
+	RequireStopConfirmation     bool `json:"requireStopConfirmation"`
 }
 
 // Config records human-selected executable, bundle and engine identities.
@@ -46,6 +60,9 @@ type Config struct {
 	PortFirst     int    `json:"portFirst"`
 	PortLast      int    `json:"portLast"`
 	Policy        Policy `json:"policy"`
+	// RequirePairing records the opt-in pairing requirement chosen at
+	// initialization; the access-policy code interprets it.
+	RequirePairing bool `json:"requirePairing"`
 }
 
 type DirectoryIdentity struct {
@@ -113,6 +130,16 @@ type UpdateAction struct {
 	AcceptCrashSnapshot  bool   `json:"acceptCrashSnapshot,omitempty"`
 	AllowCrashCheckpoint bool   `json:"allowCrashCheckpoint,omitempty"`
 	KeepCandidate        bool   `json:"keepCandidate,omitempty"`
+
+	// Scopes and AfterDays parameterize UpdateExpire: the scopes to clean
+	// (empty means all) and an age in days that replaces the deployment's
+	// expireAfterDays for this run only (nil keeps it; 0 disables).
+	Scopes    []string `json:"scopes,omitempty"`
+	AfterDays *int     `json:"afterDays,omitempty"`
+
+	// Automatic marks scheduler-created housekeeping (UpdateExpire with the
+	// deployment's own setting). Requests cannot set it.
+	Automatic bool `json:"automatic,omitempty"`
 }
 
 type Operation struct {
@@ -140,10 +167,13 @@ type Observation struct {
 }
 
 type Inventory struct {
-	EngineID  string    `json:"engineId"`
-	Capacity  Resources `json:"capacity"`
-	External  Resources `json:"external"`
-	Unbounded []string  `json:"unbounded,omitempty"`
+	EngineID string    `json:"engineId"`
+	Capacity Resources `json:"capacity"`
+	External Resources `json:"external"`
+	// UnboundedMemory and UnboundedCPU name running external containers
+	// without a cap in that dimension.
+	UnboundedMemory []string `json:"unboundedMemory,omitempty"`
+	UnboundedCPU    []string `json:"unboundedCpu,omitempty"`
 	// MeasuredAt is when the backend produced this inventory.
 	MeasuredAt time.Time              `json:"measuredAt,omitempty"`
 	Projects   map[string]Observation `json:"projects"`
@@ -170,6 +200,13 @@ type Request struct {
 	ExpectedGeneration string        `json:"expectedGeneration,omitempty"`
 	Update             *UpdateAction `json:"update,omitempty"`
 	Policy             *Policy       `json:"policy,omitempty"`
+	// Limits reconfigures the Runtime and Gateway caps of an existing stopped
+	// project (ActionLimits). Zero removes the cap of that dimension.
+	Limits *Limits `json:"limits,omitempty"`
+	// ExpectedLimits, when set, must equal the project's current limits or the
+	// request is refused. It makes a read-modify-write of Limits safe against
+	// concurrent reconfiguration.
+	ExpectedLimits *Limits `json:"expectedLimits,omitempty"`
 }
 
 type Response struct {

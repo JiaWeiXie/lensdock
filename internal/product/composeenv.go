@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/JiaWeiXie/lensdock/internal/auth"
@@ -93,13 +95,91 @@ func readComposeEnv(path string) (map[string]string, error) {
 	return out, nil
 }
 
-// composeEnvRunner adds env to every command it starts.
+// HelperPidsEnv is the opt-in deployment setting that caps the processes of
+// every helper container (migration, verifier, probe sidecar, volume helper).
+// Unset or 0 means unlimited. A Compose env file definition wins over the
+// process environment.
+const HelperPidsEnv = "LENSDOCK_HELPER_PIDS_LIMIT"
+
+// helperPidsLimit reads HelperPidsEnv from the deployment variables, falling
+// back to the process environment.
+func helperPidsLimit(env []string) (int64, error) {
+	value := os.Getenv(HelperPidsEnv)
+	for _, entry := range env {
+		if k, v, ok := strings.Cut(entry, "="); ok && k == HelperPidsEnv {
+			value = v
+		}
+	}
+	if value == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer; 0 means unlimited", HelperPidsEnv)
+	}
+	return n, nil
+}
+
+// HelperPolicyFile is the Compose override, in the product directory, that
+// applies the helper PID cap to config-init. A deployment owns it next to its
+// pin file: the copied docker/compose.yaml of an installed release is kept
+// byte for byte and may predate the setting, so the cap cannot live there.
+// A managed deployment's file has other content, owned by the host manager.
+const HelperPolicyFile = "helper-policy.yaml"
+
+// standaloneHelperPolicy resolves the optional cap from the deployment's
+// interpolation inputs (see HelperPidsEnv). 0 or unset leaves config-init
+// unlimited.
+const standaloneHelperPolicy = "# Applies the optional LENSDOCK_HELPER_PIDS_LIMIT cap to config-init, whatever release\n# copy of docker/compose.yaml this deployment pins. 0 or unset is unlimited.\nservices:\n  config-init:\n    pids_limit: ${LENSDOCK_HELPER_PIDS_LIMIT:-0}\n"
+
+// ensureHelperPolicy creates the helper policy override of a standalone
+// deployment and lists it after the deployment's Compose files, so the cap
+// reaches config-init through the deployment's own Compose arguments. The
+// content is fixed: any other content is refused rather than trusted, since
+// it could lift the cap. Base files and the pin file are never touched.
+func ensureHelperPolicy(dep *update.Deployment) error {
+	file := filepath.Join(dep.StateDir, HelperPolicyFile)
+	data, err := os.ReadFile(file)
+	switch {
+	case err == nil:
+		if string(data) != standaloneHelperPolicy {
+			return fmt.Errorf("%s differs from the helper policy this deployment owns; refusing to use it", file)
+		}
+	case os.IsNotExist(err):
+		if err := auth.WritePrivateFile(file, []byte(standaloneHelperPolicy)); err != nil {
+			return err
+		}
+	default:
+		return err
+	}
+	for _, f := range dep.Compose.Files {
+		if f == file {
+			return nil
+		}
+	}
+	dep.Compose.Files = append(dep.Compose.Files, file)
+	return dep.Save()
+}
+
+// composeEnvRunner adds env to every command it starts and validates the
+// optional helper PID cap: `docker run` receives it as a flag, while Compose
+// interpolates it through helper-policy.yaml, so an
+// invalid value is refused instead of reaching Compose.
 type composeEnvRunner struct {
 	base update.Runner
 	env  []string
 }
 
 func (r composeEnvRunner) Run(ctx context.Context, c update.Cmd) error {
+	if len(c.Args) > 0 && (c.Args[0] == "run" || c.Args[0] == "compose") {
+		pids, err := helperPidsLimit(r.env)
+		if err != nil {
+			return err
+		}
+		if c.Args[0] == "run" && pids > 0 {
+			c.Args = append([]string{"run", "--pids-limit", strconv.FormatInt(pids, 10)}, c.Args[1:]...)
+		}
+	}
 	if len(r.env) > 0 {
 		env := make([]string, 0, len(r.env)+len(c.Env))
 		env = append(env, r.env...)

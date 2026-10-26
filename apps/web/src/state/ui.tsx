@@ -61,8 +61,6 @@ interface UiCtx {
   setFontSize: (size: number) => void;
   dockCollapsed: boolean;
   setDockCollapsed: (v: boolean) => void;
-  takeoverOpen: boolean;
-  setTakeoverOpen: (v: boolean) => void;
 }
 
 const Ctx = createContext<UiCtx | null>(null);
@@ -88,7 +86,6 @@ export function UiProvider({ children }: { children: ReactNode }): ReactNode {
   const [shortcuts, setShortcutsState] = useState<boolean>(() => localStorage.getItem(SHORTCUTS_KEY) !== 'off');
   const [dockCollapsed, setDockCollapsed] = useState(true);
   const [fontSize, setFontSizeState] = useState(loadFontSize);
-  const [takeoverOpen, setTakeoverOpen] = useState(false);
 
   const setDockTab = useCallback((tab: DockTab) => {
     setDockTabState(tab);
@@ -132,10 +129,8 @@ export function UiProvider({ children }: { children: ReactNode }): ReactNode {
       setFontSize,
       dockCollapsed,
       setDockCollapsed,
-      takeoverOpen,
-      setTakeoverOpen,
     }),
-    [dockTab, setDockTab, selected, drawerOpen, drawerTab, setDrawer, shortcuts, fontSize, setFontSize, dockCollapsed, takeoverOpen],
+    [dockTab, setDockTab, selected, drawerOpen, drawerTab, setDrawer, shortcuts, fontSize, setFontSize, dockCollapsed],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

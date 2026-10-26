@@ -4,12 +4,11 @@ import { createDraft } from '@/api/feedback';
 import { Button, Field, Notice } from '@/components/ui';
 import { Popover } from '@/components/Popover';
 import { describeError } from '@/errors';
-import { emptyTask, TASK_LIMITS } from '@/feedback/task';
+import { emptyTask } from '@/feedback/task';
 import { useI18n } from '@/i18n';
 import { useRoute } from '@/state/ui';
 import { useWorkspace } from '@/state/workspace';
 import { newKey } from '@/util/async';
-import { truncateToCodePoints } from '@/util/text';
 
 const DEFAULT_WIDTH = 1600;
 const DEFAULT_HEIGHT = 900;
@@ -49,7 +48,7 @@ export function DrawingButton(): ReactNode {
   const submitting = useRef(false);
   const w = Number(width);
   const h = Number(height);
-  const validSize = Number.isInteger(w) && Number.isInteger(h) && w >= 64 && w <= 4096 && h >= 64 && h <= 4096;
+  const validSize = Number.isInteger(w) && Number.isInteger(h) && w >= 1 && h >= 1;
 
   const create = async (request: DrawingRequest): Promise<void> => {
     if (submitting.current) return;
@@ -103,15 +102,15 @@ export function DrawingButton(): ReactNode {
                   className="input"
                   value={title}
                   disabled={busy}
-                  onChange={(e) => setTitle(truncateToCodePoints(e.target.value, TASK_LIMITS.title))}
+                  onChange={(e) => setTitle(e.target.value)}
                 />
               </Field>
               <div className="taskform__pair">
                 <Field label={t('drawing.width')} htmlFor={`${uid}-width`} hint={t('drawing.sizeHint')}>
-                  <input id={`${uid}-width`} className="input" type="number" min={64} max={4096} step={1} value={width} disabled={busy} onChange={(e) => setWidth(e.target.value)} />
+                  <input id={`${uid}-width`} className="input" type="number" min={1} step={1} value={width} disabled={busy} onChange={(e) => setWidth(e.target.value)} />
                 </Field>
                 <Field label={t('drawing.height')} htmlFor={`${uid}-height`} hint={t('drawing.sizeHint')}>
-                  <input id={`${uid}-height`} className="input" type="number" min={64} max={4096} step={1} value={height} disabled={busy} onChange={(e) => setHeight(e.target.value)} />
+                  <input id={`${uid}-height`} className="input" type="number" min={1} step={1} value={height} disabled={busy} onChange={(e) => setHeight(e.target.value)} />
                 </Field>
               </div>
               {!validSize ? <Notice tone="amber">{t('drawing.invalidSize')}</Notice> : null}

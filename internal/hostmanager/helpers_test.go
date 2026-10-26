@@ -133,15 +133,17 @@ func (c *fakeClock) Advance(d time.Duration) {
 
 // fakeBackend is a deterministic Docker stand-in.
 type fakeBackend struct {
-	mu         sync.Mutex
-	engine     string
-	capacity   Resources
-	external   Resources
-	unbounded  []string
-	states     map[string]Observation
-	inspectErr error
-	executed   []string // "<kind>:<operationID>"
-	execFn     func(ctx context.Context, cfg Config, p Project, op Operation, locks []*os.File) error
+	mu       sync.Mutex
+	engine   string
+	capacity Resources
+	external Resources
+	// unboundedMemory and unboundedCPU name external containers without a cap.
+	unboundedMemory []string
+	unboundedCPU    []string
+	states          map[string]Observation
+	inspectErr      error
+	executed        []string // "<kind>:<operationID>"
+	execFn          func(ctx context.Context, cfg Config, p Project, op Operation, locks []*os.File) error
 }
 
 func (b *fakeBackend) Inspect(_ context.Context, _ Config, projects []Project) (Inventory, error) {
@@ -152,7 +154,9 @@ func (b *fakeBackend) Inspect(_ context.Context, _ Config, projects []Project) (
 	}
 	inv := Inventory{
 		EngineID: b.engine, Capacity: b.capacity, External: b.external,
-		Unbounded: append([]string(nil), b.unbounded...), Projects: map[string]Observation{},
+		UnboundedMemory: append([]string(nil), b.unboundedMemory...),
+		UnboundedCPU:    append([]string(nil), b.unboundedCPU...),
+		Projects:        map[string]Observation{},
 	}
 	for _, p := range projects {
 		obs, ok := b.states[p.ID]
@@ -204,12 +208,27 @@ func (b *fakeBackend) executions() []string {
 	return append([]string(nil), b.executed...)
 }
 
-// testPair is one project pair under the test policy.
-var testPair = pairOf(DefaultPolicy().ProjectLimits)
+// restrictedPolicy is an explicit opt-in policy of three Runtime/Gateway
+// pairs, one helper allowance and VM headroom. The product default is no
+// limits; these tests keep exercising the enforced path.
+func restrictedPolicy() Policy {
+	return Policy{
+		Budget:   Resources{MemoryBytes: 6*gib + 768*mib, NanoCPUs: 7_500_000_000},
+		Helpers:  Resources{MemoryBytes: gib, NanoCPUs: 1_000_000_000},
+		Headroom: Resources{MemoryBytes: 2 * gib, NanoCPUs: 1_000_000_000},
+		ProjectLimits: Limits{
+			Runtime: Resources{MemoryBytes: 2 * gib, NanoCPUs: 2_000_000_000},
+			Gateway: Resources{MemoryBytes: 256 * mib, NanoCPUs: 500_000_000},
+		},
+	}
+}
+
+// testPair is one project pair under the restricted test policy.
+var testPair = pairOf(restrictedPolicy().ProjectLimits)
 
 // testPolicy admits exactly `pairs` project pairs.
 func testPolicy(pairs int64) Policy {
-	p := DefaultPolicy()
+	p := restrictedPolicy()
 	p.Budget = Resources{MemoryBytes: testPair.MemoryBytes * pairs, NanoCPUs: testPair.NanoCPUs * pairs}
 	return p
 }

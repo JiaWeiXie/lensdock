@@ -13,7 +13,6 @@ import (
 
 	"github.com/JiaWeiXie/lensdock/internal/apiclient"
 	"github.com/JiaWeiXie/lensdock/internal/auth"
-	"github.com/JiaWeiXie/lensdock/internal/clipboard"
 	"github.com/JiaWeiXie/lensdock/internal/lease"
 	"github.com/JiaWeiXie/lensdock/internal/product"
 )
@@ -322,7 +321,7 @@ func (c *cli) workspaceStatus(ctx context.Context, args []string) error {
 
 func (c *cli) clipboardSet(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("clipboard set")
-	leaseFile := fs.String("lease-file", "", "HUMAN lease file")
+	leaseFile := fs.String("lease-file", "", "HUMAN or AGENT lease file")
 	pf := addProjectFlag(fs)
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
@@ -334,12 +333,9 @@ func (c *cli) clipboardSet(ctx context.Context, args []string) error {
 	if err != nil {
 		return leaseErrorf("lease file: %v", err)
 	}
-	text, err := io.ReadAll(io.LimitReader(c.stdin, clipboard.DefaultMaxBytes+1))
+	text, err := io.ReadAll(c.stdin)
 	if err != nil {
 		return fmt.Errorf("read stdin: %w", err)
-	}
-	if len(text) > clipboard.DefaultMaxBytes {
-		return fmt.Errorf("clipboard text exceeds %d bytes", clipboard.DefaultMaxBytes)
 	}
 	if err := c.checkLeaseFileProject(ctx, fs, pf, lf); err != nil {
 		return err

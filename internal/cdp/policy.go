@@ -6,28 +6,34 @@ import (
 	"errors"
 	"io"
 	"strconv"
-	"strings"
 	"unicode/utf8"
 )
-
-// extensionsDomainPrefix denies every method of the Extensions domain, which
-// can load, uninstall and read the storage of browser extensions.
-const extensionsDomainPrefix = "Extensions."
 
 // MethodPolicy is the set of CDP methods a proxied client may not call.
 type MethodPolicy struct {
 	deny map[string]struct{}
 }
 
-// DefaultPolicy denies the methods that could end the browser or expose the
-// protocol beyond the proxy, and the whole Extensions domain.
+// DefaultPolicy denies only what would leave the lease fence or fault the
+// browser on purpose. An AGENT lease otherwise controls the whole browser,
+// including Browser.close (the runtime restarts Chromium, which ends every
+// lease with a new generation) and the Extensions domain.
+//
+//   - Target.exposeDevToolsProtocol hands a page a binding to the browser
+//     protocol that is not tied to the lease ticket: it would stay usable
+//     after revoke, pause or a generation change.
+//   - Target.sendMessageToTarget carries a nested protocol message the proxy
+//     does not inspect; it would deliver the denied methods above. Flattened
+//     sessions (sessionId on each message, what every current client uses)
+//     are inspected like any other message.
+//   - Browser.crash and Browser.crashGpuProcess only fault the browser.
 func DefaultPolicy() MethodPolicy {
 	deny := map[string]struct{}{}
 	for _, m := range []string{
-		"Browser.close",
 		"Browser.crash",
 		"Browser.crashGpuProcess",
 		"Target.exposeDevToolsProtocol",
+		"Target.sendMessageToTarget",
 	} {
 		deny[m] = struct{}{}
 	}
@@ -35,12 +41,8 @@ func DefaultPolicy() MethodPolicy {
 }
 
 // Denied reports whether method is denied. Methods are matched exactly, as
-// Chromium does, except that the Extensions domain is denied by its
-// "Extensions." prefix.
+// Chromium does.
 func (p MethodPolicy) Denied(method string) bool {
-	if strings.HasPrefix(method, extensionsDomainPrefix) {
-		return true
-	}
 	_, ok := p.deny[method]
 	return ok
 }

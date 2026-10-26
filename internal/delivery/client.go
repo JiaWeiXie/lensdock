@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"image/png"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -23,11 +24,8 @@ import (
 )
 
 const (
-	jsonTimeout     = 30 * time.Second
-	artifactTimeout = 2 * time.Minute
-	maxErrorBody    = 64 << 10
-	maxListPages    = 20
-	userAgent       = "lensdock-feedback/1"
+	maxErrorBody = 64 << 10
+	userAgent    = "lensdock-feedback/1"
 )
 
 // TokenSource returns the bearer credential for one request. Reading it per
@@ -57,14 +55,37 @@ func FileTokenSource(path string) TokenSource {
 // Client talks to the Gateway feedback API with a bearer token. It never
 // follows redirects, so the token cannot be forwarded to another origin.
 type Client struct {
-	base   string
-	hc     *http.Client
-	tokens TokenSource
+	base     string
+	hc       *http.Client
+	tokens   TokenSource
+	limits   Limits
+	timeouts Timeouts
 }
+
+// Option customizes a Client.
+type Option func(*Client)
+
+// WithLimits applies optional size limits; see Limits. The zero Limits (the
+// default) accepts any size.
+func WithLimits(l Limits) Option { return func(c *Client) { c.limits = l } }
+
+// Timeouts optionally bound one whole request, including the time the
+// response body takes to arrive. Zero means no deadline (the caller's context
+// still applies), so a large legitimate transfer is never cut off; the
+// connection handshake and response-header waits keep their own protocol timeouts.
+type Timeouts struct {
+	// JSON bounds one JSON API request (list, get, ack, resolve).
+	JSON time.Duration
+	// Artifact bounds one artifact download.
+	Artifact time.Duration
+}
+
+// WithTimeouts applies optional request deadlines; see Timeouts.
+func WithTimeouts(t Timeouts) Option { return func(c *Client) { c.timeouts = t } }
 
 // New validates base (https, or http on a loopback host with an explicit
 // port) and returns a Client. hc may be nil.
-func New(base string, tokens TokenSource, hc *http.Client) (*Client, error) {
+func New(base string, tokens TokenSource, hc *http.Client, opts ...Option) (*Client, error) {
 	if tokens == nil {
 		return nil, errors.New("delivery: token source is required")
 	}
@@ -84,7 +105,17 @@ func New(base string, tokens TokenSource, hc *http.Client) (*Client, error) {
 		}
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Client{base: v.BaseURL(), hc: &client, tokens: tokens}, nil
+	c := &Client{base: v.BaseURL(), hc: &client, tokens: tokens}
+	for _, o := range opts {
+		o(c)
+	}
+	if err := c.limits.validate(); err != nil {
+		return nil, err
+	}
+	if c.timeouts.JSON < 0 || c.timeouts.Artifact < 0 {
+		return nil, errors.New("delivery: timeouts must not be negative (use 0 for no deadline)")
+	}
+	return c, nil
 }
 
 // BaseURL returns the validated base URL.
@@ -99,13 +130,22 @@ type call struct {
 	timeout time.Duration
 	// wantType is the required response media type.
 	wantType string
-	// maxBytes bounds the response body; exact makes any other length an error.
+	// maxBytes bounds the response body; zero means no bound. exact makes any
+	// other length an error and requires maxBytes > 0.
 	maxBytes int64
 	exact    bool
 }
 
 func (c *Client) fetch(parent context.Context, r call) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(parent, r.timeout)
+	var (
+		ctx    context.Context
+		cancel context.CancelFunc
+	)
+	if r.timeout > 0 {
+		ctx, cancel = context.WithTimeout(parent, r.timeout)
+	} else {
+		ctx, cancel = context.WithCancel(parent)
+	}
 	defer cancel()
 
 	tok, err := c.tokens()
@@ -152,14 +192,18 @@ func (c *Client) fetch(parent context.Context, r call) ([]byte, error) {
 	if mt, _, perr := mime.ParseMediaType(resp.Header.Get("Content-Type")); perr != nil || mt != r.wantType {
 		return nil, fmt.Errorf("feedback API answered content type %q, want %q", resp.Header.Get("Content-Type"), r.wantType)
 	}
-	if resp.ContentLength > r.maxBytes {
+	if r.maxBytes > 0 && resp.ContentLength > r.maxBytes {
 		return nil, fmt.Errorf("feedback API response of %d bytes exceeds the %d byte limit", resp.ContentLength, r.maxBytes)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, r.maxBytes+1))
+	var responseBody io.Reader = resp.Body
+	if r.maxBytes > 0 && r.maxBytes < math.MaxInt64 {
+		responseBody = io.LimitReader(resp.Body, r.maxBytes+1)
+	}
+	data, err := io.ReadAll(responseBody)
 	if err != nil {
 		return nil, c.transportError(parent, ctx, err)
 	}
-	if int64(len(data)) > r.maxBytes {
+	if r.maxBytes > 0 && int64(len(data)) > r.maxBytes {
 		return nil, fmt.Errorf("feedback API response exceeds the %d byte limit", r.maxBytes)
 	}
 	if r.exact && int64(len(data)) != r.maxBytes {
@@ -193,8 +237,8 @@ func decodeAPIError(resp *http.Response) error {
 
 func (c *Client) getJSON(ctx context.Context, path string, q url.Values) ([]byte, error) {
 	return c.fetch(ctx, call{
-		method: http.MethodGet, path: path, query: q, timeout: jsonTimeout,
-		wantType: mimeJSON, maxBytes: MaxJSONBody,
+		method: http.MethodGet, path: path, query: q, timeout: c.timeouts.JSON,
+		wantType: mimeJSON, maxBytes: c.limits.MaxJSONBytes,
 	})
 }
 
@@ -255,7 +299,7 @@ func (c *Client) AssignedRevision(ctx context.Context, workspaceID, id string) (
 	var found []int
 	cursor := ""
 	seen := map[string]bool{}
-	for range maxListPages {
+	for {
 		l, err := c.List(ctx, ListQuery{WorkspaceID: workspaceID, Cursor: cursor})
 		if err != nil {
 			return 0, err
@@ -280,7 +324,6 @@ func (c *Client) AssignedRevision(ctx context.Context, workspaceID, id string) (
 		seen[*l.NextCursor] = true
 		cursor = *l.NextCursor
 	}
-	return 0, fmt.Errorf("feedback %q not found within %d list pages", id, maxListPages)
 }
 
 // Get reads one authorized published revision.
@@ -295,7 +338,7 @@ func (c *Client) Get(ctx context.Context, id string, revision int) (*Feedback, e
 	if err != nil {
 		return nil, err
 	}
-	f, err := decodeFeedback(data, id, revision)
+	f, err := decodeFeedback(data, id, revision, c.limits)
 	if err != nil {
 		return nil, fmt.Errorf("feedback %s revision %d: %w", id, revision, err)
 	}
@@ -312,7 +355,7 @@ func (c *Client) Artifact(ctx context.Context, f *Feedback, name string) ([]byte
 	data, err := c.fetch(ctx, call{
 		method: http.MethodGet, path: feedbackPath(f.FeedbackID, "artifacts", a.Name),
 		query:   url.Values{"revision": {strconv.Itoa(f.Revision)}},
-		timeout: artifactTimeout, wantType: a.MimeType, maxBytes: a.SizeBytes, exact: true,
+		timeout: c.timeouts.Artifact, wantType: a.MimeType, maxBytes: a.SizeBytes, exact: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("artifact %s: %w", name, err)
@@ -334,8 +377,8 @@ func verifyArtifact(a Artifact, data []byte) error {
 		if err != nil {
 			return errors.New("not a decodable PNG")
 		}
-		if cfg.Width < 1 || cfg.Height < 1 || cfg.Width > maxDimension || cfg.Height > maxDimension || cfg.Width*cfg.Height > maxPixels {
-			return fmt.Errorf("PNG dimensions %dx%d are outside the accepted range", cfg.Width, cfg.Height)
+		if cfg.Width < 1 || cfg.Height < 1 {
+			return fmt.Errorf("PNG dimensions %dx%d are invalid", cfg.Width, cfg.Height)
 		}
 	case mimeJSON:
 		if !json.Valid(data) {
@@ -393,7 +436,7 @@ func (c *Client) Resolve(ctx context.Context, id string, revision int, r Resolut
 func (c *Client) transition(ctx context.Context, id string, revision int, action string, body any, key string) (Delivery, error) {
 	data, err := c.fetch(ctx, call{
 		method: http.MethodPost, path: feedbackPath(id, action), idemKey: key, body: body,
-		timeout: jsonTimeout, wantType: mimeJSON, maxBytes: MaxJSONBody,
+		timeout: c.timeouts.JSON, wantType: mimeJSON, maxBytes: c.limits.MaxJSONBytes,
 	})
 	if err != nil {
 		return Delivery{}, err

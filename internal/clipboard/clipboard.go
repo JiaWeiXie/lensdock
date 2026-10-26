@@ -18,9 +18,6 @@ import (
 )
 
 const (
-	// DefaultMaxBytes is the clipboard size limit used when New receives a
-	// non-positive limit.
-	DefaultMaxBytes = 64 * 1024
 	// DefaultTTL is the selection lifetime used when New receives a
 	// non-positive TTL.
 	DefaultTTL = 60 * time.Second
@@ -73,7 +70,8 @@ type Spawner interface {
 	StartBrowserProcess(ctx context.Context, argv []string, stdin io.Reader) (Process, error)
 	// OutputBrowserProcess runs argv to completion and returns its stdout.
 	// It fails if the process exits non-zero, if ctx ends first, or if stdout
-	// exceeds maxBytes. Errors never include the output.
+	// exceeds a positive maxBytes (zero means no limit). Errors never include
+	// the output.
 	OutputBrowserProcess(ctx context.Context, argv []string, maxBytes int) ([]byte, error)
 }
 
@@ -82,10 +80,11 @@ type Holder interface {
 	Done() <-chan struct{}
 }
 
-// Validate checks text for publication. It never normalizes: NFC/NFD forms,
-// astral code points and ZWJ sequences are accepted byte for byte.
+// Validate checks text for publication. A positive maxBytes caps its length;
+// zero means no limit. It never normalizes: NFC/NFD forms, astral code points
+// and ZWJ sequences are accepted byte for byte.
 func Validate(text []byte, maxBytes int) error {
-	if len(text) > maxBytes {
+	if maxBytes > 0 && len(text) > maxBytes {
 		return ErrTooLarge
 	}
 	if !utf8.Valid(text) {
@@ -117,14 +116,11 @@ type owner struct {
 	exited <-chan struct{} // closed once proc has been reaped
 }
 
-// New returns a Bridge. A non-positive ttl or maxBytes selects DefaultTTL or
-// DefaultMaxBytes.
+// New returns a Bridge. A non-positive ttl selects DefaultTTL; a non-positive
+// maxBytes means the text size is not limited.
 func New(sp Spawner, ttl time.Duration, maxBytes int) *Bridge {
 	if ttl <= 0 {
 		ttl = DefaultTTL
-	}
-	if maxBytes <= 0 {
-		maxBytes = DefaultMaxBytes
 	}
 	return &Bridge{
 		sp: sp, ttl: ttl, maxBytes: maxBytes,

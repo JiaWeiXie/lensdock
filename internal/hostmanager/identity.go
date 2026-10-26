@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// ErrProjectNotAuthorized distinguishes a new directory from a revoked or invalid grant.
+var ErrProjectNotAuthorized = errors.New("project is not authorized")
+
 // canonicalDir resolves an existing directory to its symlink-free absolute
 // path and filesystem identity.
 func canonicalDir(path string) (string, DirectoryIdentity, error) {
@@ -131,7 +134,7 @@ func ResolveProject(root, path string) (Project, error) {
 	}
 	rec := reg.projectForPath(resolved)
 	if rec == nil {
-		return Project{}, fmt.Errorf("%s is not inside an authorized project; ask the human to run `lensdock admin project authorize`", resolved)
+		return Project{}, fmt.Errorf("%w: %s; explicit authorization is available with `lensdock admin project authorize`", ErrProjectNotAuthorized, resolved)
 	}
 	if rec.Revoked {
 		return Project{}, fmt.Errorf("the grant for %s was revoked", rec.Root)

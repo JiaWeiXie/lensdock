@@ -241,7 +241,8 @@ func TestImpossibleAndUnboundedRequestsAreRefused(t *testing.T) {
 	}
 
 	env.backend.capacity = Resources{MemoryBytes: 64 * gib, NanoCPUs: 64_000_000_000}
-	env.backend.unbounded = []string{"foreign-db"}
+	env.backend.unboundedMemory = []string{"foreign-db"}
+	env.backend.unboundedCPU = []string{"foreign-db"}
 	r = env.ensure(p)
 	env.pass()
 	if op := env.op(r.Operation.ID); op.Phase != PhaseFailed || !strings.Contains(op.Error, "resource caps") {
@@ -320,7 +321,7 @@ func TestPolicyCannotShrinkBelowReservations(t *testing.T) {
 	_, err := env.call(admin, Request{Action: ActionPolicy, Policy: &smaller})
 	wantStatus(t, err, http.StatusConflict)
 	invalid := pol
-	invalid.Helpers = Resources{}
+	invalid.UnboundedExternalAllowance = Resources{MemoryBytes: gib}
 	_, err = env.call(admin, Request{Action: ActionPolicy, Policy: &invalid})
 	wantStatus(t, err, http.StatusBadRequest)
 	bigger := pol
@@ -333,7 +334,9 @@ func TestPolicyCannotShrinkBelowReservations(t *testing.T) {
 }
 
 func TestStopRules(t *testing.T) {
-	env := newEnv(t, testPolicy(1))
+	policy := testPolicy(1)
+	policy.RequireStopConfirmation = true
+	env := newEnv(t, policy)
 	a, b := env.authorize(), env.authorize()
 	agentA, agentB := principal{projectID: a.ID}, principal{projectID: b.ID}
 
@@ -579,6 +582,12 @@ func TestUpdateValidationAndAdminOnly(t *testing.T) {
 		{Kind: UpdateDelete, Confirmed: true},
 		{Kind: UpdateVerify},
 		{Kind: UpdateAbort, UpdateID: "a\nb"},
+		{Kind: UpdateExpire},
+		{Kind: UpdateExpire, Confirmed: true, Scopes: []string{"images"}},
+		{Kind: UpdateExpire, DryRun: true, AfterDays: new(-1)},
+		{Kind: UpdatePolicy, Confirmed: true},
+		{Kind: UpdatePolicy, AfterDays: new(5)},
+		{Kind: UpdatePolicy, Confirmed: true, AfterDays: new(-1)},
 	}
 	for _, action := range bad {
 		_, err := env.call(admin, Request{Action: ActionUpdate, ProjectID: p.ID, Update: action})

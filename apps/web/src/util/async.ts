@@ -33,3 +33,27 @@ export function backoffDelay(attempt: number, baseMs = 1000, maxMs = 15000, rand
 export function newKey(): string {
   return crypto.randomUUID();
 }
+
+export interface SingleFlight<T> {
+  /** Starts `fn`, or joins the run that is already pending. Every caller gets the same outcome. */
+  run: () => Promise<T>;
+  readonly pending: boolean;
+}
+
+/** Collapses concurrent callers onto one in-flight call; a settled call lets the next `run` start afresh. */
+export function createSingleFlight<T>(fn: () => Promise<T>): SingleFlight<T> {
+  let current: Promise<T> | null = null;
+  return {
+    run: () => {
+      if (!current) {
+        current = (async () => fn())().finally(() => {
+          current = null;
+        });
+      }
+      return current;
+    },
+    get pending() {
+      return current !== null;
+    },
+  };
+}

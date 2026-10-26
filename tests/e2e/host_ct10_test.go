@@ -129,7 +129,7 @@ func TestCT10(t *testing.T) {
 			{Name: "foreign Origin without a token", Method: "GET", Path: cdpVersion, Headers: map[string]string{"Origin": "http://evil.example"}, Status: 403, Code: apiwire.CodeOriginNotAllowed},
 			{Name: "route outside the allowlist", Method: "GET", Path: cdpPath(api, "/json/foo"), Token: ga.Token, Status: 404, Code: apiwire.CodeNotFound},
 			{Name: "devtools frontend is not proxied", Method: "GET", Path: cdpPath(api, "/devtools/inspector.html"), Token: ga.Token, Status: 404, Code: apiwire.CodeNotFound},
-			{Name: "AGENT token cannot write the clipboard", Method: "PUT", Path: api.WorkspacePath("/clipboard"), Token: ga.Token, Headers: map[string]string{"Content-Type": "text/plain; charset=utf-8"}, Body: []byte("x"), Status: 403, Code: apiwire.CodeWrongLeaseMode},
+			{Name: "AGENT token writes the lease-bound clipboard", Method: "PUT", Path: api.WorkspacePath("/clipboard"), Token: ga.Token, Headers: map[string]string{"Content-Type": "text/plain; charset=utf-8"}, Body: []byte("x"), Status: 204},
 			{Name: "AGENT token cannot acquire leases", Method: "POST", Path: api.WorkspacePath("/leases"), Token: ga.Token, Headers: idem, Body: acquireBody, Status: 401, Code: apiwire.CodeUnauthenticated},
 			{Name: "AGENT token cannot read the workspace", Method: "GET", Path: api.WorkspacePath(""), Token: ga.Token, Status: 401, Code: apiwire.CodeUnauthenticated},
 		})
@@ -160,7 +160,7 @@ func TestCT10(t *testing.T) {
 
 		// Denied methods get a synthetic CDP error and the connection survives.
 		c := browserClient(t, api, ga.Token)
-		for _, m := range []string{"Browser.close", "Browser.crash", "Target.exposeDevToolsProtocol", "Extensions.loadUnpacked"} {
+		for _, m := range []string{"Browser.crash", "Target.exposeDevToolsProtocol", "Target.sendMessageToTarget"} {
 			err := c.Call(ctx, m, map[string]any{}, nil)
 			var ce *cdpc.Error
 			if !errors.As(err, &ce) || ce.Code != -32000 || !strings.Contains(ce.Message, "denied") {

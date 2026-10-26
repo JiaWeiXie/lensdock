@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -43,28 +44,29 @@ func run(args []string) error {
 	}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	path := fs.String("config", "", "private Gateway configuration")
-	demoFlag := fs.Bool("demo-no-auth", false, "local loopback demo: same-origin browsers enter without a token (also LENSDOCK_DEMO_NO_AUTH=1)")
+	pairingFlag := fs.Bool("require-pairing", false, "require a pairing token for local browser access (also LENSDOCK_REQUIRE_PAIRING)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	if *path == "" || fs.NArg() != 0 {
 		return errors.New("--config is required")
 	}
-	demo, err := demoNoAuth(*demoFlag, os.Getenv("LENSDOCK_DEMO_NO_AUTH"))
-	if err != nil {
-		return err
-	}
 	c, err := gateway.LoadConfig(*path)
 	if err != nil {
 		return err
 	}
-	c.DemoNoAuth = demo
-	g, err := gateway.New(c, gateway.Integrations{})
+	c.RequirePairing, err = pairingRequired(c.RequirePairing, os.Getenv("LENSDOCK_REQUIRE_PAIRING"))
 	if err != nil {
 		return err
 	}
-	if demo {
-		fmt.Fprintln(os.Stderr, "WARNING: LensDock demo no-auth is ON: same-origin browsers at the loopback origin enter as the workspace demo human with no token and no session expiry. Never enable it on a shared or remote host.")
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "require-pairing" {
+			c.RequirePairing = *pairingFlag
+		}
+	})
+	g, err := gateway.New(c, gateway.Integrations{})
+	if err != nil {
+		return err
 	}
 	defer g.Close()
 	srv := gateway.Server(c, g)
@@ -133,17 +135,16 @@ func run(args []string) error {
 	}
 }
 
-// demoNoAuth resolves the opt-in demo switch. It is off unless the flag is set
-// or the environment variable is exactly "1"; any other non-empty value other
-// than "0" is rejected so a typo never silently decides authentication.
-func demoNoAuth(flagOn bool, env string) (bool, error) {
-	switch env {
-	case "", "0":
-		return flagOn, nil
-	case "1":
-		return true, nil
+// pairingRequired applies an explicit environment setting over the config file.
+func pairingRequired(configured bool, env string) (bool, error) {
+	if env == "" {
+		return configured, nil
 	}
-	return false, errors.New("LENSDOCK_DEMO_NO_AUTH must be 0 or 1")
+	required, err := strconv.ParseBool(env)
+	if err != nil {
+		return false, errors.New("LENSDOCK_REQUIRE_PAIRING must be a boolean")
+	}
+	return required, nil
 }
 func healthcheck() error {
 	origin := os.Getenv("LENSDOCK_HEALTH_ORIGIN")

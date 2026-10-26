@@ -20,17 +20,23 @@ import (
 	"github.com/JiaWeiXie/lensdock/internal/update"
 )
 
-const projectUsageText = `  lensdock admin manager init --bundle-dir DIR [--docker-context NAME] [--memory-mib 6912] [--cpus 7.5]
+const projectUsageText = `  lensdock admin manager init [--bundle-dir DIR] [--docker-context NAME] [--require-pairing]
   lensdock admin manager policy [--memory-mib N] [--cpus N]
+      [--require-project-authorization] [--require-explicit-start] [--require-stop-confirmation]
+  lensdock admin manager stop
+      Stops only the daemon; first stop projects if you also want their browsers stopped.
   lensdock admin project authorize PATH...
   lensdock admin project list [--json]
+  lensdock admin project limits --id ID [--runtime-memory-mib N] [--runtime-cpus N] [--gateway-memory-mib N] [--gateway-cpus N]
   lensdock admin project relocate --id ID PATH | revoke --id ID | recover --id ID --operation ID
-  lensdock admin project stop --project PATH --discard-page-state [--force --expected-generation ID]
-  lensdock project up --project PATH [--wait 10m]
-  lensdock project status --project PATH
-  lensdock project cancel --project PATH --waiter ID
-  lensdock project stop --project PATH --discard-page-state [--wait 2m]
-      LENSDOCK_MANAGER_DIR selects the initialized private manager directory.
+  lensdock admin project stop --project PATH [--force --expected-generation ID]
+  lensdock project up [--project PATH] [--wait DURATION]
+  lensdock project status [--project PATH]
+  lensdock project cancel [--project PATH] --waiter ID
+  lensdock project stop [--project PATH] [--wait DURATION] [--discard-page-state]
+      Project paths default to the current directory. New projects initialize and start automatically.
+      Limits and --wait default to 0 (unlimited); configured restrictions remain effective.
+      LENSDOCK_MANAGER_DIR selects the private manager directory.
       Cancelling a wait never stops an admitted operation or a running browser.
 `
 
@@ -48,35 +54,42 @@ func (c *cli) managerCommand(ctx context.Context, args []string) error {
 	return c.subcommand(args, "admin manager", map[string]func([]string) error{
 		"init":   func(a []string) error { return c.managerInit(ctx, a) },
 		"policy": func(a []string) error { return c.managerPolicy(ctx, a) },
+		"stop":   func(a []string) error { return c.managerShutdown(ctx, a) },
 	})
 }
 
 func policyFlags(fs *flag.FlagSet, p *hostmanager.Policy) func() error {
-	memory := fs.Int64("memory-mib", p.Budget.MemoryBytes>>20, "managed deployment memory budget in MiB, excluding helpers and system headroom")
-	cpu := fs.Float64("cpus", float64(p.Budget.NanoCPUs)/1e9, "managed deployment CPU cap budget")
+	memory := fs.Int64("memory-mib", p.Budget.MemoryBytes>>20, "managed deployment memory budget in MiB; 0 disables it")
+	cpu := fs.Float64("cpus", float64(p.Budget.NanoCPUs)/1e9, "managed deployment CPU budget; 0 disables it")
 	headroom := fs.Int64("headroom-mib", p.Headroom.MemoryBytes>>20, "memory reserved for the VM and system in MiB")
-	helper := fs.Int64("helper-memory-mib", p.Helpers.MemoryBytes>>20, "serialized lifecycle helper allowance in MiB (at least 1024 for migrations)")
-	runtimeMem := fs.Int64("runtime-memory-mib", p.ProjectLimits.Runtime.MemoryBytes>>20, "runtime cap for newly authorized projects, in MiB")
-	runtimeCPU := fs.Float64("runtime-cpus", float64(p.ProjectLimits.Runtime.NanoCPUs)/1e9, "runtime CPU cap for newly authorized projects")
-	gatewayMem := fs.Int64("gateway-memory-mib", p.ProjectLimits.Gateway.MemoryBytes>>20, "Gateway cap for newly authorized projects, in MiB")
-	gatewayCPU := fs.Float64("gateway-cpus", float64(p.ProjectLimits.Gateway.NanoCPUs)/1e9, "Gateway CPU cap for newly authorized projects")
-	allow := fs.Bool("allow-unbounded-external", p.AllowUnboundedExternal, "explicitly account uncapped external containers using the supplied aggregate allowance")
+	headroomCPU := fs.Float64("headroom-cpus", float64(p.Headroom.NanoCPUs)/1e9, "CPU capacity reserved for the VM and system")
+	helper := fs.Int64("helper-memory-mib", p.Helpers.MemoryBytes>>20, "serialized lifecycle helper memory cap in MiB; 0 is unlimited")
+	helperCPU := fs.Float64("helper-cpus", float64(p.Helpers.NanoCPUs)/1e9, "serialized lifecycle helper CPU cap; 0 is unlimited")
+	fs.Int64Var(&p.HelperPidsLimit, "helper-pids-limit", p.HelperPidsLimit, "serialized lifecycle helper process cap; 0 is unlimited")
+	runtimeMem := fs.Int64("runtime-memory-mib", p.ProjectLimits.Runtime.MemoryBytes>>20, "runtime cap for new projects in MiB; 0 is unlimited")
+	runtimeCPU := fs.Float64("runtime-cpus", float64(p.ProjectLimits.Runtime.NanoCPUs)/1e9, "runtime CPU cap for new projects; 0 is unlimited")
+	gatewayMem := fs.Int64("gateway-memory-mib", p.ProjectLimits.Gateway.MemoryBytes>>20, "Gateway cap for new projects in MiB; 0 is unlimited")
+	gatewayCPU := fs.Float64("gateway-cpus", float64(p.ProjectLimits.Gateway.NanoCPUs)/1e9, "Gateway CPU cap for new projects; 0 is unlimited")
+	allow := fs.Bool("allow-unbounded-external", p.AllowUnboundedExternal, "allow starts alongside uncapped external containers")
 	externalMem := fs.Int64("unbounded-external-memory-mib", p.UnboundedExternalAllowance.MemoryBytes>>20, "aggregate memory allowance for uncapped external containers")
 	externalCPU := fs.Float64("unbounded-external-cpus", float64(p.UnboundedExternalAllowance.NanoCPUs)/1e9, "aggregate CPU allowance for uncapped external containers")
+	fs.BoolVar(&p.RequireProjectAuthorization, "require-project-authorization", p.RequireProjectAuthorization, "require explicit authorization before enrolling new project directories")
+	fs.BoolVar(&p.RequireExplicitStart, "require-explicit-start", p.RequireExplicitStart, "require project up before project-bound commands")
+	fs.BoolVar(&p.RequireStopConfirmation, "require-stop-confirmation", p.RequireStopConfirmation, "require --discard-page-state when stopping a project")
 	return func() error {
 		for _, n := range []int64{*memory, *headroom, *helper, *runtimeMem, *gatewayMem, *externalMem} {
-			if n < 0 || n > 1<<30 {
-				return usageErrorf("memory quantities must be between 0 and 2^30 MiB")
+			if n < 0 || n > math.MaxInt64>>20 {
+				return usageErrorf("memory quantities must be nonnegative and fit a signed 64-bit byte count")
 			}
 		}
-		for _, n := range []float64{*cpu, *runtimeCPU, *gatewayCPU, *externalCPU} {
-			if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > 100000 {
-				return usageErrorf("CPU quantities must be finite and between 0 and 100000")
+		for _, n := range []float64{*cpu, *headroomCPU, *helperCPU, *runtimeCPU, *gatewayCPU, *externalCPU} {
+			if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n*1e9 >= float64(math.MaxInt64) || n > 0 && n*1e9 < 1 {
+				return usageErrorf("CPU quantities must be nonnegative and representable in nanocpus")
 			}
 		}
 		p.Budget = hostmanager.Resources{MemoryBytes: *memory << 20, NanoCPUs: int64(*cpu * 1e9)}
-		p.Headroom.MemoryBytes = *headroom << 20
-		p.Helpers.MemoryBytes = *helper << 20
+		p.Headroom = hostmanager.Resources{MemoryBytes: *headroom << 20, NanoCPUs: int64(*headroomCPU * 1e9)}
+		p.Helpers = hostmanager.Resources{MemoryBytes: *helper << 20, NanoCPUs: int64(*helperCPU * 1e9)}
 		p.ProjectLimits.Runtime = hostmanager.Resources{MemoryBytes: *runtimeMem << 20, NanoCPUs: int64(*runtimeCPU * 1e9)}
 		p.ProjectLimits.Gateway = hostmanager.Resources{MemoryBytes: *gatewayMem << 20, NanoCPUs: int64(*gatewayCPU * 1e9)}
 		p.AllowUnboundedExternal = *allow
@@ -89,11 +102,16 @@ func (c *cli) managerInit(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("admin manager init")
 	bundleDir := fs.String("bundle-dir", "", "trusted release bundle (defaults to this executable's bundle)")
 	dockerContext := fs.String("docker-context", "", "human-selected Docker context; its local endpoint and engine ID are recorded")
-	runtimeImage := fs.String("runtime-image", "ghcr.io/jiaweixie/lensdock/runtime:latest", "initial managed Runtime image")
-	gatewayImage := fs.String("gateway-image", "ghcr.io/jiaweixie/lensdock/gateway:latest", "initial managed Gateway image")
-	pull := fs.String("pull", "always", "first-start pull policy: always, missing, never")
+	runtimeImage := fs.String("runtime-image", c.getenv(product.EnvRuntimeImage), "initial managed Runtime image (default $"+product.EnvRuntimeImage+" or "+product.ReleaseRuntimeImage+")")
+	gatewayImage := fs.String("gateway-image", c.getenv(product.EnvGatewayImage), "initial managed Gateway image (default $"+product.EnvGatewayImage+" or "+product.ReleaseGatewayImage+")")
+	pullDefault := c.getenv(product.EnvPull)
+	if pullDefault == "" {
+		pullDefault = product.PullAlways
+	}
+	pull := fs.String("pull", pullDefault, "first-start pull policy: always, missing, never (default $"+product.EnvPull+" or always)")
 	first := fs.Int("port-first", 19081, "first stable managed loopback port")
 	last := fs.Int("port-last", 19999, "last stable managed loopback port")
+	requirePairing := fs.Bool("require-pairing", false, "require browser pairing for new managed projects")
 	policy := hostmanager.DefaultPolicy()
 	finish := policyFlags(fs, &policy)
 	if _, err := parse(fs, args, 0, 0); err != nil {
@@ -101,6 +119,12 @@ func (c *cli) managerInit(ctx context.Context, args []string) error {
 	}
 	if err := finish(); err != nil {
 		return err
+	}
+	if *runtimeImage == "" {
+		*runtimeImage = product.ReleaseRuntimeImage
+	}
+	if *gatewayImage == "" {
+		*gatewayImage = product.ReleaseGatewayImage
 	}
 	for _, image := range []string{*runtimeImage, *gatewayImage} {
 		if err := update.CheckImageRef(image); err != nil {
@@ -182,6 +206,7 @@ func (c *cli) managerInit(ctx context.Context, args []string) error {
 		return err
 	}
 	cfg := hostmanager.Config{Version: 1, Root: root, Executable: exe, DockerBinary: binary, DockerContext: selected, DockerHost: host, DockerConfig: dockerConfig, BundleDir: bundle.Root, RuntimeImage: *runtimeImage, GatewayImage: *gatewayImage, PullPolicy: *pull, PortFirst: *first, PortLast: *last, Policy: policy}
+	cfg.RequirePairing = *requirePairing
 	inventory, err := hostmanager.InspectEngine(ctx, cfg)
 	if err != nil {
 		return err
@@ -228,6 +253,9 @@ func (c *cli) adminProject(ctx context.Context, args []string) error {
 	}
 	if args[0] == "stop" {
 		return c.projectCommand(ctx, args, true)
+	}
+	if args[0] == "limits" {
+		return c.projectLimits(ctx, args[1:])
 	}
 	fs := c.newFlagSet("admin project " + args[0])
 	id := fs.String("id", "", "stable project ID")
@@ -332,31 +360,27 @@ func (c *cli) projectCommand(ctx context.Context, args []string, admin bool) err
 		return usageErrorf("unknown project command %q", action)
 	}
 	fs := c.newFlagSet("project " + action)
-	selector := fs.String("project", "", "authorized project directory")
-	id := fs.String("id", "", "stable project ID (human administration only)")
-	waitDefault := 10 * time.Minute
-	if action == "stop" {
-		waitDefault = 2 * time.Minute
-	}
-	wait := fs.Duration("wait", waitDefault, "maximum time to wait; cancellation never stops an admitted operation")
-	discard := fs.Bool("discard-page-state", false, "explicitly discard in-memory pages, forms and network work when stopping")
-	force := fs.Bool("force", false, "human-only: revoke the observed lease before conditional stop")
+	selector := fs.String("project", "", "project directory (defaults to the current directory)")
+	id := fs.String("id", "", "stable project ID (Host Admin authority required)")
+	wait := fs.Duration("wait", 0, "maximum time to wait; 0 waits until completion or cancellation")
+	discard := fs.Bool("discard-page-state", false, "acknowledge loss of in-memory pages when stop-confirmation policy is enabled")
+	force := fs.Bool("force", false, "Host Admin: revoke the observed lease before conditional stop")
 	generation := fs.String("expected-generation", "", "runtime generation explicitly observed for a forced stop")
 	waiter := fs.String("waiter", "", "waiter ID to cancel")
 	if _, err := parse(fs, args[1:], 0, 0); err != nil {
 		return err
 	}
-	if (*selector == "") == (*id == "") {
-		return usageErrorf("exactly one --project path or human --id is required")
+	if *selector != "" && *id != "" {
+		return usageErrorf("--project and --id cannot be combined")
+	}
+	if *selector == "" && *id == "" {
+		*selector = "."
 	}
 	if !admin && (*id != "" || *force) {
 		return usageErrorf("--id and --force require lensdock admin project stop")
 	}
-	if *wait <= 0 || *wait > 24*time.Hour {
-		return usageErrorf("--wait must be positive and at most 24h")
-	}
-	if action == "stop" && !*discard {
-		return usageErrorf("stop requires --discard-page-state; lease release and disconnect are not stop consent")
+	if *wait < 0 {
+		return usageErrorf("--wait must be nonnegative")
 	}
 	if *force && *generation == "" {
 		return usageErrorf("--force requires --expected-generation")
@@ -365,16 +389,23 @@ func (c *cli) projectCommand(ctx context.Context, args []string, admin bool) err
 	if err != nil {
 		return err
 	}
-	if err := hostmanager.EnsureRunning(ctx, root); err != nil {
-		return err
-	}
 	var p hostmanager.Project
 	if *selector != "" {
-		p, err = hostmanager.ResolveProject(root, *selector)
+		if action == "up" {
+			root, p, err = c.managedProject(ctx, *selector)
+		} else {
+			err = hostmanager.EnsureRunning(ctx, root)
+			if err == nil {
+				p, err = hostmanager.ResolveProject(root, *selector)
+			}
+		}
 		if err != nil {
 			return err
 		}
 	} else {
+		if err := hostmanager.EnsureRunning(ctx, root); err != nil {
+			return err
+		}
 		resp, err := hostmanager.Call(ctx, root, hostmanager.AdminTokenFile(root), hostmanager.Request{Action: "status", ProjectID: *id})
 		if err != nil {
 			return err
@@ -388,7 +419,10 @@ func (c *cli) projectCommand(ctx context.Context, args []string, admin bool) err
 	if admin {
 		token = hostmanager.AdminTokenFile(root)
 	}
-	req := hostmanager.Request{Action: action, ProjectID: p.ID, Deadline: time.Now().Add(*wait), DiscardPageState: *discard, Force: *force, ExpectedGeneration: *generation, WaiterID: *waiter}
+	req := hostmanager.Request{Action: action, ProjectID: p.ID, DiscardPageState: *discard, Force: *force, ExpectedGeneration: *generation, WaiterID: *waiter}
+	if *wait > 0 {
+		req.Deadline = time.Now().Add(*wait)
+	}
 	if action == "up" {
 		req.Action = "ensure"
 	}
@@ -406,16 +440,32 @@ func (c *cli) projectCommand(ctx context.Context, args []string, admin bool) err
 }
 
 func (c *cli) waitProject(ctx context.Context, root, token string, p hostmanager.Project, resp hostmanager.Response, timeout time.Duration, connect bool) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	result, err := c.waitProjectResult(ctx, root, token, p, resp, timeout, connect)
+	if err != nil {
+		return err
+	}
+	if connect {
+		operationID := ""
+		if result.Operation != nil {
+			operationID = result.Operation.ID
+		}
+		return c.writeJSONLine(map[string]any{"operationId": operationID, "connection": result.Connection})
+	}
+	return c.writeJSONLine(result)
+}
+
+func (c *cli) waitProjectResult(ctx context.Context, root, token string, p hostmanager.Project, resp hostmanager.Response, timeout time.Duration, connect bool) (hostmanager.Response, error) {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	waiterID, operationID := "", ""
 	if resp.Waiter != nil {
 		waiterID = resp.Waiter.ID
 	}
 	if resp.Operation != nil {
 		operationID = resp.Operation.ID
-	}
-	if operationID != "" {
 		fmt.Fprintf(c.stderr, "Project operation: %s\n", operationID)
 	}
 	defer func() {
@@ -425,46 +475,49 @@ func (c *cli) waitProject(ctx context.Context, root, token string, p hostmanager
 			_, _ = hostmanager.Call(cleanup, root, token, hostmanager.Request{Action: "cancel", ProjectID: p.ID, WaiterID: waiterID})
 		}
 	}()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 	for {
 		if resp.Operation != nil {
 			switch resp.Operation.Phase {
 			case "failed", "blocked", "canceled", "abandoned":
-				return fmt.Errorf("project operation %s %s: %s", resp.Operation.ID, resp.Operation.Phase, resp.Operation.Error)
+				return hostmanager.Response{}, fmt.Errorf("project operation %s %s: %s", resp.Operation.ID, resp.Operation.Phase, resp.Operation.Error)
 			case "succeeded":
 				if !connect {
-					return c.writeJSONLine(resp)
+					return resp, nil
 				}
 			}
 		}
 		if connect && resp.Project != nil && resp.Project.State == "running" && (resp.Operation == nil || resp.Operation.Phase == "succeeded") {
 			verified, err := hostmanager.Call(ctx, root, token, hostmanager.Request{Action: "connect", ProjectID: p.ID})
 			if err != nil {
-				return err
+				return hostmanager.Response{}, err
 			}
 			connection, err := checkProjectConnection(p, verified)
 			if err != nil {
-				return err
+				return hostmanager.Response{}, err
 			}
-			return c.writeJSONLine(map[string]any{"operationId": operationID, "connection": connection})
+			verified.Connection, verified.Operation = &connection, resp.Operation
+			return verified, nil
 		}
 		if !connect && resp.Operation == nil && resp.Project != nil && resp.Project.State == "stopped" {
-			return c.writeJSONLine(resp)
+			return resp, nil
 		}
 		select {
 		case <-ctx.Done():
 			fmt.Fprintf(c.stderr, "Stopped waiting for operation %s; any admitted operation and browser remain running.\n", operationID)
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
+			return hostmanager.Response{}, ctx.Err()
+		case <-ticker.C:
 		}
 		if waiterID != "" {
 			if _, err := hostmanager.Call(ctx, root, token, hostmanager.Request{Action: "heartbeat", ProjectID: p.ID, WaiterID: waiterID}); err != nil {
-				return err
+				return hostmanager.Response{}, err
 			}
 		}
 		var err error
 		resp, err = hostmanager.Call(ctx, root, token, hostmanager.Request{Action: "status", ProjectID: p.ID, OperationID: operationID})
 		if err != nil {
-			return err
+			return hostmanager.Response{}, err
 		}
 	}
 }
@@ -508,12 +561,12 @@ func (c *cli) startManagedProduct(ctx context.Context, dep *update.Deployment) e
 		return err
 	}
 	root, token := owner.root, hostmanager.AdminTokenFile(owner.root)
-	resp, err := hostmanager.Call(ctx, root, token, hostmanager.Request{Action: "ensure", ProjectID: owner.projectID, Deadline: time.Now().Add(10 * time.Minute)})
+	resp, err := hostmanager.Call(ctx, root, token, hostmanager.Request{Action: "ensure", ProjectID: owner.projectID})
 	if err != nil {
 		return err
 	}
 	if resp.Project == nil {
 		return errors.New("manager returned no project")
 	}
-	return c.waitProject(ctx, root, token, *resp.Project, resp, 10*time.Minute, true)
+	return c.waitProject(ctx, root, token, *resp.Project, resp, 0, true)
 }

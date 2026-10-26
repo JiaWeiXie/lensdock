@@ -189,7 +189,7 @@ type env struct {
 	cdpHook func(http.ResponseWriter, *http.Request)
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T, mods ...func(*Deps)) *env {
 	t.Helper()
 	e := &env{t: t, clock: newFakeClock(), health: &fakeHealth{ready: true}, spawner: &fakeSpawner{}, logs: &bytes.Buffer{}}
 	m, err := lease.NewManager(lease.Config{WorkspaceID: testWS, Clock: e.clock})
@@ -209,7 +209,7 @@ func newEnv(t *testing.T) *env {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	log := slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	e.h = NewHandler(Deps{
+	deps := Deps{
 		WorkspaceID: testWS,
 		Operator:    auth.DigestOf(operatorTok),
 		Leases:      m,
@@ -217,7 +217,11 @@ func newEnv(t *testing.T) *env {
 		Clipboard:   clipboard.New(e.spawner, time.Hour, 0),
 		Health:      e.health,
 		Logger:      log,
-	})
+	}
+	for _, mod := range mods {
+		mod(&deps)
+	}
+	e.h = NewHandler(deps)
 	t.Cleanup(m.Shutdown)
 	return e
 }
@@ -521,7 +525,8 @@ func TestClipboard(t *testing.T) {
 		agent := e.mustAcquire("AGENT")
 		expect(t, "no token", e.do("PUT", clipPath, "", good, []byte("x")), 401, apiwire.CodeUnauthenticated)
 		expect(t, "operator token", e.do("PUT", clipPath, operatorTok, good, []byte("x")), 401, apiwire.CodeUnauthenticated)
-		expect(t, "agent lease", e.do("PUT", clipPath, agent.CapabilityToken, good, []byte("x")), 403, apiwire.CodeWrongLeaseMode)
+		expect(t, "released agent token", e.do("DELETE", leasesPath+"/"+agent.Lease.LeaseID, agent.CapabilityToken, nil, nil), 204, "")
+		expect(t, "ended agent lease", e.do("PUT", clipPath, agent.CapabilityToken, good, []byte("x")), 409, apiwire.CodeLeaseEnded)
 		expect(t, "wrong ws", e.do("PUT", "/api/v1/workspaces/other/clipboard", agent.CapabilityToken, good, []byte("x")), 404, apiwire.CodeNotFound)
 		if _, _, ok := e.spawner.last(); ok {
 			t.Error("clipboard owner was spawned for an unauthorized request")
@@ -560,11 +565,17 @@ func TestClipboard(t *testing.T) {
 		expect(t, "invalid utf8", put([]byte("ok \xff\xfe")), 400, apiwire.CodeInvalidUTF8)
 		expect(t, "truncated sequence", put([]byte("\xe4\xb8")), 400, apiwire.CodeInvalidUTF8)
 		expect(t, "NUL", put([]byte("a\x00b")), 400, apiwire.CodeInvalidRequest)
+		expect(t, "far above the former cap, no limit configured", put(bytes.Repeat([]byte("a"), 200*1024)), 204, "")
+	})
+	t.Run("configured limit", func(t *testing.T) {
+		e := newEnv(t, func(d *Deps) { d.ClipboardMaxBytes = 64 * 1024 })
+		human := e.mustAcquire("HUMAN")
+		put := func(b []byte) resp { return e.do("PUT", clipPath, human.CapabilityToken, good, b) }
 		expect(t, "one byte over limit", put(bytes.Repeat([]byte("a"), 64*1024+1)), 413, apiwire.CodeBodyTooLarge)
 		expect(t, "exactly at limit", put(bytes.Repeat([]byte("a"), 64*1024)), 204, "")
 	})
 	t.Run("oversized without content length", func(t *testing.T) {
-		e := newEnv(t)
+		e := newEnv(t, func(d *Deps) { d.ClipboardMaxBytes = 64 * 1024 })
 		human := e.mustAcquire("HUMAN")
 		req := httptest.NewRequest("PUT", clipPath, io.MultiReader(bytes.NewReader(bytes.Repeat([]byte("a"), 64*1024)), bytes.NewReader([]byte("b"))))
 		req.ContentLength = -1
@@ -595,6 +606,22 @@ func TestClipboard(t *testing.T) {
 		case <-proc.killed:
 		case <-time.After(2 * time.Second):
 			t.Fatal("clipboard owner was not killed when the lease ended")
+		}
+	})
+	t.Run("agent lease holds the clipboard until it ends", func(t *testing.T) {
+		e := newEnv(t)
+		agent := e.mustAcquire("AGENT")
+		text := []byte("agent \u7e41\u9ad4 \U0001F600")
+		expect(t, "set", e.do("PUT", clipPath, agent.CapabilityToken, good, text), 204, "")
+		got, proc, ok := e.spawner.last()
+		if !ok || !bytes.Equal(got, text) {
+			t.Fatalf("owner stdin = %q (spawned %v), want %q", got, ok, text)
+		}
+		expect(t, "release", e.do("DELETE", leasesPath+"/"+agent.Lease.LeaseID, agent.CapabilityToken, nil, nil), 204, "")
+		select {
+		case <-proc.killed:
+		case <-time.After(2 * time.Second):
+			t.Fatal("clipboard owner was not killed when the agent lease ended")
 		}
 	})
 }

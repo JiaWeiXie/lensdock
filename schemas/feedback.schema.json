@@ -40,7 +40,6 @@
     },
     "annotations": {
       "type": "array",
-      "maxItems": 100,
       "items": {
         "$ref": "#/$defs/annotation"
       }
@@ -452,8 +451,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/style"
@@ -499,8 +497,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/styleArrow"
@@ -529,8 +526,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/style"
@@ -559,8 +555,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/style"
@@ -589,8 +584,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/style"
@@ -621,7 +615,6 @@
                 "points": {
                   "type": "array",
                   "minItems": 2,
-                  "maxItems": 10000,
                   "items": {
                     "$ref": "#/$defs/point"
                   }
@@ -633,8 +626,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/styleFreehand"
@@ -667,8 +659,7 @@
                 },
                 "text": {
                   "type": "string",
-                  "minLength": 1,
-                  "maxLength": 2000
+                  "minLength": 1
                 }
               },
               "required": [
@@ -678,8 +669,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/styleText"
@@ -712,8 +702,7 @@
                 },
                 "number": {
                   "type": "integer",
-                  "minimum": 1,
-                  "maximum": 100
+                  "minimum": 1
                 }
               },
               "required": [
@@ -723,8 +712,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/style"
@@ -753,8 +741,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "mode": {
               "const": "solid"
@@ -784,8 +771,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/styleHighlight"
@@ -814,8 +800,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/style"
@@ -844,8 +829,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/styleEffect"
@@ -874,8 +858,7 @@
             },
             "comment": {
               "type": "string",
-              "minLength": 0,
-              "maxLength": 4000
+              "minLength": 0
             },
             "style": {
               "$ref": "#/$defs/styleEffect"
@@ -913,8 +896,7 @@
         },
         "sizeBytes": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 33554432
+          "minimum": 1
         }
       },
       "required": [
@@ -987,13 +969,11 @@
         },
         "imageWidthPx": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 32768
+          "minimum": 1
         },
         "imageHeightPx": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 32768
+          "minimum": 1
         },
         "redactedImageSha256": {
           "type": "string",
@@ -1182,32 +1162,26 @@
         },
         "title": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 200
+          "minLength": 1
         },
         "description": {
           "type": "string",
           "minLength": 0,
-          "maxLength": 12000,
-          "description": "May be empty from 0.2.0 on (a visual-only revision); 0.1.0 requires 1 to 12000 characters."
+          "description": "May be empty from 0.2.0 on (a visual-only revision); 0.1.0 requires at least 1 character."
         },
         "expectedResult": {
           "type": "string",
-          "minLength": 0,
-          "maxLength": 6000
+          "minLength": 0
         },
         "actualResult": {
           "type": "string",
-          "minLength": 0,
-          "maxLength": 6000
+          "minLength": 0
         },
         "reproductionSteps": {
           "type": "array",
-          "maxItems": 30,
           "items": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
+            "minLength": 1
           }
         }
       },
@@ -1234,31 +1208,25 @@
         },
         "title": {
           "type": "string",
-          "minLength": 0,
-          "maxLength": 200
+          "minLength": 0
         },
         "description": {
           "type": "string",
-          "minLength": 0,
-          "maxLength": 12000
+          "minLength": 0
         },
         "expectedResult": {
           "type": "string",
-          "minLength": 0,
-          "maxLength": 6000
+          "minLength": 0
         },
         "actualResult": {
           "type": "string",
-          "minLength": 0,
-          "maxLength": 6000
+          "minLength": 0
         },
         "reproductionSteps": {
           "type": "array",
-          "maxItems": 30,
           "items": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
+            "minLength": 1
           }
         }
       },

@@ -4,14 +4,14 @@
 
 A persistent Chromium workspace that you and your coding Agent can use together. Watch the real browser through noVNC, take control when needed, and send annotated screenshots to the Agent without sharing your everyday browser profile.
 
-- Headful Chromium with a dedicated, persistent profile and an enabled sandbox.
-- Human takeover and server-enforced Agent leases, with pause and resume controls.
+- Headful Chromium with a dedicated and persistent profile.
+- Automatic control on desktop interaction, with explicit release, pause and resume.
 - Screenshot annotation, blank-canvas drawing, solid redaction, and PNG copy/download.
-- Feedback delivery through the CLI or MCP; browser control through a lease-scoped CDP bridge.
+- Feedback delivery through CLI or MCP; Agent control of the same browser's pages, native menus and extensions.
 
 ## Install
 
-You need macOS or Linux on amd64/arm64, a running Docker engine with Compose v2, and a host that supports Chromium's user-namespace sandbox. Give the Docker host at least 2 CPUs and roughly 8 GiB of memory. LensDock does not disable the sandbox to work around an incompatible host.
+You need macOS or Linux on amd64/arm64 and a running Docker engine with Compose v2. Give the Docker host at least 2 CPUs and roughly 8 GiB of memory. Chromium's own renderer sandbox is off by default so any Docker host works; the container keeps its non-root user, read-only root filesystem, dropped capabilities and seccomp profile. To turn the Chromium sandbox on, set `LENSDOCK_CHROMIUM_SANDBOX=true` in `~/.local/share/lensdock/runtime.env` and recreate the Runtime with `lensdock update compose --deployment ~/.local/share/lensdock/deployment.json -- up -d runtime`. It then needs a host that allows unprivileged user namespaces, and the Runtime stays not ready instead of falling back.
 
 ### Private repository access
 
@@ -54,7 +54,7 @@ Mise's default [24-hour release-age policy](https://mise.jdx.dev/security.html#m
 
 ### Open the workspace
 
-Open **http://127.0.0.1:18081/** and pair with the contents of `~/.local/share/lensdock/product/admin-token`. Read this private file locally; never paste it into an issue, chat, URL, or screenshot.
+Open **http://127.0.0.1:18081/**. A local, single-workspace browser enters automatically; no token entry is needed. If you enable required pairing, use the private `human-token` or `admin-token` under `~/.local/share/lensdock/product`. Never paste credentials into an issue, chat, URL, or screenshot.
 
 The default workspace is `default`. Configuration and credentials live under `~/.local/share/lensdock`; the browser profile, downloads, database, and feedback images live in Docker volumes. Separate `human-token`, `viewer-token`, and `agent-token` files limit each role's access. The web UI, remote Chromium, and desktop default to English. The web UI also offers Traditional Chinese in Settings and preserves your saved choice.
 
@@ -69,67 +69,64 @@ Both images contain Linux amd64 and arm64 variants. New installations pull `late
 
 ## Multiple local projects
 
-Each authorized project gets its own Runtime/Gateway pair, persistent volumes, credentials, workspace ID and stable loopback origin. A host manager admits starts against a shared resource budget. The existing standalone workspace on port 18081 stays separate; the manager counts its resource limits as external demand.
+Each project gets its own Runtime/Gateway pair, persistent volumes, credentials, workspace ID and stable loopback origin. The standalone workspace on port 18081 stays separate.
 
-Initialize the manager once from a release bundle containing the deployment files and both Linux helper binaries. A human must authorize each existing project directory:
-
-```bash
-lensdock admin manager init --bundle-dir /path/to/lensdock-release
-lensdock admin project authorize "$HOME/code/site-a" "$HOME/code/site-b"
-lensdock admin project list
-```
-
-The default manager directory is `~/.local/share/lensdock-manager`; set `LENSDOCK_MANAGER_DIR` consistently for a custom location. Initialization copies the host executable and bundle into that private directory and fixes the local Docker engine. It does not install a boot service or manage your application servers or databases.
-
-An Agent can then request its authorized project without Docker access:
+With an installed release bundle and Docker running:
 
 ```bash
-unset LENSDOCK_API LENSDOCK_TOKEN_FILE
-lensdock project up --project "$HOME/code/site-a" --wait 10m
+lensdock project up --project "$HOME/code/site-a"
 lensdock workspace status --project "$HOME/code/site-a"
 lensdock feedback list --project "$HOME/code/site-a"
 lensdock mcp serve --project "$HOME/code/site-a"
 ```
 
-`up` returns the verified API origin, workspace and Agent token-file location. Open that origin and pair using the project's `product/human-token`, under the `stateDir` reported by `admin project list --json`. Sessions and demo sign-out markers are separate even when the Gateways share a hostname. Use project-scoped MCP configurations; see [Agent integration](docs/AGENT-INTEGRATION.md#project-scoped-local-agents).
+The first project-bound command initializes the host manager, registers the directory and starts the workspace automatically. `project up` defaults to the current directory. Project-bound MCP and feedback commands also start a stopped workspace; a separate `up` is optional. Explicit `--project` ignores stale `LENSDOCK_API` and `LENSDOCK_TOKEN_FILE` values, but cannot be combined with explicit API, workspace or token flags.
 
-The default limits are 2 GiB / 2 CPUs per Runtime and 256 MiB / 0.5 CPU per Gateway. The manager's project budget is 6.75 GiB / 7.5 CPUs, with a separate 1 GiB / 1 CPU helper allowance and 2 GiB / 1 CPU of system headroom. Physical engine capacity and external container limits can reduce admissible concurrency. Uncapped external containers require an explicit human allowance or admission is refused. An allowance does not constrain those containers.
+The default manager directory is `~/.local/share/lensdock-manager`; set `LENSDOCK_MANAGER_DIR` consistently for a custom location. Initialization copies the host executable and bundle into that private directory and fixes the local Docker engine. It does not install a boot service or manage your application servers or databases. Image selection and initial pull policy use the same `LENSDOCK_RUNTIME_IMAGE`, `LENSDOCK_GATEWAY_IMAGE` and `LENSDOCK_PULL` settings as standalone initialization.
 
-When full, starts wait FIFO without evicting another browser. Requests for the same project share one operation. Canceling or timing out a wait removes only that caller's interest; admitted work continues. Releasing a lease, closing MCP, pausing the Agent or closing the UI never stops Chromium.
+`up` returns the verified API origin, workspace and Agent token-file location. Open that origin to enter without pairing. Sessions and local sign-out markers stay separate even when Gateways share a hostname. See [Agent integration](docs/AGENT-INTEGRATION.md#project-scoped-local-agents) for project-scoped MCP configurations.
 
-Stopping requires explicit consent to lose in-memory pages and network work:
+CPU, memory, helper process limits and aggregate budgets are off by default. Uncapped external containers do not block starts. Optional restrictions are configured with `admin manager policy`; `admin project limits --id ID ...` changes an existing stopped project's caps. Zero removes a cap, and omitted dimensions stay unchanged.
+
+To require manual registration or startup, opt into `--require-project-authorization` or `--require-explicit-start`. Manual setup remains available through `admin manager init` and `admin project authorize`. Existing configured policies and revoked grants are not silently reset.
+
+When an enabled budget is full, starts wait FIFO without evicting another browser. Requests for the same project share one operation. Waiting has no default deadline; use `--wait` when you want one. Canceling a wait affects only that caller; admitted work continues. Releasing a lease, closing MCP, pausing the Agent or closing the UI never stops Chromium.
+
+Stop explicitly when you want to discard in-memory pages and network work:
 
 ```bash
-lensdock project stop --project "$HOME/code/site-a" --discard-page-state
+lensdock project stop --project "$HOME/code/site-a"
 ```
 
-The persistent profile and feedback remain for the next start. An active lease prevents this stop; a human can force it only with the observed runtime generation. Directory aliases resolve to one grant, worktrees get separate grants, and a moved or replaced directory needs human administration. The private manager socket prevents accidental cross-project routing; it does not isolate hostile processes running as your OS user. Resource policy, recovery and measured limits are in the [update runbook](docs/UPDATE-RUNBOOK.md#managed-project-lifecycle).
+Persistent profiles and feedback remain. `--discard-page-state` is required only when `--require-stop-confirmation` is enabled. Active leases still prevent a normal stop; a forced stop requires the observed runtime generation. Moved, replaced or explicitly revoked directories need administration rather than automatic repair. The manager socket prevents accidental cross-project routing, not hostile processes running as your OS user. See the [update runbook](docs/UPDATE-RUNBOOK.md#managed-project-lifecycle) for policy and recovery.
 
 ## Use the workspace
 
-1. Watch without taking control. Acquire control to use the desktop, or take over from the Agent.
+1. Click the desktop or start typing into it to request control automatically. If the Agent is working, LensDock hands control over first. The activating gesture is not replayed into the changed page; wait for the control indicator, then continue.
 2. Use the text-and-files panel to paste text composed with your local IME or transfer files.
 3. Capture a screenshot or create a drawing, add arrows, shapes, text, or emphasis, then Send. Notes are optional. Use solid redaction for secrets; blur and pixelate are cosmetic.
-4. Review the Agent's response before marking the task verified. Queued, acknowledged, resolved, and verified are separate states.
+4. Follow Sent, In progress and Done in the feedback panel. Expand details to distinguish queued from read, and Agent completion from your verification.
 
 Copy PNG and Download PNG save the flattened image without publishing it. Closing the UI does not close Chromium or clear its profile.
 
 ### Choose a usage mode
 
-`AGENT` is the default: it enables annotation, feedback, and Agent browser control. `NOVNC` provides only the remote browser, human control, clipboard, and file transfer. To start in browser-only mode, set `LENSDOCK_MODE=NOVNC` before installation or pass `--mode NOVNC` to `product-init`.
+`AGENT` is the default: it enables annotation, feedback, and Agent control of the whole browser, including its address bar, menus, native dialogs and extensions. `NOVNC` provides only the remote browser, human control, clipboard, and file transfer. To start in browser-only mode, set `LENSDOCK_MODE=NOVNC` before installation or pass `--mode NOVNC` to `product-init`.
 
 Change modes in Settings. Pause Agent immediately revokes its control while you continue taking screenshots and writing feedback. Resume allows a new lease; it never restores the old one. Mode and pause survive restarts. Changing the startup environment later does not override saved settings.
 
-### Local demo without token entry
+### Optional access and quota settings
 
-For a trusted, single-user local demo, set `LENSDOCK_DEMO_NO_AUTH=1` in the deployment's `product/compose.env` and restart the Gateway. This allows automatic human pairing on loopback only. Keep the default `0` for normal use; never expose demo mode through a proxy or tunnel.
+Local browser access is the default for a loopback, single-workspace Gateway. Use `--require-pairing` at initialization, or set `LENSDOCK_REQUIRE_PAIRING=1` in `product/compose.env` and restart the Gateway, to require a token. Remote and multi-workspace Gateways still require authenticated identities.
+
+Sessions have no default application expiry or count cap. Feedback images, drafts, file transfers and clipboard text have no default product quotas, and drafts do not expire. Positive limits are opt-in; zero disables them. The [runbook](docs/UPDATE-RUNBOOK.md#resource-policy) lists the configuration surfaces. Available RAM, disk space and browser format limits still apply.
 
 ## Set up an Agent
 
 LensDock works with an existing coding Agent. It does not run an LLM or require an Agent Skill.
 
 1. Install the CLI on the Agent's machine using either method above. Keep Agent collaboration enabled in Settings.
-2. Give the Agent only the workspace's `product/agent-token` through a private channel. Preserve file mode `0600`; do not provide the admin token or Docker access.
+2. Give the Agent the workspace's `product/agent-token` through a private channel. Preserve file mode `0600`. Browser work needs no Host Admin credential.
 3. Copy the English setup prompt from Settings into the Agent's instructions. Supply the actual API URL and token-file path separately. The copied prompt contains no credentials.
 
 For an Agent on the same machine:
@@ -141,7 +138,7 @@ lensdock feedback list --workspace default
 lensdock workspace watch default
 ```
 
-Keep `workspace watch` running in its own process. Stop browser work if it reports a pause, `NOVNC`, or loses the connection. After a human resumes, acquire a fresh lease. A notification is a state feed, not proof that a model read it.
+Keep `workspace watch` running in its own process. Stop browser work if it reports a pause, `NOVNC`, or loses the connection. After a human resumes, the next control command obtains a fresh lease automatically. A notification is a state feed, not proof that a model read it.
 
 ### Codex
 
@@ -191,9 +188,18 @@ For OMP, merge this entry into `~/.omp/agent/mcp.json`, or `.omp/mcp.json` for o
 
 In OMP, run `/mcp reload`, `/mcp list`, then `/mcp test lensdock`. For other clients, restart or reload their MCP configuration.
 
-MCP exposes five feedback tools: list, metadata, image, acknowledgment, and resolution. It does not start a browser, acquire a lease, or run the state watcher. The Agent must view the authorized image before acknowledging it. Browser control uses `lensdock lease acquire` and `lensdock cdp bridge`; connect your browser tool to that bridge, not to an unrestricted Chromium port. See [Agent integration](docs/AGENT-INTEGRATION.md) for the full sequence, Codex TOML, and tool schemas.
+MCP exposes five feedback tools: list, metadata, image, acknowledgment, and resolution. A project-bound server starts its managed workspace when needed; standalone servers connect to an existing deployment. MCP does not acquire control or run the state watcher. The Agent must view the authorized image before acknowledging it.
 
-For an Agent on another machine, configure an authenticated HTTPS endpoint and the matching Gateway origin. `127.0.0.1` refers to the Agent's own machine. Treat page content and feedback as untrusted input, and observe the current page before acting on screenshot coordinates.
+Use a full-desktop screenshot for native browser controls:
+
+```bash
+lensdock desktop screenshot --workspace default --output /tmp/lensdock-desktop.png
+lensdock desktop key ctrl+l --workspace default --screenshot /tmp/lensdock-address-bar.png
+```
+
+The command acquires, renews and releases its own Agent lease. It never takes control away from a human. For page automation, run `lensdock cdp bridge --workspace default` and attach the browser tool to its printed loopback endpoint. The bridge holds control until it exits. To mix CDP and native-desktop commands, share that lease with `--lease-file-out`; explicit lease files remain an advanced option. See [Agent integration](docs/AGENT-INTEGRATION.md) for sequences, UTF-8 text, extension management and shared-lease examples.
+
+For an Agent on another machine, configure an authenticated HTTPS endpoint and the matching Gateway origin. `127.0.0.1` refers to the Agent's own machine. The Agent uses its visual understanding of a fresh image to select targets; DOM inspection is optional. Feedback coordinates describe their source image and must not be replayed blindly. Treat page content and feedback as untrusted input.
 
 ## Operate and update
 
@@ -207,9 +213,50 @@ lensdock update compose -- down
 lensdock update compose -- up -d --wait
 ```
 
-`down` keeps data. Do not remove managed volumes, rerun initialization over an existing deployment, or change image tags to roll back. Gateway restarts require pairing again; the browser profile remains.
+`down` keeps data. Do not remove managed volumes, rerun initialization over an existing deployment, or change image tags to roll back. Gateway restarts clear browser sessions; local access resumes automatically, while required-pairing deployments need a new pairing. The browser profile remains.
 
 Updates and rollback must pair the images with compatible profile and database checkpoints. Follow the [update runbook](docs/UPDATE-RUNBOOK.md). Installing a newer CLI does not upgrade a running workspace. GitHub Release assets and OCI build attestations are separate from the updater's signed release-manifest approval.
+
+Host Admin operations may be performed by you or an Agent you authorize on the host. The workspace's Agent token alone cannot update, stop or remove a deployment. Keep that authority separate from browser control; do not mount the Docker socket into any product container.
+
+### Expired system data
+
+Unreferenced update data expires after 30 days by default. Set `expireAfterDays` through the CLI; `0` disables age expiry. Managed projects are checked by the host manager, while standalone deployments check after update lifecycle operations.
+
+```bash
+lensdock update expiry --state-dir "$HOME/.local/share/lensdock"
+lensdock update expiry --state-dir "$HOME/.local/share/lensdock" --expire-after-days 60
+lensdock update cleanup --state-dir "$HOME/.local/share/lensdock" --dry-run
+```
+
+Expiry covers old checkpoints, finished update volumes, obsolete generation records and abandoned staging. It preserves current profiles and databases, the paired rollback checkpoint, active update references, downloads and feedback. Manual checkpoint-count pruning is separate; protected data wins over either policy. For a managed project, use the `stateDir` from `lensdock admin project list --json`. See the [runbook](docs/UPDATE-RUNBOOK.md) for scoped deletion and reports.
+
+## Uninstall
+
+Removing the CLI leaves workspace data intact. Stop MCP servers, watchers and bridges first so they cannot restart a managed workspace. Stop each managed workspace with `lensdock project stop --project /absolute/project/path`; stop a standalone deployment with `lensdock update compose --state-dir /absolute/state/path -- down`. Then run:
+
+```bash
+lensdock admin manager stop
+```
+
+This stops only the host manager and waits for it to exit. It refuses while a worker is active; it neither stops containers nor removes data. Use the same `LENSDOCK_MANAGER_DIR` as the installation.
+
+For a mise installation, remove LensDock's global selection, preview the installed versions, then remove only this tool:
+
+```bash
+mise unuse --global --no-prune github:JiaWeiXie/lensdock
+mise uninstall --all github:JiaWeiXie/lensdock --dry-run
+mise uninstall --all github:JiaWeiXie/lensdock
+```
+
+Remove project-specific mise selections separately with `mise unuse --path /exact/mise.toml --no-prune github:JiaWeiXie/lensdock`. Do not delete a shared mise configuration.
+
+For the shell installer, inspect `readlink "$HOME/.local/bin/lensdock"`, then remove the owned symlink and the LensDock version directories under `~/.local/lib/lensdock`. Respect `LENSDOCK_BIN_DIR` and `LENSDOCK_INSTALL_DIR` overrides; a custom installation parent may contain unrelated files.
+
+Keep `~/.local/share/lensdock`, `~/.local/share/lensdock-manager`, custom backup locations and encryption keys if you want to reuse the data. The manager directory contains its own executable copy, credentials and every managed project's state.
+
+To remove data permanently, follow [Uninstall and data removal](docs/UPDATE-RUNBOOK.md#uninstall-and-data-removal) **before deleting deployment metadata or the CLI**. It inventories exact containers, volumes, checkpoints and keys, including update-created volumes that Compose labels omit. Never run global Docker prune or delete the application's project directory. Deleted data has no undelete path; recovery needs a compatible backup and its key.
+
 
 ## Develop and release
 
@@ -226,11 +273,11 @@ mise run product:up
 
 Source development uses local `:dev` images and `.lensdock/` state. Run `mise run check` and `mise exec -- pnpm --dir apps/web test` before submitting changes.
 
-CI/CD follows [comfyui-pwa-client](https://github.com/JiaWeiXie/comfyui-pwa-client): changes on `main` produce versioned GitHub Releases and GHCR images after checks. The release workflow builds both native Linux architectures, runs container smoke checks, and collects image supply-chain evidence. `latest` tracks the newest successful stable release. Release archives include macOS/Linux CLIs, deployment files, Linux update helpers, and checksums.
+Changes on `main` produce versioned GitHub Releases and GHCR images after checks. The release workflow builds both native Linux architectures, runs container smoke checks, and collects image supply-chain evidence. `latest` tracks the newest successful stable release. Release archives include macOS/Linux CLIs, deployment files, Linux update helpers, and checksums.
 
 ## Reference and limits
 
 - [Agent integration](docs/AGENT-INTEGRATION.md), [update runbook](docs/UPDATE-RUNBOOK.md), and [web UI details](apps/web/README.md).
-- Full human/Agent handoff and paired-update demonstrations were performed on macOS arm64 with OrbStack. Three managed project pairs, scoped browser sessions and lifecycle fault recovery were also exercised there; see the runbook for workload measurements and limits. Native release smoke checks do not establish full product E2E coverage on every platform. Japanese/Korean native IMEs, a unified multi-workspace UI, and cross-machine checkpoint portability remain outside the verified scope.
+- Integrated browser and update workflows have been exercised on macOS arm64 with OrbStack. Native release smoke checks do not establish full product E2E coverage on every platform. Japanese/Korean native IMEs, a unified multi-workspace UI, and cross-machine checkpoint portability remain outside the verified scope.
 - Keep the default loopback binding unless you configure TLS and authentication. Never mount the Docker socket into the browser, Gateway, or Agent.
 - LensDock's project license has not been selected. Bundled dependencies retain their own licenses; see [references](docs/REFERENCES.md).

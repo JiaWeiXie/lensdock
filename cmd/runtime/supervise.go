@@ -89,7 +89,7 @@ func superviseCommand(modeFlag string) error {
 	if err != nil {
 		return err
 	}
-	capturer, err := capture.New(capture.Config{Endpoint: chromiumDevToolsAddr})
+	capturer, err := capture.New(capture.Config{Endpoint: chromiumDevToolsAddr, MaxImageBytes: cfg.CaptureMaxImageBytes, MaxImagePixels: cfg.CaptureMaxImagePixels})
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func superviseCommand(modeFlag string) error {
 		NotReady:         func(code string) { leases.SetLocked(true, code) },
 		BrowserRestarted: func() { leases.StartGeneration() },
 		StopBrowser:      capturer.CloseBrowser,
-	}, log)
+	}, log, cfg.ChromiumSandbox)
 
 	cdpPrefix := "/api/v1/workspaces/" + cfg.WorkspaceID + "/cdp"
 	proxy, err := cdp.NewProxy(cdp.ProxyConfig{
@@ -112,21 +112,24 @@ func superviseCommand(modeFlag string) error {
 	if err != nil {
 		return err
 	}
-	limits := transfer.Limits{QuotaBytes: cfg.FileQuotaBytes, MaxFileBytes: cfg.FileMaxBytes, MaxFiles: cfg.FileMaxFiles}.WithDefaults()
+	limits := transfer.Limits{QuotaBytes: cfg.FileQuotaBytes, MaxFileBytes: cfg.FileMaxBytes, MaxFiles: cfg.FileMaxFiles}
 	handler := runtimeapi.NewHandler(runtimeapi.Deps{
-		WorkspaceID: cfg.WorkspaceID,
-		Operator:    cfg.OperatorDigest,
-		Leases:      leases,
-		CDP:         proxy,
-		Clipboard:   clipboard.New(sup, cfg.ClipboardTTL, 0),
-		Health:      sup,
-		Logger:      log,
-		VNCView:     vnc.NewProxy(vnc.ProxyConfig{Instance: vnc.View, Logger: log}),
-		VNCControl:  vnc.NewProxy(vnc.ProxyConfig{Instance: vnc.Control, MaxConns: 1, Logger: log}),
-		Resizer:     vnc.NewResizer(sup),
-		Capture:     capturer,
-		Files:       transfer.NewHelperStore(sup, self, limits),
-		FileLimits:  limits,
+		WorkspaceID:          cfg.WorkspaceID,
+		Operator:             cfg.OperatorDigest,
+		Leases:               leases,
+		CDP:                  proxy,
+		Clipboard:            clipboard.New(sup, cfg.ClipboardTTL, cfg.ClipboardMaxBytes),
+		Health:               sup,
+		Logger:               log,
+		VNCView:              vnc.NewProxy(vnc.ProxyConfig{Instance: vnc.View, Logger: log}),
+		VNCControl:           vnc.NewProxy(vnc.ProxyConfig{Instance: vnc.Control, MaxConns: 1, Logger: log}),
+		Resizer:              vnc.NewResizer(sup),
+		Capture:              capturer,
+		Files:                transfer.NewHelperStore(sup, self, limits),
+		FileLimits:           limits,
+		ClipboardMaxBytes:    cfg.ClipboardMaxBytes,
+		UploadReadTimeout:    cfg.UploadReadTimeout,
+		ClipboardReadTimeout: cfg.ClipboardReadTimeout,
 	})
 	srv := runtimeapi.NewServer(cfg.Listen, handler)
 	ln, err := net.Listen("tcp", cfg.Listen)

@@ -243,7 +243,8 @@ function DiagnosticsSection(): ReactNode {
           <div className="kv__row">
             <dt>{t('diag.drafts')}</dt>
             <dd className="mono">
-              {stats.openDrafts} / {stats.limits.maxDrafts}
+              {stats.openDrafts}
+              {stats.limits.maxDrafts > 0 ? ` / ${stats.limits.maxDrafts}` : ''}
             </dd>
           </div>
           <div className="kv__row">
@@ -275,8 +276,9 @@ function DiagnosticsSection(): ReactNode {
           <div className="kv__row">
             <dt>{t('diag.bytes')}</dt>
             <dd className="mono">
-              private {formatBytes(stats.privateBytes)} / {formatBytes(stats.limits.maxPrivateBytes)} · shared {formatBytes(stats.sharedBytes)} /{' '}
-              {formatBytes(stats.limits.maxSharedBytes)}
+              private {formatBytes(stats.privateBytes)}
+              {stats.limits.maxPrivateBytes > 0 ? ` / ${formatBytes(stats.limits.maxPrivateBytes)}` : ''} · shared {formatBytes(stats.sharedBytes)}
+              {stats.limits.maxSharedBytes > 0 ? ` / ${formatBytes(stats.limits.maxSharedBytes)}` : ''}
             </dd>
           </div>
           <div className="kv__row">

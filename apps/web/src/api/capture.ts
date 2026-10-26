@@ -42,7 +42,7 @@ export function uploadDesktopCapture(
     contentType: 'image/png',
     headers: { 'X-LensDock-Captured-At': capturedAt },
     idempotencyKey,
-    timeoutMs: 120000,
+    timeoutMs: 0,
   });
 }
 
@@ -67,7 +67,7 @@ export function createViewportCapture(
     method: 'POST',
     body,
     idempotencyKey,
-    timeoutMs: 60000,
+    timeoutMs: 0,
   });
 }
 

@@ -28,8 +28,6 @@ import {
   textParts,
 } from './shapes';
 
-const MAX_EXPORT_PIXELS = 24_000_000;
-
 export class FontNotReadyError extends Error {
   constructor(detail: string) {
     super(`fonts not ready: ${detail}`);
@@ -38,7 +36,7 @@ export class FontNotReadyError extends Error {
 }
 
 export class ExportError extends Error {
-  constructor(readonly reason: 'too-large' | 'encode-failed' | 'no-canvas') {
+  constructor(readonly reason: 'encode-failed' | 'no-canvas') {
     super(reason);
     this.name = 'ExportError';
   }
@@ -256,7 +254,6 @@ export async function renderAnnotatedPng(
   size: ImageSize,
   annotations: readonly Annotation[],
 ): Promise<RasterResult> {
-  if (size.width * size.height > MAX_EXPORT_PIXELS) throw new ExportError('too-large');
   const ordered = redactionsLast(annotations);
   await ensureFontsReady(ordered);
   const ops = collectEffectOps(ordered, size);

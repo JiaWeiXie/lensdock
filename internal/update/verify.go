@@ -60,6 +60,8 @@ type Check struct {
 	Title  string `json:"title"`
 	Status string `json:"status"`
 	Detail string `json:"detail,omitempty"`
+	// Reason is a stable machine-readable code; Detail is diagnostic text only.
+	Reason string `json:"reason,omitempty"`
 }
 
 // VerifyReport is the evidence of candidate verification.
@@ -80,10 +82,40 @@ func (r *VerifyReport) finish() {
 	r.FinishedAt = time.Now().UTC()
 	r.OK = len(r.Checks) > 0
 	for _, c := range r.Checks {
-		if c.Status != CheckPass {
+		if c.blocks() {
 			r.OK = false
 		}
 	}
+}
+
+const sandboxDisabledReason = "chromium-sandbox-disabled"
+
+// sandboxCheck maps the runtime's sandbox report to a check result. Only an
+// explicit enabled=false is a skip; enabled or missing requires verified.
+func sandboxCheck(enabled *bool, verified bool) Check {
+	c := Check{ID: "sandbox", Title: "renderer sandbox verified"}
+	switch {
+	case enabled != nil && !*enabled && verified:
+		c.Status, c.Detail = CheckFail, "the runtime reports a verified sandbox that is not enabled"
+	case enabled != nil && !*enabled:
+		c.Status = CheckSkip
+		c.Reason = sandboxDisabledReason
+		c.Detail = "Chromium sandbox not enabled (LENSDOCK_CHROMIUM_SANDBOX is off)"
+	case verified:
+		c.Status = CheckPass
+	default:
+		c.Status, c.Detail = CheckFail, "the runtime reports no verified sandbox"
+	}
+	return c
+}
+
+// blocks reports whether the check keeps a candidate from passing: anything
+// but a pass, except the sandbox check of a runtime that has it disabled.
+func (c Check) blocks() bool {
+	if c.Status == CheckPass {
+		return false
+	}
+	return !(c.ID == "sandbox" && c.Status == CheckSkip && c.Reason == sandboxDisabledReason)
 }
 
 // Failed returns the failing checks.
@@ -186,12 +218,10 @@ func verifyCandidate(ctx context.Context, c *runtimeClient, spec VerifySpec) Ver
 	}
 
 	if ready {
-		// Sandbox: the renderer sandbox is a release gate.
-		if doc.Detail.Sandbox.Verified {
-			rep.add("sandbox", "renderer sandbox verified", CheckPass, "")
-		} else {
-			rep.add("sandbox", "renderer sandbox verified", CheckFail, "the runtime reports no verified sandbox")
-		}
+		// Sandbox: when enabled (or when the runtime does not say), the
+		// renderer sandbox is a release gate. Only an explicit enabled=false
+		// is a skip; an unverified sandbox is never read as disabled.
+		rep.Checks = append(rep.Checks, sandboxCheck(doc.Detail.Sandbox.Enabled, doc.Detail.Sandbox.Verified))
 		if err := checkFonts(doc.Detail.FcMatch); err != nil {
 			rep.add("fonts", "CJK and emoji fonts resolve", CheckFail, err.Error())
 		} else {

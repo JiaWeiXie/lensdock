@@ -8,10 +8,14 @@ import (
 )
 
 // mcpUsageText is appended to the CLI usage text.
-const mcpUsageText = `  lensdock mcp serve (--workspace W [--token-file F] [--api URL] | --project PATH)
+const mcpUsageText = `  lensdock mcp serve (--workspace W [--token-file F] [--api URL] | --project PATH) [--max-inline-image-bytes N]
       MCP server on stdio (stdout carries only the protocol): feedback_list, feedback_get,
       feedback_image, feedback_ack, feedback_resolve; token as for "feedback"
-      --project PATH binds to that managed project's workspace and credential; it never starts the project
+      --project PATH binds to that managed project's workspace and credential; it ignores a stale $LENSDOCK_API or
+      $LENSDOCK_TOKEN_FILE, forbids an explicit --api, --workspace or --token-file, and by default initializes, registers
+      and starts the project unless the manager's explicit-start or authorization policy applies
+      images are returned inline at any size; --max-inline-image-bytes N (or $LENSDOCK_MCP_MAX_INLINE_IMAGE_BYTES)
+      opts in to refusing larger ones with a pointer to "lensdock feedback pull"; the size flags of "feedback" apply too
 `
 
 // mcpCommand dispatches "lensdock mcp ...".
@@ -29,6 +33,11 @@ func (c *cli) mcpCommand(ctx context.Context, args []string) error {
 func (c *cli) mcpServe(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("mcp serve")
 	ff := c.addFeedbackFlags(fs, true, false)
+	inlineDefault, err := c.envInt64(envMaxInlineImageBytes)
+	if err != nil {
+		return err
+	}
+	maxInline := fs.Int64("max-inline-image-bytes", inlineDefault, "refuse to return screenshots larger than this many bytes as inline MCP images (default $"+envMaxInlineImageBytes+"; 0 means no limit)")
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
 	}
@@ -45,5 +54,5 @@ func (c *cli) mcpServe(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return lensmcp.Serve(ctx, lensmcp.Config{WorkspaceID: ff.workspace, Backend: client}, c.stdin, c.stdout)
+	return lensmcp.Serve(ctx, lensmcp.Config{WorkspaceID: ff.workspace, Backend: client, MaxInlineImageBytes: *maxInline}, c.stdin, c.stdout)
 }

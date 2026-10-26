@@ -20,7 +20,7 @@ func TestStatsProjectionAndArtifactFailures(t *testing.T) {
 	if st.QueueDepth != 1 || st.Deliveries[StateQueued] != 1 || st.Deliveries[StateReady] != 0 || st.OldestQueuedAt == nil || st.OpenDrafts != 0 {
 		t.Fatalf("stats after dispatch = %+v", st)
 	}
-	if st.PrivateBytes != 0 || st.SharedBytes == 0 || st.Limits.MaxDrafts != 50 || st.ArtifactFailures != 0 {
+	if st.PrivateBytes != 0 || st.SharedBytes == 0 || st.Limits != (StatsLimits{}) || st.ArtifactFailures != 0 {
 		t.Fatalf("stats bytes/limits = %+v", st)
 	}
 	if st.CaptureLatency.Count != 1 {

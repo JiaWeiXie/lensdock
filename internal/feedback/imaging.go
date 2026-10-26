@@ -10,28 +10,15 @@ import (
 	"math"
 )
 
-// Image limits match schemas/feedback.schema.json.
-const (
-	defaultMaxImageBytes = 32 << 20
-	defaultMaxPixels     = 24_000_000
-	defaultMaxDimension  = 32768
-)
-
-// Standalone drawing canvas bounds per side, in pixels. They apply on top of
-// the shared dimension, pixel and encoded-size limits (Limits).
-const (
-	minDrawingDimension = 64
-	maxDrawingDimension = 4096
-)
-
 var pngSignature = []byte("\x89PNG\r\n\x1a\n")
 
-// decodePNG decodes a PNG with resource limits checked before any pixel
-// allocation, and returns it flattened onto opaque white so no hidden colour
-// data survives under transparent pixels. 16-bit images are refused (they
+// decodePNG decodes a PNG and returns it flattened onto opaque white so no
+// hidden colour data survives under transparent pixels. Configured limits
+// (zero means unlimited) are checked before any pixel allocation, and the RGBA
+// buffer size is always checked for overflow. 16-bit images are refused (they
 // would multiply decode memory); metadata chunks are dropped by design.
 func decodePNG(data []byte, l Limits) (*image.RGBA, error) {
-	if int64(len(data)) > l.MaxImageBytes {
+	if l.MaxImageBytes > 0 && int64(len(data)) > l.MaxImageBytes {
 		return nil, ErrImageTooLarge
 	}
 	if !bytes.HasPrefix(data, pngSignature) {
@@ -44,7 +31,9 @@ func decodePNG(data []byte, l Limits) (*image.RGBA, error) {
 	if cfg.Width < 1 || cfg.Height < 1 {
 		return nil, ErrInvalidImage
 	}
-	if cfg.Width > l.MaxDimension || cfg.Height > l.MaxDimension || int64(cfg.Width)*int64(cfg.Height) > int64(l.MaxPixels) {
+	if (l.MaxDimension > 0 && (cfg.Width > l.MaxDimension || cfg.Height > l.MaxDimension)) ||
+		(l.MaxPixels > 0 && int64(cfg.Width)*int64(cfg.Height) > int64(l.MaxPixels)) ||
+		int64(cfg.Width)*int64(cfg.Height) > int64(math.MaxInt/4) {
 		return nil, ErrImageTooLarge
 	}
 	switch cfg.ColorModel {
@@ -69,14 +58,14 @@ func decodePNG(data []byte, l Limits) (*image.RGBA, error) {
 }
 
 // encodePNG re-encodes img as an opaque RGB PNG without metadata and refuses
-// output larger than max bytes.
+// output larger than max bytes (max <= 0 means no size limit).
 func encodePNG(img *image.RGBA, max int64) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := png.Encoder{CompressionLevel: png.DefaultCompression}
 	if err := enc.Encode(&buf, img); err != nil {
 		return nil, err
 	}
-	if int64(buf.Len()) > max {
+	if max > 0 && int64(buf.Len()) > max {
 		return nil, ErrImageTooLarge
 	}
 	return buf.Bytes(), nil

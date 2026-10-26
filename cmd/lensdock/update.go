@@ -28,9 +28,16 @@ const updateUsageText = `  lensdock update init [--deployment FILE] [--state-dir
   lensdock update status [--publish]
   lensdock update checkpoints list|verify|prune
   lensdock update branches list | delete VOLUME [--yes]
+  lensdock update cleanup [--scope checkpoints,volumes,generations,staging] [--older-than-days N] [--dry-run] [--yes]
+  lensdock update expiry [--expire-after-days N]
+      cleanup expires unused old system data (unreferenced checkpoints, retired update volumes, obsolete generation
+      records, abandoned staging) older than expireAfterDays; --older-than-days N overrides it for one run, 0 disables;
+      --dry-run previews; expiry shows or stores the policy (--expire-after-days N, 0 disables age expiry)
   lensdock update compose [--deployment FILE] -- up|down|stop|start|restart|ps|logs|config [ARGS...]
       a deployment owned by a host manager runs mutations (apply, approve, abort, rollback,
       checkpoints prune, branches delete) through that manager; compose allows only ps|logs|config;
+      cleanup and expiry policy changes also run through that manager; managed projects schedule idle daily expiry;
+      standalone apply/approve/abort/rollback check expiry after success (default 30 days, 0 disables);
       check and plan default --workspace to the project's own workspace
 `
 
@@ -52,6 +59,8 @@ func (c *cli) updateSubcommands(ctx context.Context) map[string]func([]string) e
 		"status":      func(a []string) error { return c.updateStatus(ctx, a) },
 		"checkpoints": func(a []string) error { return c.updateCheckpoints(ctx, a) },
 		"branches":    func(a []string) error { return c.updateBranches(ctx, a) },
+		"cleanup":     func(a []string) error { return c.updateCleanup(ctx, a) },
+		"expiry":      func(a []string) error { return c.updateExpiry(ctx, a) },
 		"compose":     func(a []string) error { return c.updateCompose(ctx, a) },
 		"__probe":     func(a []string) error { return c.updateProbe(ctx, a) },
 	}
@@ -303,6 +312,9 @@ func (c *cli) updateApply(ctx context.Context, args []string) error {
 		}
 		_ = c.writeJSONLine(res)
 	}
+	if err == nil && !*dry && res != nil && res.Status == update.JournalCompleted {
+		c.autoExpire(ctx, t)
+	}
 	return err
 }
 
@@ -334,6 +346,9 @@ func (c *cli) updateApprove(ctx context.Context, args []string) error {
 	if res != nil {
 		_ = c.writeJSONLine(res)
 	}
+	if err == nil {
+		c.autoExpire(ctx, t)
+	}
 	return err
 }
 
@@ -354,6 +369,9 @@ func (c *cli) updateAbort(ctx context.Context, args []string) error {
 	res, err := t.eng.Abort(ctx, update.AbortOptions{UpdateID: *id, KeepCandidate: *keep})
 	if res != nil {
 		_ = c.writeJSONLine(res)
+	}
+	if err == nil {
+		c.autoExpire(ctx, t)
 	}
 	return err
 }
@@ -404,6 +422,9 @@ func (c *cli) updateRollback(ctx context.Context, args []string) error {
 			fmt.Fprintln(c.stdout, line)
 		}
 		_ = c.writeJSONLine(res)
+	}
+	if err == nil && !*dry {
+		c.autoExpire(ctx, t)
 	}
 	return err
 }

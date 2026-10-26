@@ -39,25 +39,78 @@ type expiredDraft struct {
 	PreviewKey, ObjectKey                   sql.NullString
 }
 
+// draftExpiry is the stored expiry of a draft or unbound capture modified at
+// now: zero (never expires) without a configured draft TTL.
+func (s *Service) draftExpiry(now time.Time) int64 {
+	ttl := s.lim.draftTTL()
+	if ttl <= 0 {
+		return 0
+	}
+	return s.ms(now.Add(ttl))
+}
+
+// expiryTime converts a stored expiry; zero (never) is nil.
+func expiryTime(ms int64) *time.Time {
+	if ms <= 0 {
+		return nil
+	}
+	t := fromMS(ms)
+	return &t
+}
+
+// alignDraftExpiry makes stored expiries follow the configured policy at
+// startup and before every sweep. Without a draft TTL, drafts and ready
+// captures created under an earlier TTL stop expiring; with one, those that
+// never expired start their lifetime now. Nothing expires prematurely because
+// of a policy change.
+func (s *Service) alignDraftExpiry(ctx context.Context) error {
+	now := s.nowUTC()
+	if s.lim.draftTTL() <= 0 {
+		for _, q := range []string{
+			`UPDATE revisions SET expires_at = 0, warned = 0 WHERE status = 'DRAFT' AND expires_at > 0`,
+			`UPDATE captures SET expires_at = 0 WHERE status = 'ready' AND expires_at > 0`,
+		} {
+			if _, err := s.db().ExecContext(ctx, q); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	exp := s.draftExpiry(now)
+	for _, q := range []string{
+		`UPDATE revisions SET expires_at = ?, warned = 0 WHERE status = 'DRAFT' AND expires_at = 0`,
+		`UPDATE captures SET expires_at = ? WHERE status = 'ready' AND expires_at = 0`,
+	} {
+		if _, err := s.db().ExecContext(ctx, q, exp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Sweep enforces retention: reservations that never received an image fail,
-// drafts and unbound captures expire 24h (DraftTTL) after their last
-// modification, owners get a DRAFT_EXPIRING event ahead of that, old
-// idempotency records go, and unreferenced files are removed. Published
-// revisions and evidence of deliveries in progress are never touched.
+// and, only when a draft TTL is configured (Limits.DraftTTLSeconds), drafts and
+// unbound captures expire that long after their last modification and owners
+// get a DRAFT_EXPIRING event ahead of that. Old idempotency records go and
+// unreferenced files are removed. Published revisions and evidence of
+// deliveries in progress are never touched.
 func (s *Service) Sweep(ctx context.Context) error {
+	if err := s.alignDraftExpiry(ctx); err != nil {
+		return err
+	}
 	now := s.nowUTC()
 	nowMS := s.ms(now)
 
 	if _, err := s.db().ExecContext(ctx, `UPDATE captures SET status = 'failed', updated_at = ? WHERE status IN ('awaiting-upload','capturing') AND expires_at < ?`, nowMS, nowMS); err != nil {
 		return err
 	}
-	if _, err := s.db().ExecContext(ctx, `DELETE FROM captures WHERE status = 'failed' AND updated_at < ?`, s.ms(now.Add(-s.lim.FailedCaptureRetention))); err != nil {
+	if _, err := s.db().ExecContext(ctx, `DELETE FROM captures WHERE status = 'failed' AND updated_at < ?`, s.ms(now.Add(-s.ops.FailedCaptureRetention))); err != nil {
 		return err
 	}
 
 	rows, err := s.db().QueryContext(ctx, `SELECT r.feedback_id, f.workspace_id, r.owner_id, r.capture_id, r.revision, r.preview_key, c.object_key
 		FROM revisions r JOIN feedback f ON f.id = r.feedback_id LEFT JOIN captures c ON c.id = r.capture_id
-		WHERE r.status = 'DRAFT' AND r.expires_at < ?`, nowMS)
+		WHERE r.status = 'DRAFT' AND r.expires_at > 0 AND r.expires_at < ?`, nowMS)
 	if err != nil {
 		return err
 	}
@@ -77,7 +130,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 	_ = rows.Close()
 	for _, e := range expired {
 		err := s.st.DB.InTx(ctx, func(tx *sql.Tx) error {
-			res, err := tx.ExecContext(ctx, `DELETE FROM revisions WHERE feedback_id = ? AND revision = ? AND status = 'DRAFT' AND expires_at < ?`, e.FeedbackID, e.Revision, nowMS)
+			res, err := tx.ExecContext(ctx, `DELETE FROM revisions WHERE feedback_id = ? AND revision = ? AND status = 'DRAFT' AND expires_at > 0 AND expires_at < ?`, e.FeedbackID, e.Revision, nowMS)
 			if err != nil {
 				return err
 			}
@@ -110,7 +163,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 	}
 
 	// Captures never bound to a draft.
-	crows, err := s.db().QueryContext(ctx, `SELECT id, object_key FROM captures WHERE feedback_id IS NULL AND status = 'ready' AND expires_at < ?`, nowMS)
+	crows, err := s.db().QueryContext(ctx, `SELECT id, object_key FROM captures WHERE feedback_id IS NULL AND status = 'ready' AND expires_at > 0 AND expires_at < ?`, nowMS)
 	if err != nil {
 		return err
 	}
@@ -133,7 +186,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 	}
 	_ = crows.Close()
 	for _, o := range orphans {
-		if _, err := s.db().ExecContext(ctx, `DELETE FROM captures WHERE id = ? AND feedback_id IS NULL AND expires_at < ?`, o.id, nowMS); err != nil {
+		if _, err := s.db().ExecContext(ctx, `DELETE FROM captures WHERE id = ? AND feedback_id IS NULL AND expires_at > 0 AND expires_at < ?`, o.id, nowMS); err != nil {
 			return err
 		}
 		if o.key.Valid {
@@ -143,7 +196,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 
 	// Expiry warnings, once per draft modification.
 	wrows, err := s.db().QueryContext(ctx, `SELECT r.feedback_id, r.revision, f.workspace_id, r.owner_id FROM revisions r JOIN feedback f ON f.id = r.feedback_id
-		WHERE r.status = 'DRAFT' AND r.warned = 0 AND r.expires_at >= ? AND r.expires_at < ?`, nowMS, s.ms(now.Add(s.lim.ExpiryWarning)))
+		WHERE r.status = 'DRAFT' AND r.warned = 0 AND r.expires_at >= ? AND r.expires_at < ?`, nowMS, s.ms(now.Add(s.ops.ExpiryWarning)))
 	if err != nil {
 		return err
 	}
@@ -173,7 +226,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 		}
 	}
 
-	if _, err := storage.IdemPurge(ctx, s.db(), now.Add(-s.lim.IdempotencyRetention)); err != nil {
+	if _, err := storage.IdemPurge(ctx, s.db(), now.Add(-s.ops.IdempotencyRetention)); err != nil {
 		return err
 	}
 	s.wake()
@@ -184,7 +237,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 // than the grace period (so in-flight writes are safe): crash leftovers of
 // uploads, abandoned previews and publish attempts.
 func (s *Service) reconcile(ctx context.Context) error {
-	cutoff := s.now().Add(-s.lim.OrphanGrace)
+	cutoff := s.now().Add(-s.ops.OrphanGrace)
 	refs := map[string]bool{}
 	for _, q := range []string{
 		`SELECT object_key FROM captures WHERE object_key IS NOT NULL`,

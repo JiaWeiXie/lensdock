@@ -17,8 +17,8 @@ export interface Actor {
 export interface SessionInfo {
   actor: Actor;
   csrfToken: string;
-  /** Set by the Gateway only for a local demo no-auth session (actor id `demo-human`). */
-  demo?: boolean;
+  /** True for automatic same-origin local access without token pairing. */
+  localAccess?: boolean;
 }
 
 export type ControlState =
@@ -151,6 +151,7 @@ export interface FeedbackStats {
   captures: Record<'awaitingUpload' | 'capturing' | 'ready' | 'failed', number>;
   privateBytes: number;
   sharedBytes: number;
+  /** Configured optional limits; 0 means no limit. */
   limits: { maxDrafts: number; maxOpenCaptures: number; maxPrivateBytes: number; maxSharedBytes: number };
   desktopCaptureLatency: LatencyStat;
   ackLatency: LatencyStat;
@@ -177,8 +178,10 @@ export interface FileEntry {
 
 export interface FileUsage {
   usedBytes: number;
+  /** 0 means no storage quota is configured. */
   quotaBytes: number;
   fileCount: number;
+  /** 0 means no file-count limit is configured. */
   maxFiles: number;
 }
 

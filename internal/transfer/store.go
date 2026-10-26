@@ -36,17 +36,17 @@ const (
 	// the browser to pick.
 	AreaUploads Area = "uploads"
 
-	uploadsDir     = "uploads"
-	maxNameBytes   = 255
-	partialSuffix  = ".crdownload"
-	tempPrefix     = ".upload-"
-	tempSuffix     = ".part"
-	dirMode        = 0o700
-	fileMode       = 0o600
-	maxListEntries = 2000
+	uploadsDir    = "uploads"
+	maxNameBytes  = 255
+	partialSuffix = ".crdownload"
+	tempPrefix    = ".upload-"
+	tempSuffix    = ".part"
+	dirMode       = 0o700
+	fileMode      = 0o600
 )
 
-// Limits bound what the transfer area may hold.
+// Limits optionally bound what the transfer area may hold. The zero value of
+// every field means no limit.
 type Limits struct {
 	// QuotaBytes caps the bytes of every regular file in both areas.
 	QuotaBytes int64 `json:"quotaBytes"`
@@ -56,24 +56,6 @@ type Limits struct {
 	MaxFiles int `json:"maxFiles"`
 }
 
-// DefaultLimits are the limits used when the environment sets none.
-var DefaultLimits = Limits{QuotaBytes: 2 << 30, MaxFileBytes: 512 << 20, MaxFiles: 1000}
-
-// WithDefaults returns l with every non-positive field replaced by its
-// DefaultLimits value.
-func (l Limits) WithDefaults() Limits {
-	if l.QuotaBytes <= 0 {
-		l.QuotaBytes = DefaultLimits.QuotaBytes
-	}
-	if l.MaxFileBytes <= 0 {
-		l.MaxFileBytes = DefaultLimits.MaxFileBytes
-	}
-	if l.MaxFiles <= 0 {
-		l.MaxFiles = DefaultLimits.MaxFiles
-	}
-	return l
-}
-
 // Entry is one visible file.
 type Entry struct {
 	Name       string    `json:"name"`
@@ -81,7 +63,8 @@ type Entry struct {
 	ModifiedAt time.Time `json:"modifiedAt"`
 }
 
-// Usage is the transfer area's consumption against its limits.
+// Usage is the transfer area's consumption next to its configured limits;
+// a zero QuotaBytes or MaxFiles means no limit is configured.
 type Usage struct {
 	UsedBytes  int64 `json:"usedBytes"`
 	QuotaBytes int64 `json:"quotaBytes"`
@@ -91,10 +74,9 @@ type Usage struct {
 
 // Listing is the visible files of one area and the overall usage.
 type Listing struct {
-	Area    Area    `json:"area"`
-	Files   []Entry `json:"files"`
-	Usage   Usage   `json:"usage"`
-	Limited bool    `json:"truncated,omitempty"`
+	Area  Area    `json:"area"`
+	Files []Entry `json:"files"`
+	Usage Usage   `json:"usage"`
 }
 
 // Errors returned by Store implementations.
@@ -158,9 +140,9 @@ type DirStore struct {
 	limits Limits
 }
 
-// NewDirStore returns a Store over dir. Zero limit fields take the defaults.
+// NewDirStore returns a Store over dir. A zero limit field means no limit.
 func NewDirStore(dir string, limits Limits) *DirStore {
-	return &DirStore{dir: dir, limits: limits.WithDefaults()}
+	return &DirStore{dir: dir, limits: limits}
 }
 
 // areaRoot opens the root of area under base. The uploads directory is
@@ -273,10 +255,6 @@ func (s *DirStore) List(_ context.Context, area Area) (Listing, error) {
 		if !visible(fi.Name()) {
 			continue
 		}
-		if len(out.Files) >= maxListEntries {
-			out.Limited = true
-			break
-		}
 		out.Files = append(out.Files, Entry{Name: fi.Name(), Size: fi.Size(), ModifiedAt: fi.ModTime().UTC()})
 	}
 	return out, nil
@@ -351,7 +329,7 @@ func (s *DirStore) Put(_ context.Context, name string, body io.Reader, size int6
 	if size < 0 {
 		return Entry{}, ErrSizeMismatch
 	}
-	if size > s.limits.MaxFileBytes {
+	if s.limits.MaxFileBytes > 0 && size > s.limits.MaxFileBytes {
 		return Entry{}, ErrTooLarge
 	}
 	base, err := os.OpenRoot(s.dir)
@@ -383,10 +361,10 @@ func (s *DirStore) Put(_ context.Context, name string, body io.Reader, size int6
 	} else {
 		count++
 	}
-	if used+size > s.limits.QuotaBytes {
+	if s.limits.QuotaBytes > 0 && used+size > s.limits.QuotaBytes {
 		return Entry{}, ErrQuota
 	}
-	if count > s.limits.MaxFiles {
+	if s.limits.MaxFiles > 0 && count > s.limits.MaxFiles {
 		return Entry{}, ErrTooMany
 	}
 

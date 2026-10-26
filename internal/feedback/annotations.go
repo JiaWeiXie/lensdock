@@ -14,12 +14,11 @@ import (
 
 // Annotation limits from schemas/feedback.schema.json.
 const (
-	maxAnnotations    = 100
-	maxFreehandPts    = 10000
-	maxAnnotationID   = 128
-	maxComment        = 4000
-	maxAnnotText      = 2000
-	maxPinNumber      = 100
+	// maxAnnotationID is a structural identifier length, not a content quota.
+	maxAnnotationID = 128
+	// maxPinNumber only keeps pin numbers representable as an int32; the
+	// number of annotations and pins is otherwise unrestricted.
+	maxPinNumber      = 1<<31 - 1
 	coordinateEpsilon = 1e-9
 
 	// Schema 0.3.0 style parameter bounds.
@@ -201,8 +200,10 @@ func toRect(g *rectGeometry) (outRect, bool) {
 	return outRect{X: x, Y: y, Width: w, Height: h}, true
 }
 
+// validText accepts valid UTF-8 without control characters; max > 0 optionally
+// caps the length in code points (zero means no cap).
 func validText(s string, max int, multiline bool) bool {
-	if utf8.RuneCountInString(s) > max || !utf8.ValidString(s) {
+	if (max > 0 && utf8.RuneCountInString(s) > max) || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
@@ -288,9 +289,6 @@ func ParseAnnotations(in []json.RawMessage) (canonical []json.RawMessage, redact
 // parseAnnotationSet is ParseAnnotations that also returns the cosmetic
 // blur and pixelate effects in annotation order.
 func parseAnnotationSet(in []json.RawMessage) (*annotationSet, error) {
-	if len(in) > maxAnnotations {
-		return nil, annotationInvalid("too many annotations")
-	}
 	set := &annotationSet{Canonical: make([]json.RawMessage, 0, len(in))}
 	ids := map[string]bool{}
 	pins := map[int]bool{}
@@ -309,7 +307,7 @@ func parseAnnotationSet(in []json.RawMessage) (*annotationSet, error) {
 		if a.Kind == nil || len(a.Geometry) == 0 {
 			return nil, annotationInvalid(fmt.Sprintf("annotation %d needs kind and geometry", i))
 		}
-		if a.Comment != nil && !validText(*a.Comment, maxComment, true) {
+		if a.Comment != nil && !validText(*a.Comment, 0, true) {
 			return nil, annotationInvalid(fmt.Sprintf("annotation %d has an invalid comment", i))
 		}
 		if !validStyle(*a.Kind, a.Style) {
@@ -367,7 +365,7 @@ func parseAnnotationSet(in []json.RawMessage) (*annotationSet, error) {
 			out.Geometry = oa
 		case "freehand":
 			var g freehandGeometry
-			if !strictUnmarshal(a.Geometry, &g) || len(g.Points) < 2 || len(g.Points) > maxFreehandPts {
+			if !strictUnmarshal(a.Geometry, &g) || len(g.Points) < 2 {
 				return nil, bad
 			}
 			pts := make([]outPoint, 0, len(g.Points))
@@ -385,7 +383,7 @@ func parseAnnotationSet(in []json.RawMessage) (*annotationSet, error) {
 				return nil, bad
 			}
 			p, ok := toPoint(g.Position)
-			if !ok || utf8.RuneCountInString(*g.Text) < 1 || !validText(*g.Text, maxAnnotText, true) {
+			if !ok || utf8.RuneCountInString(*g.Text) < 1 || !validText(*g.Text, 0, true) {
 				return nil, bad
 			}
 			out.Geometry = outText{Position: p, Text: *g.Text}

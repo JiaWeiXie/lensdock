@@ -5,6 +5,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"slices"
 
@@ -16,11 +18,6 @@ import (
 // hand. --project supplies all three, so combining them is ambiguous and is
 // refused instead of letting one silently override the other.
 var manualConnectionFlags = []string{"api", "workspace", "token-file", "operator-token-file"}
-
-// manualConnectionEnv are the environment defaults of those flags. A stale
-// value must not be mistaken for a deliberate choice, so a non-empty value
-// conflicts with --project as well.
-var manualConnectionEnv = []string{envAPI, envTokenFile}
 
 // projectFlag is the value of --project PATH.
 type projectFlag struct {
@@ -67,11 +64,6 @@ func (c *cli) rejectProjectOverrides(fs *flag.FlagSet) error {
 	if conflict != "" {
 		return usageErrorf("--project cannot be combined with --%s: the project supplies its own API URL, workspace and credential", conflict)
 	}
-	for _, name := range manualConnectionEnv {
-		if c.getenv(name) != "" {
-			return usageErrorf("--project cannot be used while $%s is set: unset it, or omit --project", name)
-		}
-	}
 	return nil
 }
 
@@ -90,31 +82,67 @@ func projectWorkspaceArg(pf *projectFlag, pos []string) (string, error) {
 	return pos[0], nil
 }
 
-// projectConnection pins one project's Gateway API URL, workspace and agent
-// credential location. It only uses the project-scoped management token and
-// never starts the project: a stopped project fails immediately and the user
-// starts it explicitly. Nothing is written to stdout.
-func (c *cli) projectConnection(ctx context.Context, path string) (hostmanager.Connection, error) {
+// managedProject initializes the local manager and enrolls new directories.
+// Explicitly revoked, missing or replaced grants are never repaired implicitly.
+func (c *cli) managedProject(ctx context.Context, path string) (string, hostmanager.Project, error) {
 	root, err := c.managerRoot()
+	if err != nil {
+		return "", hostmanager.Project{}, err
+	}
+	if _, err := hostmanager.LoadConfig(root); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return root, hostmanager.Project{}, err
+		}
+		quiet := *c
+		quiet.stdout = io.Discard
+		if err := quiet.managerInit(ctx, nil); err != nil {
+			return root, hostmanager.Project{}, fmt.Errorf("initialize the host manager: %w", err)
+		}
+	}
+	if err := hostmanager.EnsureRunning(ctx, root); err != nil {
+		return root, hostmanager.Project{}, fmt.Errorf("start the host manager: %w", err)
+	}
+	p, err := hostmanager.ResolveProject(root, path)
+	if errors.Is(err, hostmanager.ErrProjectNotAuthorized) {
+		resp, enrollErr := hostmanager.Call(ctx, root, hostmanager.AdminTokenFile(root), hostmanager.Request{Action: hostmanager.ActionEnroll, Path: path})
+		if enrollErr != nil {
+			return root, hostmanager.Project{}, fmt.Errorf("enroll project %s: %w", path, enrollErr)
+		}
+		if resp.Project == nil {
+			return root, hostmanager.Project{}, errors.New("manager returned no enrolled project")
+		}
+		// Resolve from the persisted registry rather than trusting an unverified
+		// response to choose the project credential or Gateway origin.
+		p, err = hostmanager.ResolveProject(root, path)
+	}
+	return root, p, err
+}
+
+// projectConnection pins the project's complete connection and starts it when
+// needed unless explicit-start policy is enabled. Stdout stays protocol-clean.
+func (c *cli) projectConnection(ctx context.Context, path string) (hostmanager.Connection, error) {
+	root, p, err := c.managedProject(ctx, path)
 	if err != nil {
 		return hostmanager.Connection{}, err
 	}
-	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
-	}
-	p, err := hostmanager.ResolveProject(root, path)
+	cfg, err := hostmanager.LoadConfig(root)
 	if err != nil {
-		return hostmanager.Connection{}, fmt.Errorf("resolve project %s: %w", path, err)
+		return hostmanager.Connection{}, err
 	}
-	if p.Revoked {
-		return hostmanager.Connection{}, fmt.Errorf("project %s has been revoked", p.Root)
+	if !cfg.Policy.RequireExplicitStart {
+		resp, err := hostmanager.Call(ctx, root, p.TokenFile, hostmanager.Request{Action: hostmanager.ActionEnsure, ProjectID: p.ID})
+		if err != nil {
+			return hostmanager.Connection{}, err
+		}
+		resp, err = c.waitProjectResult(ctx, root, p.TokenFile, p, resp, 0, true)
+		if err != nil {
+			return hostmanager.Connection{}, err
+		}
+		return *resp.Connection, nil
 	}
-	if err := hostmanager.EnsureRunning(ctx, root); err != nil {
-		return hostmanager.Connection{}, fmt.Errorf("start the host manager: %w", err)
-	}
-	resp, err := hostmanager.Call(ctx, root, p.TokenFile, hostmanager.Request{Action: "connect", ProjectID: p.ID})
+	resp, err := hostmanager.Call(ctx, root, p.TokenFile, hostmanager.Request{Action: hostmanager.ActionConnect, ProjectID: p.ID})
 	if err != nil {
-		return hostmanager.Connection{}, fmt.Errorf("connect to project %s: %w (if it is not running, start it with: lensdock project up --project %q)", p.Root, err, p.Root)
+		return hostmanager.Connection{}, fmt.Errorf("connect to project %s: %w (explicit-start policy: run lensdock project up --project %q)", p.Root, err, p.Root)
 	}
 	return checkProjectConnection(p, resp)
 }

@@ -22,7 +22,6 @@ import (
 
 const (
 	callTimeout      = 15 * time.Second
-	maxResponseBody  = 1 << 20
 	maxErrorBody     = 64 << 10
 	clipboardContent = "text/plain; charset=utf-8"
 )
@@ -119,11 +118,17 @@ type request struct {
 	out         any
 	epoch       uint64
 	generation  string
+	// noDeadline lifts the per-call timeout for a user operation whose size
+	// is not limited (the caller's context still applies).
+	noDeadline bool
 }
 
 func (c *Client) do(ctx context.Context, r request) error {
-	ctx, cancel := context.WithTimeout(ctx, callTimeout)
-	defer cancel()
+	if !r.noDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, callTimeout)
+		defer cancel()
+	}
 
 	u := *c.base
 	u.RawPath = r.path
@@ -163,15 +168,14 @@ func (c *Client) do(ctx context.Context, r request) error {
 		return decodeError(resp)
 	}
 	if r.out == nil {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	// Responses are read in full: the Gateway is the authenticated peer and
+	// a large file listing must not be refused by an implicit size quota.
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("%w: read response: %w", ErrUnreachable, err)
-	}
-	if len(data) > maxResponseBody {
-		return errors.New("apiclient: response too large")
 	}
 	if err := json.Unmarshal(data, r.out); err != nil {
 		return errors.New("apiclient: malformed response body")
@@ -252,11 +256,12 @@ func (c *Client) Workspace(ctx context.Context, ws string, op auth.Secret) (apiw
 	return w, err
 }
 
-// SetClipboard publishes text with a HUMAN lease token. text is sent verbatim.
+// SetClipboard publishes text with a HUMAN or AGENT lease token. text is sent
+// verbatim.
 func (c *Client) SetClipboard(ctx context.Context, ws string, tok auth.Secret, text []byte, epoch uint64, generation string) error {
 	return c.do(ctx, request{
 		method: http.MethodPut, path: workspacePath(ws, "clipboard"), token: tok,
 		contentType: clipboardContent, body: text,
-		epoch: epoch, generation: generation,
+		epoch: epoch, generation: generation, noDeadline: true,
 	})
 }

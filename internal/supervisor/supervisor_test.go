@@ -2,11 +2,15 @@ package supervisor
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -21,7 +25,7 @@ func TestChromiumArgvKeepsSandboxAndLoopbackCDP(t *testing.T) {
 		"--password-store=basic", "--disable-gpu", "--single-process",
 		"--disable-namespace-sandbox",
 	}
-	argv := ChromiumArgv()
+	argv := ChromiumArgv(true)
 	if len(argv) == 0 {
 		t.Fatal("empty argv")
 	}
@@ -41,6 +45,59 @@ func TestChromiumArgvKeepsSandboxAndLoopbackCDP(t *testing.T) {
 	}
 	if !netx.IsLoopbackIP(debugAddress) {
 		t.Errorf("remote debugging address %q is not loopback", debugAddress)
+	}
+}
+
+func TestChromiumArgvNoSandboxOnlyWhenDisabled(t *testing.T) {
+	hasNoSandbox := func(argv []string) bool {
+		return slices.Contains(argv[1:], "--no-sandbox")
+	}
+	enabled := ChromiumArgv(true)
+	if hasNoSandbox(enabled) {
+		t.Errorf("enabled argv contains --no-sandbox: %v", enabled)
+	}
+	disabled := ChromiumArgv(false)
+	if !hasNoSandbox(disabled) {
+		t.Errorf("disabled argv lacks --no-sandbox: %v", disabled)
+	}
+	// Disabling the sandbox changes nothing else, and CDP stays on loopback.
+	rest := slices.DeleteFunc(slices.Clone(disabled), func(a string) bool { return a == "--no-sandbox" })
+	if !slices.Equal(rest, enabled) {
+		t.Errorf("disabled argv differs beyond --no-sandbox:\n got %v\nwant %v", rest, enabled)
+	}
+	if !slices.Contains(disabled, "--remote-debugging-address="+cdpHost) {
+		t.Errorf("disabled argv does not keep the loopback CDP address: %v", disabled)
+	}
+}
+
+func TestDetailReportsSandboxEnabledAccurately(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		s := newSupervisor(Hooks{}, slog.New(slog.DiscardHandler))
+		s.chromiumSandbox = enabled
+		// Cached values keep Detail from running host commands.
+		s.fonts, s.packages = map[string]string{}, map[string]string{}
+		got := s.Detail().Sandbox
+		// Before any proof the sandbox is never reported verified, but
+		// Enabled already mirrors the configuration.
+		if got.Enabled != enabled || got.Verified {
+			t.Errorf("enabled=%v: report = %+v, want Enabled=%v Verified=false", enabled, got, enabled)
+		}
+		data, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `"enabled":` + strconv.FormatBool(enabled)
+		if !strings.Contains(string(data), want) || !strings.Contains(string(data), `"verified":false`) {
+			t.Errorf("enabled=%v: JSON %s lacks %s and verified:false", enabled, data, want)
+		}
+	}
+}
+
+func TestNewRecordsSandboxChoice(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		if got := New(Hooks{}, slog.New(slog.DiscardHandler), enabled).chromiumSandbox; got != enabled {
+			t.Errorf("New(..., %v) chromiumSandbox = %v", enabled, got)
+		}
 	}
 }
 
@@ -98,6 +155,30 @@ func TestLoadConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("chromium sandbox defaults to disabled", func(t *testing.T) {
+		cfg, err := LoadConfig(envMap(valid()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.ChromiumSandbox {
+			t.Fatal("ChromiumSandbox is enabled by default")
+		}
+	})
+
+	t.Run("chromium sandbox explicit values", func(t *testing.T) {
+		for value, want := range map[string]bool{"true": true, "1": true, "false": false, "0": false} {
+			env := valid()
+			env[EnvChromiumSandbox] = value
+			cfg, err := LoadConfig(envMap(env))
+			if err != nil {
+				t.Fatalf("%s=%q: %v", EnvChromiumSandbox, value, err)
+			}
+			if cfg.ChromiumSandbox != want {
+				t.Errorf("%s=%q: ChromiumSandbox = %v, want %v", EnvChromiumSandbox, value, cfg.ChromiumSandbox, want)
+			}
+		}
+	})
+
 	invalid := []struct {
 		name   string
 		mutate func(map[string]string)
@@ -112,6 +193,8 @@ func TestLoadConfig(t *testing.T) {
 		{"ttl not a duration", func(m map[string]string) { m[EnvClipboardTTL] = "soon" }, EnvClipboardTTL},
 		{"ttl zero", func(m map[string]string) { m[EnvClipboardTTL] = "0s" }, EnvClipboardTTL},
 		{"ttl too long", func(m map[string]string) { m[EnvClipboardTTL] = "24h" }, EnvClipboardTTL},
+		{"sandbox not a boolean", func(m map[string]string) { m[EnvChromiumSandbox] = "yes" }, EnvChromiumSandbox},
+		{"sandbox garbage", func(m map[string]string) { m[EnvChromiumSandbox] = "enabled" }, EnvChromiumSandbox},
 	}
 	for _, tt := range invalid {
 		t.Run(tt.name, func(t *testing.T) {

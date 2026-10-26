@@ -13,9 +13,6 @@ import (
 	"github.com/JiaWeiXie/lensdock/internal/transfer"
 )
 
-// uploadReadTimeout bounds how long one upload body may take.
-const uploadReadTimeout = 30 * time.Minute
-
 func (a *api) filesReady(w http.ResponseWriter) bool {
 	if a.Files == nil {
 		writeError(w, http.StatusBadGateway, apiwire.CodeUpstreamUnavailable, "file service unavailable")
@@ -130,7 +127,7 @@ func (a *api) putFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusLengthRequired, apiwire.CodeInvalidRequest, "Content-Length is required")
 		return
 	}
-	if r.ContentLength > a.FileLimits.MaxFileBytes {
+	if a.FileLimits.MaxFileBytes > 0 && r.ContentLength > a.FileLimits.MaxFileBytes {
 		writeError(w, http.StatusRequestEntityTooLarge, apiwire.CodeBodyTooLarge, "file exceeds the per-file size limit")
 		return
 	}
@@ -143,7 +140,9 @@ func (a *api) putFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, apiwire.CodeInvalidRequest, "overwrite must be 0 or 1")
 		return
 	}
-	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(uploadReadTimeout))
+	if a.UploadReadTimeout > 0 {
+		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(a.UploadReadTimeout))
+	}
 	// The HTTP server frames the body by Content-Length, so it cannot
 	// deliver more than size bytes; Put still verifies it got exactly size.
 	e, err := a.Files.Put(r.Context(), name, r.Body, r.ContentLength, overwrite)

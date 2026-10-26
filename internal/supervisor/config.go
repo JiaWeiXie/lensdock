@@ -11,6 +11,7 @@ package supervisor
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"path/filepath"
 	"regexp"
@@ -21,7 +22,6 @@ import (
 	"github.com/JiaWeiXie/lensdock/internal/apiwire"
 	"github.com/JiaWeiXie/lensdock/internal/auth"
 	"github.com/JiaWeiXie/lensdock/internal/netx"
-	"github.com/JiaWeiXie/lensdock/internal/transfer"
 )
 
 // ErrUnsupportedPlatform is returned by Linux-only operations on other
@@ -53,6 +53,18 @@ const (
 	EnvFileMaxBytes   = "LENSDOCK_FILE_MAX_BYTES"
 	EnvFileMaxFiles   = "LENSDOCK_FILE_MAX_FILES"
 
+	// Optional viewport screenshot limits; unset or 0 means no limit.
+	EnvCaptureMaxImageBytes  = "LENSDOCK_CAPTURE_MAX_IMAGE_BYTES"
+	EnvCaptureMaxImagePixels = "LENSDOCK_CAPTURE_MAX_IMAGE_PIXELS"
+
+	// Optional clipboard text limit in bytes; unset or 0 means no limit.
+	EnvClipboardMaxBytes = "LENSDOCK_CLIPBOARD_MAX_BYTES"
+
+	// Optional deadlines for a file upload or clipboard text body to arrive
+	// (Go durations such as 30m); unset or 0 means no deadline.
+	EnvUploadReadTimeout    = "LENSDOCK_UPLOAD_READ_TIMEOUT"
+	EnvClipboardReadTimeout = "LENSDOCK_CLIPBOARD_READ_TIMEOUT"
+
 	// EnvMode is the initial usage mode, NOVNC or AGENT (case-insensitive;
 	// default AGENT). It applies only until a policy has been saved: the
 	// saved policy wins afterwards. `supervise --mode` overrides it.
@@ -61,6 +73,13 @@ const (
 	// usage policy (default /data/runtime). It must be a persistent volume
 	// the browser user cannot access.
 	EnvPolicyDir = "LENSDOCK_POLICY_DIR"
+
+	// EnvChromiumSandbox opts in to Chromium's namespace sandbox (a boolean,
+	// default false). When true the runtime requires the user-namespace
+	// preflight and the renderer sandbox proof and fails closed; when false
+	// Chromium starts with --no-sandbox and the Docker container is the only
+	// isolation boundary.
+	EnvChromiumSandbox = "LENSDOCK_CHROMIUM_SANDBOX"
 )
 
 // DefaultPolicyDir is the default EnvPolicyDir.
@@ -105,11 +124,22 @@ type Config struct {
 	FileQuotaBytes int64
 	FileMaxBytes   int64
 	FileMaxFiles   int
+	// Optional viewport screenshot limits; zero means no limit.
+	CaptureMaxImageBytes  int64
+	CaptureMaxImagePixels int64
+	// Optional clipboard text limit in bytes; zero means no limit.
+	ClipboardMaxBytes int
+	// Optional deadlines for the arrival of a file upload or clipboard text
+	// body; zero means no deadline.
+	UploadReadTimeout    time.Duration
+	ClipboardReadTimeout time.Duration
 	// AgentMode is the initial usage mode: apiwire.AgentModeNOVNC or
 	// apiwire.AgentModeAGENT.
 	AgentMode string
 	// PolicyDir persists the usage policy (absolute, supervisor-private).
 	PolicyDir string
+	// ChromiumSandbox enables Chromium's own sandbox (default false).
+	ChromiumSandbox bool
 }
 
 // LoadConfig reads and validates the runtime environment. Every problem is
@@ -172,7 +202,15 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 			cfg.PolicyDir = v
 		}
 	}
-	loadFileLimits(getenv, &cfg, &errs)
+	if v := getenv(EnvChromiumSandbox); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s must be a boolean (true or false)", EnvChromiumSandbox))
+		} else {
+			cfg.ChromiumSandbox = enabled
+		}
+	}
+	loadUsageLimits(getenv, &cfg, &errs)
 
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
@@ -240,32 +278,49 @@ func loadTLS(getenv func(string) string, cfg *Config) []error {
 	return errs
 }
 
-// loadFileLimits reads the transfer area limits. Unset variables keep zero,
-// which the transfer package turns into its default; the effective pair is
-// validated so a per-file limit can never exceed the quota.
-func loadFileLimits(getenv func(string) string, cfg *Config, errs *[]error) {
-	readInt := func(env string, max int64) (int64, bool) {
+// loadUsageLimits reads the optional usage limits: the transfer area, viewport
+// screenshots and clipboard text. Unset, empty or "0" keep zero, which means no
+// limit. When both the per-file limit and the quota are set the per-file limit
+// must not exceed the quota.
+func loadUsageLimits(getenv func(string) string, cfg *Config, errs *[]error) {
+	read := func(env string, max int64) int64 {
 		v := getenv(env)
 		if v == "" {
-			return 0, true
+			return 0
 		}
 		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n <= 0 || n > max {
-			*errs = append(*errs, fmt.Errorf("%s must be a positive integer", env))
-			return 0, false
+		if err != nil || n < 0 || n > max {
+			*errs = append(*errs, fmt.Errorf("%s must be a non-negative integer (0 means no limit)", env))
+			return 0
 		}
-		return n, true
+		return n
 	}
-	quota, okQ := readInt(EnvFileQuotaBytes, maxFileLimit)
-	maxFile, okF := readInt(EnvFileMaxBytes, maxFileLimit)
-	count, okC := readInt(EnvFileMaxFiles, 1<<31-1)
-	if !okQ || !okF || !okC {
-		return
-	}
-	cfg.FileQuotaBytes, cfg.FileMaxBytes, cfg.FileMaxFiles = quota, maxFile, int(count)
-	effective := transfer.Limits{QuotaBytes: quota, MaxFileBytes: maxFile, MaxFiles: int(count)}.WithDefaults()
-	if effective.MaxFileBytes > effective.QuotaBytes {
+	cfg.FileQuotaBytes = read(EnvFileQuotaBytes, maxFileLimit)
+	cfg.FileMaxBytes = read(EnvFileMaxBytes, maxFileLimit)
+	cfg.FileMaxFiles = int(read(EnvFileMaxFiles, 1<<31-1))
+	if cfg.FileQuotaBytes > 0 && cfg.FileMaxBytes > cfg.FileQuotaBytes {
 		*errs = append(*errs, fmt.Errorf("%s must not exceed %s", EnvFileMaxBytes, EnvFileQuotaBytes))
+	}
+	cfg.CaptureMaxImageBytes = read(EnvCaptureMaxImageBytes, math.MaxInt64)
+	cfg.CaptureMaxImagePixels = read(EnvCaptureMaxImagePixels, math.MaxInt64)
+	cfg.ClipboardMaxBytes = int(read(EnvClipboardMaxBytes, 1<<31-1))
+	for _, d := range []struct {
+		env string
+		dst *time.Duration
+	}{
+		{EnvUploadReadTimeout, &cfg.UploadReadTimeout},
+		{EnvClipboardReadTimeout, &cfg.ClipboardReadTimeout},
+	} {
+		v := getenv(d.env)
+		if v == "" {
+			continue
+		}
+		dur, err := time.ParseDuration(v)
+		if err != nil || dur < 0 {
+			*errs = append(*errs, fmt.Errorf("%s must be a non-negative Go duration such as 30m (0 means no deadline)", d.env))
+			continue
+		}
+		*d.dst = dur
 	}
 }
 

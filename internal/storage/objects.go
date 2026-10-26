@@ -127,8 +127,8 @@ func (o *Objects) Put(key string, data []byte) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// Read returns the object, refusing anything above max bytes or that is not a
-// regular file.
+// Read returns the object, refusing anything above max bytes (max <= 0 means
+// no size cap) or that is not a regular file.
 func (o *Objects) Read(key string, max int64) ([]byte, error) {
 	if !validKey(key) {
 		return nil, ErrInvalidName
@@ -175,6 +175,9 @@ func (o *Objects) List() ([]ObjectInfo, error) {
 }
 
 func readRegular(path string, max int64) ([]byte, error) {
+	if max <= 0 {
+		return readRegularUncapped(path)
+	}
 	st, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, ErrNotFound
@@ -201,6 +204,21 @@ func readRegular(path string, max int64) ([]byte, error) {
 		return nil, ErrTooLarge
 	}
 	return data, nil
+}
+
+// readRegularUncapped reads a regular, non-symlink file of any size.
+func readRegularUncapped(path string) ([]byte, error) {
+	st, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, ErrNotFound
+	}
+	return os.ReadFile(path)
 }
 
 // File is one immutable artifact file.
@@ -280,7 +298,8 @@ func (a *Artifacts) Publish(feedbackID string, revision int, files []File) error
 	return syncDir(parent)
 }
 
-// Read returns one artifact file, refusing symlinks and files above max.
+// Read returns one artifact file, refusing symlinks and files above max
+// (max <= 0 means no size cap).
 func (a *Artifacts) Read(feedbackID string, revision int, name string, max int64) ([]byte, error) {
 	_, dir, err := a.revDir(feedbackID, revision)
 	if err != nil || !validFileName(name) {

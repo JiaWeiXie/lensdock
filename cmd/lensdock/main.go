@@ -43,12 +43,9 @@ const (
   lensdock lease refresh --lease-file F --output NEW_LEASEFILE [--project PATH]
   lensdock workspace status [<ws> | --project PATH] [--api URL] [--operator-token-file F]
   lensdock workspace watch [<ws> | --project PATH] [--api URL] [--token-file F]
-      --project supplies API/workspace/credential and refuses manual overrides or LENSDOCK_API/LENSDOCK_TOKEN_FILE.
-  lensdock cdp bridge --lease-file F [--project PATH] [--listen 127.0.0.1:0] [--url-file F] [--path-secret]
-      serves CDP at the loopback root (http://127.0.0.1:PORT); with --path-secret
-      every URL carries a random secret path prefix instead
-  lensdock clipboard set --lease-file F [--project PATH]   (text on stdin)
-` + projectUsageText + updateUsageText + releaseUsageText + feedbackUsageText + mcpUsageText
+      --project supplies API/workspace/credential, ignores stale connection environment, and refuses conflicting explicit flags.
+  lensdock clipboard set --lease-file F [--project PATH]   (HUMAN or AGENT lease; text on stdin)
+` + bridgeUsageText + desktopUsageText + projectUsageText + updateUsageText + releaseUsageText + feedbackUsageText + mcpUsageText
 )
 
 // cli carries the process environment so commands can be tested.
@@ -155,6 +152,8 @@ func (c *cli) dispatch(ctx context.Context, args []string) error {
 		return c.subcommand(sub, "cdp", map[string]func([]string) error{
 			"bridge": func(a []string) error { return c.cdpBridge(ctx, a) },
 		})
+	case "desktop":
+		return c.desktopCommand(ctx, sub)
 	case "clipboard":
 		return c.subcommand(sub, "clipboard", map[string]func([]string) error{"set": func(a []string) error { return c.clipboardSet(ctx, a) }})
 	case "update":

@@ -152,8 +152,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func quoteETag(etag string) string { return `"` + etag + `"` }
 
+// readBody reads the whole request body; max <= 0 means no size limit.
 func readBody(w http.ResponseWriter, r *http.Request, max int64) ([]byte, error) {
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, max))
+	var body io.Reader = r.Body
+	if max > 0 {
+		body = http.MaxBytesReader(w, r.Body, max)
+	}
+	data, err := io.ReadAll(body)
 	if err != nil {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
@@ -185,7 +190,7 @@ func (h *handler) decodeJSON(w http.ResponseWriter, r *http.Request, v any, opti
 	if !mediaTypeIs(r, "application/json") {
 		return ErrUnsupportedMedia
 	}
-	if err := apiwire.Decode(bytes.NewReader(data), h.s.lim.MaxJSONBody, v); err != nil {
+	if err := apiwire.Decode(bytes.NewReader(data), int64(len(data)), v); err != nil {
 		switch {
 		case errors.Is(err, apiwire.ErrBodyTooLarge):
 			return ErrBodyTooLarge

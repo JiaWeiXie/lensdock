@@ -69,7 +69,7 @@ export function uploadDraftPreview(
     contentType: 'image/png',
     headers: { 'If-Match': etag },
     idempotencyKey,
-    timeoutMs: 120000,
+    timeoutMs: 0,
   });
 }
 
@@ -80,7 +80,7 @@ export function publishDraft(feedbackId: string, etag: string, idempotencyKey: s
     body: { humanApproved: true, dispatch: true },
     headers: { 'If-Match': etag },
     idempotencyKey,
-    timeoutMs: 120000,
+    timeoutMs: 0,
   });
 }
 

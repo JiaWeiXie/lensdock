@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -23,7 +24,12 @@ func (g *Gateway) OpenFeedback(ctx context.Context) (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, err := feedback.New(ctx, st, feedback.Options{WorkspaceExists: func(id string) bool { return g.runtimes[id] != nil }, Agents: func(ws string) feedback.AgentRoster { return agentRoster(g.config, ws) }, ViewportCapturer: g.captureViewport, RuntimeGeneration: g.runtimeGeneration})
+	limits, err := feedback.LimitsFromEnv(g.config.FeedbackLimits, os.Getenv)
+	if err != nil {
+		st.Close()
+		return nil, err
+	}
+	s, err := feedback.New(ctx, st, feedback.Options{WorkspaceExists: func(id string) bool { return g.runtimes[id] != nil }, Agents: func(ws string) feedback.AgentRoster { return agentRoster(g.config, ws) }, ViewportCapturer: g.captureViewport, RuntimeGeneration: g.runtimeGeneration, Limits: limits})
 	if err != nil {
 		st.Close()
 		return nil, err
@@ -170,7 +176,7 @@ func (g *Gateway) captureViewport(ctx context.Context, req feedback.ViewportRequ
 		}
 	}
 	imagePath := path + "/" + url.PathEscape(meta.CaptureID) + "/image"
-	status, _, png, err := e.call(ctx, "GET", imagePath, e.operator, actor.ID, nil, nil)
+	status, _, png, err := e.callTransfer(ctx, "GET", imagePath, e.operator, actor.ID, nil, nil)
 	if err != nil || status != 200 {
 		return out, errors.New("runtime capture image unavailable")
 	}

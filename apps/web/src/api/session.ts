@@ -1,24 +1,21 @@
 import { ApiError, request, setCsrfToken } from './http';
 import type { SessionInfo } from './types';
 
-/** What the Gateway said about the current browser: a session, or anonymous (maybe with demo entry on offer). */
+/** The current browser session, or anonymous with optional local re-entry. */
 export interface SessionProbe {
   info: SessionInfo | null;
-  /** True after a demo sign-out: the Gateway runs local demo no-auth and waits for an explicit entry. */
-  demoAvailable: boolean;
+  /** True after local sign-out when explicit token-free re-entry is available. */
+  localAvailable: boolean;
 }
 
-/**
- * Reads the cookie session. With the Gateway's opt-in local demo no-auth, this same-origin
- * fetch also creates the demo session, so no token is needed; otherwise 401 means anonymous.
- */
+/** Reads the session and automatically enters locally unless pairing is required. */
 export async function getSession(signal?: AbortSignal): Promise<SessionProbe> {
   try {
     const info = await request<SessionInfo>('/api/v1/session', { signal, quiet401: true });
     setCsrfToken(info.csrfToken);
-    return { info, demoAvailable: info.demo === true };
+    return { info, localAvailable: info.localAccess === true };
   } catch (err) {
-    if (err instanceof ApiError && err.status === 401) return { info: null, demoAvailable: err.code === 'DEMO_SIGNED_OUT' };
+    if (err instanceof ApiError && err.status === 401) return { info: null, localAvailable: err.code === 'LOCAL_SIGNED_OUT' };
     throw err;
   }
 }
@@ -34,11 +31,11 @@ export async function pair(token: string): Promise<SessionInfo> {
   return info;
 }
 
-/** Explicit demo entry (only meaningful when the Gateway reported demo availability). */
-export async function enterDemo(): Promise<SessionInfo> {
+/** Explicit local re-entry after logout. */
+export async function enterLocal(): Promise<SessionInfo> {
   const info = await request<SessionInfo>('/api/v1/session', {
     method: 'POST',
-    body: { demo: true },
+    body: { localAccess: true },
     quiet401: true,
   });
   setCsrfToken(info.csrfToken);

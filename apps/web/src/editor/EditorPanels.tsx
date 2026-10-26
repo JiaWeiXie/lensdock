@@ -3,7 +3,7 @@ import type { Annotation } from '@/api/types';
 import { Button, Field } from '@/components/ui';
 import { Icon, type IconName } from '@/components/icons';
 import { useI18n, type MessageKey } from '@/i18n';
-import { graphemes, codePointLength, truncateToCodePoints } from '@/util/text';
+import { graphemes, codePointLength } from '@/util/text';
 import { ColorMenu, ColorSwatches } from './ColorPalette';
 import {
   ARROW_STYLES,
@@ -29,7 +29,6 @@ import {
   type StylePatch,
   type StyleValues,
 } from './drawStyle';
-import { MAX_ANNOTATIONS, MAX_COMMENT_CP } from './model';
 import type { Alignment, ReorderDirection } from './selection';
 import { useDropdown } from './useDropdown';
 
@@ -366,7 +365,7 @@ export function AnnotationList({
     <div>
       <div className="listhead">
         <p className="panel__desc" aria-live="polite">
-          {t('editor.count', { n: annotations.length, max: MAX_ANNOTATIONS })}
+          {t('editor.count', { n: annotations.length })}
         </p>
         <Button small variant="ghost" icon="trash" disabled={annotations.length === 0} onClick={onClear}>
           {t('editor.clear.button')}
@@ -531,7 +530,7 @@ export function AnnotationInspector({
         <Field
           label={a.kind === 'pin' ? t('editor.pinComment') : t('editor.comment')}
           htmlFor="ann-comment"
-          hint={t('common.count', { n: codePointLength(a.comment ?? ''), max: MAX_COMMENT_CP })}
+          hint={t('common.count', { n: codePointLength(a.comment ?? '') })}
         >
           <textarea
             id="ann-comment"
@@ -539,7 +538,7 @@ export function AnnotationInspector({
             rows={3}
             lang="zh-TW"
             value={a.comment ?? ''}
-            onChange={(e) => onChange({ ...a, comment: truncateToCodePoints(e.target.value, MAX_COMMENT_CP) }, `comment:${a.id}`)}
+            onChange={(e) => onChange({ ...a, comment: e.target.value }, `comment:${a.id}`)}
           />
         </Field>
         {a.kind === 'pin' ? <p className="panel__desc">{t('editor.pinHint')}</p> : null}

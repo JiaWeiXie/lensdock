@@ -115,6 +115,8 @@ type InitOptions struct {
 	// DeploymentID is the non-secret identity the Gateway exposes and mixes
 	// into its cookie names. Empty means a standalone deployment.
 	DeploymentID string
+	// RequirePairing disables automatic same-origin local browser entry.
+	RequirePairing bool
 	// Bundle is the release bundle copied into the private state directory. A
 	// release deployment never reads the bundle again, so removing or
 	// upgrading it cannot break the deployment.
@@ -146,6 +148,7 @@ type initPlan struct {
 	gatewayImage       string
 	sourceDir          string
 	deploymentID       string
+	requirePairing     bool
 	bundle             *Bundle
 	managedBy          *update.ManagedOwner
 	fingerprint        string
@@ -165,7 +168,7 @@ func newPlan(opts InitOptions) (*initPlan, error) {
 	p := &initPlan{
 		workspace: opts.WorkspaceID, project: opts.Project,
 		runtimeImage: opts.RuntimeImage, gatewayImage: opts.GatewayImage,
-		deploymentID: opts.DeploymentID,
+		deploymentID: opts.DeploymentID, requirePairing: opts.RequirePairing,
 	}
 	if opts.StateDir == "" {
 		return nil, optionErrorf("state directory is required")
@@ -254,7 +257,8 @@ func (p *initPlan) computeFingerprint() string {
 		SourceDir, DeploymentID                string
 		BundleVersion                          string
 		ManagedBy                              *update.ManagedOwner
-	}{p.root, p.origin, p.workspace, p.mode, p.project, p.runtimeImage, p.gatewayImage, p.sourceDir, p.deploymentID, "", p.managedBy}
+		RequirePairing                         bool `json:",omitempty"`
+	}{p.root, p.origin, p.workspace, p.mode, p.project, p.runtimeImage, p.gatewayImage, p.sourceDir, p.deploymentID, "", p.managedBy, p.requirePairing}
 	if p.bundle != nil {
 		in.BundleVersion = p.bundle.Version
 	}
@@ -524,6 +528,7 @@ func (p *initPlan) build() (rec *pendingRecord, err error) {
 		return nil, err
 	}
 	cfg := gateway.Config{Listen: ":8080", Origin: p.origin, DeploymentID: p.deploymentID, DataDir: "/data", WebDir: "/app/web", Identities: identities, Runtimes: []gateway.RuntimeConfig{{WorkspaceID: p.workspace, URL: "https://runtime:8080", OperatorTokenFile: "/run/lensdock/operator-token", CAFile: "/run/lensdock/ca.crt", ClientCertFile: "/run/lensdock/gateway.crt", ClientKeyFile: "/run/lensdock/gateway.key"}}}
+	cfg.RequirePairing = p.requirePairing
 	cfg.StatusFile = "/run/lensdock-status/deployment-status.json"
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

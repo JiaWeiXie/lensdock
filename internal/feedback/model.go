@@ -116,7 +116,7 @@ type CaptureState struct {
 	Page              *PageInfo        `json:"page,omitempty"`
 	ParentTransform   *ParentTransform `json:"parentTransform,omitempty"`
 	FeedbackID        string           `json:"feedbackId,omitempty"`
-	ExpiresAt         time.Time        `json:"expiresAt"`
+	ExpiresAt         *time.Time       `json:"expiresAt,omitempty"` // absent: never expires
 }
 
 // Task is the human-written part of a feedback revision.
@@ -145,7 +145,7 @@ type DraftDetail struct {
 	Task           Task              `json:"task"`
 	Annotations    []json.RawMessage `json:"annotations"`
 	PreviewReady   bool              `json:"previewReady"`
-	ExpiresAt      time.Time         `json:"expiresAt"`
+	ExpiresAt      *time.Time        `json:"expiresAt,omitempty"` // absent: never expires
 	RedactionCount int               `json:"redactionCount"`
 	Warnings       []string          `json:"warnings"`
 }

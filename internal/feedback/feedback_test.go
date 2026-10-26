@@ -314,10 +314,10 @@ func TestDraftWithoutRedactionWarnsAndPartialProseStillPublishes(t *testing.T) {
 	bad := goodTask()
 	bad["kind"] = "epic"
 	e.do(&humanP, "POST", "/api/v1/feedback", map[string]any{"workspaceId": "ws1", "captureId": capID, "task": bad}).wantErr(400, CodeInvalidRequest)
-	// So are oversized prose fields.
+	// Long prose fields are accepted: length is bounded only by the optional JSON limit.
 	long := goodTask()
-	long["expectedResult"] = strings.Repeat("e", maxExpected+1)
-	e.do(&humanP, "POST", "/api/v1/feedback", map[string]any{"workspaceId": "ws1", "captureId": capID, "task": long}).wantErr(400, CodeInvalidRequest)
+	long["expectedResult"] = strings.Repeat("e", 20000)
+	e.do(&humanP, "POST", "/api/v1/feedback", map[string]any{"workspaceId": "ws1", "captureId": capID, "task": long}).want(201)
 }
 
 func TestVisualOnlyDraftPublishesWithoutAnyProse(t *testing.T) {
@@ -751,8 +751,8 @@ func TestQuotasBlockNewDraftsAndKeepEvidence(t *testing.T) {
 	e.do(&humanP, "POST", "/api/v1/feedback", map[string]any{"workspaceId": "ws1", "captureId": c2, "task": goodTask()}).want(201)
 }
 
-func TestRetentionExpiresDraftsButNotPublished(t *testing.T) {
-	e := newEnv(t)
+func TestConfiguredDraftTTLExpiresDraftsButNotPublished(t *testing.T) {
+	e := newEnv(t, func(o *Options) { o.Limits.DraftTTLSeconds = 24 * 60 * 60 })
 	_, pf := publishedFlow(t, e)
 	c := e.capture(humanP, secretPNG(t))
 	d := e.draft(humanP, c)

@@ -45,10 +45,12 @@ const (
 // Request actions.
 const (
 	ActionAuthorize = "authorize"
+	ActionEnroll    = "enroll"
 	ActionList      = "list"
 	ActionRelocate  = "relocate"
 	ActionRevoke    = "revoke"
 	ActionPolicy    = "policy"
+	ActionLimits    = "limits"
 	ActionRecover   = "recover"
 	ActionEnsure    = "ensure"
 	ActionStatus    = "status"
@@ -57,6 +59,7 @@ const (
 	ActionStop      = "stop"
 	ActionUpdate    = "update"
 	ActionConnect   = "connect"
+	ActionShutdown  = "shutdown"
 )
 
 // Update action kinds.
@@ -68,6 +71,8 @@ const (
 	UpdatePrune    = "prune"
 	UpdateDelete   = "delete"
 	UpdateVerify   = "verify"
+	UpdateExpire   = "expire"
+	UpdatePolicy   = "policy"
 )
 
 const maxTerminalOps = 256
@@ -115,6 +120,10 @@ type projectRecord struct {
 	// finished. Observations that began earlier cannot release the reservation.
 	SettledRevision uint64 `json:"settledRevision"`
 	LastOp          string `json:"lastOp,omitempty"`
+
+	// ExpiryCheckedAt is when the manager last considered scheduling the
+	// automatic expiry of this project's unused old system data.
+	ExpiryCheckedAt time.Time `json:"expiryCheckedAt,omitempty"`
 }
 
 type opRecord struct {
@@ -224,7 +233,7 @@ func saveRegistry(root string, r *registry) error {
 // unresolvedOp returns the project's single unresolved operation, if any.
 func (r *registry) unresolvedOp(projectID string) *opRecord {
 	for _, op := range r.Ops {
-		if op.ProjectID == projectID && unresolvedPhase(op.Phase) {
+		if op.ProjectID == projectID && unresolvedPhase(op.Phase) && !queuedHousekeeping(op) {
 			return op
 		}
 	}
@@ -342,7 +351,7 @@ func buildProject(root string, r *registry, p *projectRecord, x *viewExtra) Proj
 	if observed == StatePartial || observed == StateUnknown {
 		blocker = p.ObservedBlocker
 	}
-	if op := r.unresolvedOp(p.ID); op != nil {
+	if op := r.unresolvedOp(p.ID); op != nil && !quietHousekeeping(op) {
 		opID = op.ID
 		switch op.Phase {
 		case PhaseBlocked:

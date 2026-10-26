@@ -337,7 +337,10 @@ type readyDoc struct {
 	Detail struct {
 		ChromiumVersion string `json:"chromiumVersion"`
 		Sandbox         struct {
-			Verified bool `json:"verified"`
+			// Enabled is nil in reports of runtimes that predate the field;
+			// they keep the previous requirement that the sandbox is verified.
+			Enabled  *bool `json:"enabled"`
+			Verified bool  `json:"verified"`
 		} `json:"sandbox"`
 		FcMatch  map[string]string `json:"fcMatch"`
 		Packages map[string]string `json:"packages"`

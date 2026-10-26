@@ -148,37 +148,58 @@ func (s CheckpointStore) Load(id string) (Checkpoint, error) {
 	return cp, nil
 }
 
-// List returns the complete checkpoints, newest first, and the names of
-// leftover incomplete directories.
-func (s CheckpointStore) List() ([]Checkpoint, []string, error) {
+// CheckpointInventory is a classified view of the backup directory. Malformed
+// holds checkpoint directories whose metadata cannot be read or validated: they
+// are neither complete nor provably abandoned, so only an explicit prune
+// removes them.
+type CheckpointInventory struct {
+	Complete   []Checkpoint
+	Incomplete []string
+	Malformed  []string
+}
+
+// Inventory classifies every directory of the store. Complete is newest first.
+func (s CheckpointStore) Inventory() (CheckpointInventory, error) {
 	entries, err := os.ReadDir(s.Dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil, nil
+			return CheckpointInventory{}, nil
 		}
-		return nil, nil, err
+		return CheckpointInventory{}, err
 	}
-	var cps []Checkpoint
-	var incomplete []string
+	var inv CheckpointInventory
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		switch {
 		case strings.HasPrefix(e.Name(), incompletePrefix):
-			incomplete = append(incomplete, e.Name())
+			inv.Incomplete = append(inv.Incomplete, e.Name())
 		case checkpointIDPattern.MatchString(e.Name()):
 			cp, err := s.Load(e.Name())
 			if err != nil {
-				incomplete = append(incomplete, e.Name())
+				inv.Malformed = append(inv.Malformed, e.Name())
 				continue
 			}
-			cps = append(cps, cp)
+			inv.Complete = append(inv.Complete, cp)
 		}
 	}
-	sort.Slice(cps, func(a, b int) bool { return cps[a].CreatedAt.After(cps[b].CreatedAt) })
+	sort.Slice(inv.Complete, func(a, b int) bool { return inv.Complete[a].CreatedAt.After(inv.Complete[b].CreatedAt) })
+	sort.Strings(inv.Incomplete)
+	sort.Strings(inv.Malformed)
+	return inv, nil
+}
+
+// List returns the complete checkpoints, newest first, and the names of
+// leftover incomplete or unreadable directories.
+func (s CheckpointStore) List() ([]Checkpoint, []string, error) {
+	inv, err := s.Inventory()
+	if err != nil {
+		return nil, nil, err
+	}
+	incomplete := append(inv.Incomplete, inv.Malformed...)
 	sort.Strings(incomplete)
-	return cps, incomplete, nil
+	return inv.Complete, incomplete, nil
 }
 
 // Usage returns the number of checkpoints and the bytes below the backup

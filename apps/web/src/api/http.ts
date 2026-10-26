@@ -119,7 +119,9 @@ export async function requestFull<T>(path: string, opts: RequestOptions = {}): P
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), opts.timeoutMs ?? 30000);
+  // timeoutMs 0 disables the deadline: uploads and downloads of user data have no size limit, so no fixed time limit either.
+  const timeoutMs = opts.timeoutMs ?? 30000;
+  const timeout = timeoutMs > 0 ? setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), timeoutMs) : undefined;
   const outer = opts.signal;
   const onOuterAbort = (): void => controller.abort(outer?.reason);
   if (outer) {

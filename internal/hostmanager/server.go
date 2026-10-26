@@ -24,9 +24,6 @@ const (
 
 	// DefaultHeartbeatTTL is how long a waiter stays alive without a heartbeat.
 	DefaultHeartbeatTTL = 15 * time.Second
-	maxWaitDeadline     = 24 * time.Hour
-	defaultWaitDeadline = 10 * time.Minute
-	defaultUpdateWait   = 15 * time.Minute
 )
 
 // options are the daemon timings and seams. Production uses defaultOptions.
@@ -87,7 +84,8 @@ type server struct {
 	invTried     time.Time
 	refreshedRev uint64
 
-	kickCh chan struct{}
+	kickCh     chan struct{}
+	shutdownCh chan struct{}
 }
 
 func newServer(root string, backend Backend, opts options, logger *slog.Logger) (*server, error) {
@@ -107,18 +105,19 @@ func newServer(root string, backend Backend, opts options, logger *slog.Logger) 
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 	s := &server{
-		root:      cfg.Root,
-		backend:   backend,
-		opts:      opts,
-		log:       logger,
-		adminHash: hashToken(strings.TrimSpace(string(token))),
-		cfg:       cfg,
-		reg:       reg,
-		seen:      map[string]time.Time{},
-		reasons:   map[string]string{},
-		usage:     map[string]Resources{},
-		usageOK:   map[string]bool{},
-		kickCh:    make(chan struct{}, 1),
+		root:       cfg.Root,
+		backend:    backend,
+		opts:       opts,
+		log:        logger,
+		adminHash:  hashToken(strings.TrimSpace(string(token))),
+		cfg:        cfg,
+		reg:        reg,
+		seen:       map[string]time.Time{},
+		reasons:    map[string]string{},
+		usage:      map[string]Resources{},
+		usageOK:    map[string]bool{},
+		kickCh:     make(chan struct{}, 1),
+		shutdownCh: make(chan struct{}),
 	}
 	// Waiters survive a restart with a fresh heartbeat so a client that kept
 	// polling through the outage is not dropped.
@@ -212,8 +211,11 @@ func serve(ctx context.Context, root string, backend Backend, opts options) erro
 		_ = ln.Close()
 		return err
 	}
+	requestCtx, cancelRequests := context.WithCancel(ctx)
+	defer cancelRequests()
 	srv := &http.Server{
 		Handler:           s.handler(),
+		BaseContext:       func(net.Listener) context.Context { return requestCtx },
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      3 * time.Minute,
@@ -233,12 +235,14 @@ func serve(ctx context.Context, root string, backend Backend, opts options) erro
 	var result error
 	select {
 	case <-ctx.Done():
+	case <-s.shutdownCh:
 	case result = <-serveErr:
 	}
 	stopLoop()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
+	cancelRequests()
+	// The singleton lock must outlive every handler: callers may remove the
+	// manager directory after Shutdown returns.
+	_ = srv.Shutdown(context.Background())
 	<-loopDone
 	_ = os.Remove(sock)
 	if errors.Is(result, http.ErrServerClosed) {
@@ -346,9 +350,9 @@ func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) dispatch(ctx context.Context, p principal, req Request) (Response, error) {
 	switch req.Action {
-	case ActionAuthorize, ActionList, ActionRelocate, ActionRevoke, ActionPolicy, ActionRecover, ActionUpdate:
+	case ActionAuthorize, ActionEnroll, ActionList, ActionRelocate, ActionRevoke, ActionPolicy, ActionLimits, ActionRecover, ActionUpdate, ActionShutdown:
 		if !p.admin {
-			return Response{}, rpcErrf(http.StatusForbidden, "%s requires the human admin credential", req.Action)
+			return Response{}, rpcErrf(http.StatusForbidden, "%s requires the Host Admin credential", req.Action)
 		}
 	case ActionEnsure, ActionStatus, ActionCancel, ActionHeartbeat, ActionStop, ActionConnect:
 		switch {
@@ -361,13 +365,23 @@ func (s *server) dispatch(ctx context.Context, p principal, req Request) (Respon
 	default:
 		return Response{}, rpcErrf(http.StatusBadRequest, "unknown action %q", req.Action)
 	}
-	needsProject := req.Action != ActionAuthorize && req.Action != ActionList && req.Action != ActionPolicy
+	select {
+	case <-s.shutdownCh:
+		if req.Action == ActionShutdown {
+			return Response{}, nil
+		}
+		return Response{}, rpcErrf(http.StatusServiceUnavailable, "manager is shutting down")
+	default:
+	}
+	needsProject := req.Action != ActionAuthorize && req.Action != ActionEnroll && req.Action != ActionList && req.Action != ActionPolicy && req.Action != ActionShutdown
 	if needsProject && !projectPattern.MatchString(req.ProjectID) {
 		return Response{}, rpcErrf(http.StatusBadRequest, "a valid projectId is required")
 	}
 	switch req.Action {
-	case ActionAuthorize:
-		return s.authorize(req.Path)
+	case ActionShutdown:
+		return s.requestShutdown()
+	case ActionAuthorize, ActionEnroll:
+		return s.authorize(req.Path, req.Action == ActionEnroll)
 	case ActionList:
 		return s.list(), nil
 	case ActionRelocate:
@@ -376,6 +390,8 @@ func (s *server) dispatch(ctx context.Context, p principal, req Request) (Respon
 		return s.revoke(req.ProjectID)
 	case ActionPolicy:
 		return s.setPolicy(req.Policy)
+	case ActionLimits:
+		return s.limits(ctx, req.ProjectID, req.Limits, req.ExpectedLimits)
 	case ActionRecover:
 		return s.recoverOp(req.ProjectID, req.OperationID)
 	case ActionEnsure:

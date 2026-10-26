@@ -398,6 +398,19 @@ func (d Docker) VolumeRemove(ctx context.Context, name string) error {
 	return d.do(ctx, "volume", "rm", name)
 }
 
+// VolumeUsers returns the ids of every container, running or stopped, that
+// mounts the named volume.
+func (d Docker) VolumeUsers(ctx context.Context, name string) ([]string, error) {
+	if err := checkDockerName("volume", name); err != nil {
+		return nil, err
+	}
+	raw, err := d.out(ctx, "container", "ls", "--all", "--quiet", "--no-trunc", "--filter", "volume="+name)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(string(raw)), nil
+}
+
 // ContainerInfo is the subset of docker container inspect in use.
 type ContainerInfo struct {
 	ID    string `json:"Id"`

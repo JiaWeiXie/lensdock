@@ -35,10 +35,6 @@ const (
 	ServerVersion = "0.1.0"
 )
 
-// maxInlineImage bounds the PNG returned as inline image content. Larger
-// screenshots fail with an explicit pointer to the CLI download.
-const maxInlineImage = 8 << 20
-
 // Backend is the authenticated feedback API. *delivery.Client implements it;
 // the server never holds credentials itself.
 type Backend interface {
@@ -56,6 +52,10 @@ var _ Backend = (*delivery.Client)(nil)
 type Config struct {
 	WorkspaceID string
 	Backend     Backend
+	// MaxInlineImageBytes optionally refuses to return a PNG larger than this
+	// as inline image content; the error points to `lensdock feedback pull`.
+	// Zero (the default) returns any size.
+	MaxInlineImageBytes int64
 }
 
 // Serve runs the stdio MCP server until the client closes the stream or ctx
@@ -85,7 +85,10 @@ func NewServer(cfg Config) (*sdk.Server, error) {
 	if err := delivery.ValidateID("workspace ID", cfg.WorkspaceID); err != nil {
 		return nil, err
 	}
-	s := &service{backend: cfg.Backend, workspace: cfg.WorkspaceID, viewed: map[string]bool{}}
+	if cfg.MaxInlineImageBytes < 0 {
+		return nil, errors.New("mcp: MaxInlineImageBytes must not be negative (use 0 for no limit)")
+	}
+	s := &service{backend: cfg.Backend, workspace: cfg.WorkspaceID, maxInline: cfg.MaxInlineImageBytes, viewed: map[string]bool{}}
 	srv := sdk.NewServer(&sdk.Implementation{Name: ServerName, Title: "LensDock feedback", Version: ServerVersion},
 		&sdk.ServerOptions{Instructions: instructions})
 
@@ -176,6 +179,7 @@ func writeIdempotent(title string) *sdk.ToolAnnotations {
 type service struct {
 	backend   Backend
 	workspace string
+	maxInline int64 // 0: no limit
 
 	mu     sync.Mutex
 	viewed map[string]bool // "<id>@<revision>": an image of it was returned
@@ -303,9 +307,9 @@ func (s *service) image(ctx context.Context, _ *sdk.CallToolRequest, in imageInp
 	if !ok {
 		return nil, nil, fmt.Errorf("feedback %s revision %d does not share %s", f.FeedbackID, f.Revision, name)
 	}
-	if a.SizeBytes > maxInlineImage {
-		return nil, nil, fmt.Errorf("%s is %d bytes, above the %d byte inline image limit. %s",
-			name, a.SizeBytes, maxInlineImage, s.fallback(f.FeedbackID, f.Revision))
+	if s.maxInline > 0 && a.SizeBytes > s.maxInline {
+		return nil, nil, fmt.Errorf("%s is %d bytes, above the configured %d byte inline image limit. %s",
+			name, a.SizeBytes, s.maxInline, s.fallback(f.FeedbackID, f.Revision))
 	}
 	data, err := s.backend.Artifact(ctx, f, name)
 	if err != nil {
@@ -367,9 +371,9 @@ func (s *service) ack(ctx context.Context, _ *sdk.CallToolRequest, in ackInput) 
 type resolveInput struct {
 	FeedbackID        string   `json:"feedbackId" jsonschema:"feedback ID"`
 	Revision          int      `json:"revision" jsonschema:"revision number you worked on"`
-	Summary           string   `json:"summary" jsonschema:"what you changed, up to 12000 characters"`
-	Verification      string   `json:"verification" jsonschema:"the verification you actually performed and its outcome, up to 12000 characters"`
-	ResultFeedbackIDs []string `json:"resultFeedbackIds,omitempty" jsonschema:"IDs of published feedback holding new evidence screenshots, at most 10"`
+	Summary           string   `json:"summary" jsonschema:"what you changed"`
+	Verification      string   `json:"verification" jsonschema:"the verification you actually performed and its outcome"`
+	ResultFeedbackIDs []string `json:"resultFeedbackIds,omitempty" jsonschema:"IDs of published feedback holding new evidence screenshots"`
 }
 
 func (s *service) resolve(ctx context.Context, _ *sdk.CallToolRequest, in resolveInput) (*sdk.CallToolResult, any, error) {

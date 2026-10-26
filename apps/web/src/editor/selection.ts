@@ -9,7 +9,6 @@
  */
 import type { Annotation, NormRect, Point } from '@/api/types';
 import {
-  MAX_ANNOTATIONS,
   boundsOf,
   clamp01,
   clampTranslation,
@@ -33,7 +32,6 @@ export const MAX_FONT_SIZE_PX = 128;
 /** Offset of a duplicate from its original, in source pixels (applied to the whole group). */
 export const DUPLICATE_OFFSET_PX = 16;
 
-const MAX_PIN_NUMBER = 100;
 /** Extents below this are treated as degenerate (a vertical or horizontal line has zero width or height). */
 const EXTENT_EPS = 1e-9;
 
@@ -210,9 +208,10 @@ function offsetAxis(lo: number, hi: number, d: number): number {
   return forward >= backward ? Math.max(0, forward) : -Math.max(0, backward);
 }
 
-function freePinNumber(used: ReadonlySet<number>): number | null {
-  for (let n = 1; n <= MAX_PIN_NUMBER; n += 1) if (!used.has(n)) return n;
-  return null;
+function freePinNumber(used: ReadonlySet<number>): number {
+  let n = 1;
+  while (used.has(n)) n += 1;
+  return n;
 }
 
 /**
@@ -230,7 +229,7 @@ export function duplicateSelection(
 ): { annotations: Annotation[]; selectedIds: string[] } {
   const sel = pick(list, ids);
   const unchanged = { annotations: list.slice(), selectedIds: sel.map((a) => a.id) };
-  if (sel.length === 0 || list.length + sel.length > MAX_ANNOTATIONS) return unchanged;
+  if (sel.length === 0) return unchanged;
 
   const points = sel.flatMap((a) => definingPoints(a));
   let minX = 1;
@@ -258,7 +257,6 @@ export function duplicateSelection(
     let copy: Annotation = { ...translateAnnotation(a, dx, dy), id };
     if (copy.kind === 'pin') {
       const n = freePinNumber(usedPins);
-      if (n === null) return unchanged;
       usedPins.add(n);
       copy = { ...copy, geometry: { ...copy.geometry, number: n } };
     }

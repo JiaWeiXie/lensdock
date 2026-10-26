@@ -14,7 +14,6 @@ import { useRoute, useUi } from '@/state/ui';
 import { useWorkspace } from '@/state/workspace';
 import { newKey } from '@/util/async';
 import { formatDateTime, formatTimeOnly, shortId } from '@/util/format';
-import { truncateToCodePoints } from '@/util/text';
 import { AnnotationLayer, handleMode } from './AnnotationLayer';
 import {
   AnnotationInspector,
@@ -28,8 +27,6 @@ import {
 } from './EditorPanels';
 import {
   HANDLES,
-  MAX_ANNOTATIONS,
-  MAX_TEXT_CP,
   arrowControlPoint,
   defaultArrowControl,
   fontSizeOf,
@@ -299,14 +296,10 @@ export function AnnotationEditorView({ feedbackId }: { feedbackId: string }): Re
 
   const addAnnotation = useCallback(
     (a: Annotation): void => {
-      if (editor.annotations.length >= MAX_ANNOTATIONS) {
-        toast.push('error', t('editor.limit', { max: MAX_ANNOTATIONS }));
-        return;
-      }
       editor.setAnnotations([...editor.annotations, a]);
       setSelectedIds([a.id]);
     },
-    [editor, toast, t],
+    [editor],
   );
 
   const updateAnnotation = useCallback(
@@ -330,14 +323,9 @@ export function AnnotationEditorView({ feedbackId }: { feedbackId: string }): Re
   const duplicateSelected = useCallback((): void => {
     if (!size || selectedSet.size === 0) return;
     const result = duplicateSelection(editor.annotations, selectedSet, size);
-    // The shared function is all-or-nothing at the annotation limit.
-    if (result.annotations.length === editor.annotations.length) {
-      toast.push('error', t('editor.limit', { max: MAX_ANNOTATIONS }));
-      return;
-    }
     editor.setAnnotations(result.annotations);
     setSelectedIds(result.selectedIds);
-  }, [editor, size, selectedSet, toast, t]);
+  }, [editor, size, selectedSet]);
 
   const layerSelected = useCallback(
     (dir: ReorderDirection): void => {
@@ -370,7 +358,7 @@ export function AnnotationEditorView({ feedbackId }: { feedbackId: string }): Re
 
   const commitText = useCallback((): void => {
     if (!editing) return;
-    const text = truncateToCodePoints(editing.text, MAX_TEXT_CP);
+    const text = editing.text;
     setEditing(null);
     if (text.trim() === '') {
       if (editing.id) deleteAnnotations(new Set([editing.id]));
@@ -503,10 +491,6 @@ export function AnnotationEditorView({ feedbackId }: { feedbackId: string }): Re
       }
       case 'pin': {
         const n = nextPinNumber(editor.annotations);
-        if (n === null) {
-          toast.push('error', t('editor.pinsExhausted'));
-          return;
-        }
         addAnnotation({
           id: newAnnotationId(),
           kind: 'pin',
@@ -767,7 +751,7 @@ export function AnnotationEditorView({ feedbackId }: { feedbackId: string }): Re
   // ------------------------------------------------------------------ export
   const describeExportError = (err: unknown, fallback: 'editor.export.failed' | 'editor.export.copyFailed'): string => {
     if (err instanceof FontNotReadyError) return t('publish.err.fonts');
-    if (err instanceof ExportError) return t(err.reason === 'too-large' ? 'publish.err.tooLarge' : 'publish.err.encode');
+    if (err instanceof ExportError) return t('publish.err.encode');
     return t(fallback);
   };
 
@@ -1073,7 +1057,7 @@ export function AnnotationEditorView({ feedbackId }: { feedbackId: string }): Re
                     minWidth: `${Math.max(120, editFont * zoom * 6)}px`,
                   }}
                   rows={Math.max(1, editing.text.split('\n').length)}
-                  onChange={(e) => setEditing({ ...editing, text: truncateToCodePoints(e.target.value, MAX_TEXT_CP) })}
+                  onChange={(e) => setEditing({ ...editing, text: e.target.value })}
                   onBlur={commitText}
                   onPointerDown={(e) => e.stopPropagation()}
                   onKeyDown={(e) => {

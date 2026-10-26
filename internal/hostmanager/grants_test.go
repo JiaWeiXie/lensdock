@@ -83,12 +83,11 @@ func TestInitializeValidation(t *testing.T) {
 		"missing engine identity":                   func(c *Config) { c.EngineID = "" },
 		"unknown pull policy":                       func(c *Config) { c.PullPolicy = "sometimes" },
 		"budget below one pair": func(c *Config) {
-			c.Policy = DefaultPolicy()
+			c.Policy = restrictedPolicy()
 			c.Policy.Budget = Resources{MemoryBytes: gib, NanoCPUs: 1_000_000_000}
 		},
-		"allowance without explicit flag": func(c *Config) {
-			c.Policy = DefaultPolicy()
-			c.Policy.UnboundedExternalAllowance = Resources{MemoryBytes: gib, NanoCPUs: 1_000_000_000}
+		"allowance while uncapped external containers are prohibited": func(c *Config) {
+			c.Policy = Policy{AllowUnboundedExternal: false, UnboundedExternalAllowance: Resources{MemoryBytes: gib, NanoCPUs: 1_000_000_000}}
 		},
 		"root too long for a socket": func(c *Config) { c.Root += strings.Repeat("a", 100) },
 	}

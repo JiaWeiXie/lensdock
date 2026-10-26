@@ -15,8 +15,9 @@ import (
 	"github.com/JiaWeiXie/lensdock/tests/e2e/internal/harness"
 )
 
-// TestRT02: the non-root Chromium is sandboxed and the runtime
-// never fell back to --no-sandbox. Evidence is the readyz sandbox report, the
+// TestRT02: with the opt-in LENSDOCK_CHROMIUM_SANDBOX=true, the non-root Chromium is
+// sandboxed and the runtime never fell back to --no-sandbox. The default runtime has the
+// sandbox disabled, so the test skips there. Evidence is the readyz sandbox report, the
 // container process table and the text of chrome://sandbox read over CDP.
 func TestRT02(t *testing.T) {
 	api := harness.NewAPI(t)
@@ -38,6 +39,9 @@ func TestRT02(t *testing.T) {
 	}
 	if !detail.Ready {
 		t.Errorf("readyz detail ready = false (locked=%v lockCode=%q)", detail.Locked, detail.LockCode)
+	}
+	if !detail.Detail.Sandbox.Enabled {
+		t.Skip("Chromium sandbox is not enabled on this runtime (set LENSDOCK_CHROMIUM_SANDBOX=true in runtime.env)")
 	}
 	if !detail.Detail.Sandbox.Verified || len(detail.Detail.Sandbox.Processes) == 0 {
 		t.Errorf("supervisor sandbox report: verified=%v with %d processes, want verified with at least one", detail.Detail.Sandbox.Verified, len(detail.Detail.Sandbox.Processes))

@@ -205,6 +205,50 @@ func TestLoadConfigTLSAndTransferSettings(t *testing.T) {
 			t.Fatalf("cfg = %+v", cfg)
 		}
 	})
+	t.Run("no usage limits by default", func(t *testing.T) {
+		cfg, err := LoadConfig(envMap(base()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.FileQuotaBytes != 0 || cfg.FileMaxBytes != 0 || cfg.FileMaxFiles != 0 ||
+			cfg.CaptureMaxImageBytes != 0 || cfg.CaptureMaxImagePixels != 0 || cfg.ClipboardMaxBytes != 0 {
+			t.Fatalf("a limit is configured by default: %+v", cfg)
+		}
+		// An explicit 0 means the same: no limit.
+		env := base()
+		for _, k := range []string{EnvFileQuotaBytes, EnvFileMaxBytes, EnvFileMaxFiles, EnvCaptureMaxImageBytes, EnvClipboardMaxBytes} {
+			env[k] = "0"
+		}
+		if cfg, err := LoadConfig(envMap(env)); err != nil || cfg.FileMaxBytes != 0 || cfg.ClipboardMaxBytes != 0 {
+			t.Fatalf("explicit zero limits: %+v, %v", cfg, err)
+		}
+	})
+	t.Run("body read deadlines are opt-in", func(t *testing.T) {
+		cfg, err := LoadConfig(envMap(base()))
+		if err != nil || cfg.UploadReadTimeout != 0 || cfg.ClipboardReadTimeout != 0 {
+			t.Fatalf("default deadlines: %+v, %v", cfg, err)
+		}
+		env := base()
+		env[EnvUploadReadTimeout] = "2h"
+		env[EnvClipboardReadTimeout] = "45s"
+		cfg, err = LoadConfig(envMap(env))
+		if err != nil || cfg.UploadReadTimeout != 2*time.Hour || cfg.ClipboardReadTimeout != 45*time.Second {
+			t.Fatalf("configured deadlines: %+v, %v", cfg, err)
+		}
+	})
+	t.Run("opt-in capture and clipboard limits", func(t *testing.T) {
+		env := base()
+		env[EnvCaptureMaxImageBytes] = "33554432"
+		env[EnvCaptureMaxImagePixels] = "24000000"
+		env[EnvClipboardMaxBytes] = "65536"
+		cfg, err := LoadConfig(envMap(env))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.CaptureMaxImageBytes != 32<<20 || cfg.CaptureMaxImagePixels != 24_000_000 || cfg.ClipboardMaxBytes != 64<<10 {
+			t.Fatalf("cfg = %+v", cfg)
+		}
+	})
 	t.Run("mTLS with names and limits", func(t *testing.T) {
 		env := base()
 		tlsEnv(env)
@@ -247,7 +291,12 @@ func TestLoadConfigTLSAndTransferSettings(t *testing.T) {
 		{"health listen on all interfaces", func(m map[string]string) { m[EnvHealthListen] = "0.0.0.0:8081" }, EnvHealthListen},
 		{"health listen without port", func(m map[string]string) { m[EnvHealthListen] = "127.0.0.1" }, EnvHealthListen},
 		{"quota not a number", func(m map[string]string) { m[EnvFileQuotaBytes] = "lots" }, EnvFileQuotaBytes},
-		{"max file zero", func(m map[string]string) { m[EnvFileMaxBytes] = "0" }, EnvFileMaxBytes},
+		{"max file negative", func(m map[string]string) { m[EnvFileMaxBytes] = "-1" }, EnvFileMaxBytes},
+		{"capture bytes not a number", func(m map[string]string) { m[EnvCaptureMaxImageBytes] = "big" }, EnvCaptureMaxImageBytes},
+		{"capture pixels negative", func(m map[string]string) { m[EnvCaptureMaxImagePixels] = "-5" }, EnvCaptureMaxImagePixels},
+		{"clipboard limit negative", func(m map[string]string) { m[EnvClipboardMaxBytes] = "-1" }, EnvClipboardMaxBytes},
+		{"upload deadline not a duration", func(m map[string]string) { m[EnvUploadReadTimeout] = "soon" }, EnvUploadReadTimeout},
+		{"clipboard deadline negative", func(m map[string]string) { m[EnvClipboardReadTimeout] = "-1s" }, EnvClipboardReadTimeout},
 		{"max file above quota", func(m map[string]string) {
 			m[EnvFileQuotaBytes] = "100"
 			m[EnvFileMaxBytes] = "200"

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { Annotation, NormRect, Point } from '@/api/types';
 import {
   COORD_DECIMALS,
-  MAX_FREEHAND_POINTS,
   boundsOf,
   cropToPixels,
   handlePosition,
@@ -224,9 +223,14 @@ describe('validateAnnotations', () => {
     ).toEqual([]);
   });
 
-  it('caps freehand point counts', () => {
-    const points = Array.from({ length: MAX_FREEHAND_POINTS + 1 }, (_, i) => ({ x: (i % 100) / 100, y: 0.5 }));
-    expect(validateAnnotations([{ id: 'f', kind: 'freehand', geometry: { points } }]).some((i) => i.code === 'freehandPoints')).toBe(true);
+  it('has no annotation, freehand point or pin number caps', () => {
+    const points = Array.from({ length: 10001 }, (_, i) => ({ x: (i % 100) / 100, y: 0.5 }));
+    const many = Array.from({ length: 150 }, (_, i): Annotation => ({ id: `n${i}`, kind: 'pin', geometry: { position: { x: 0.5, y: 0.5 }, number: i + 1 } }));
+    expect(validateAnnotations([{ id: 'f', kind: 'freehand', geometry: { points } }, ...many])).toEqual([]);
+  });
+
+  it('still rejects a one-point freehand stroke', () => {
+    expect(validateAnnotations([{ id: 'f', kind: 'freehand', geometry: { points: [{ x: 0, y: 0 }] } }]).some((i) => i.code === 'freehandPoints')).toBe(true);
   });
 });
 

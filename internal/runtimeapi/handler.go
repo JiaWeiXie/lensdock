@@ -16,6 +16,7 @@ package runtimeapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -39,11 +40,10 @@ import (
 )
 
 const (
-	jsonBodyLimit      = 8 << 10
-	clipboardBodyLimit = clipboard.DefaultMaxBytes
-	bodyReadTimeout    = 10 * time.Second
-	maxIdemKeyLen      = 256
-	maxTTLSeconds      = 24 * 60 * 60 // far above any MaxTTL; only guards overflow
+	jsonBodyLimit   = 8 << 10
+	bodyReadTimeout = 10 * time.Second
+	maxIdemKeyLen   = 256
+	maxTTLSeconds   = 24 * 60 * 60 // far above any MaxTTL; only guards overflow
 
 	// operatorHolderID is the holder recorded for leases the operator acquires
 	// without an X-LensDock-Holder-ID header.
@@ -93,10 +93,18 @@ type Deps struct {
 	// holds the resulting PNGs briefly (a default store is made when nil).
 	Capture  PageCapturer
 	Captures *capture.Store
-	// Files is the controlled upload/download area; FileLimits is used to
-	// refuse oversized uploads before any byte is read.
+	// Files is the controlled upload/download area; FileLimits (zero fields:
+	// no limit) is used to refuse oversized uploads before any byte is read.
 	Files      transfer.Store
 	FileLimits transfer.Limits
+	// ClipboardMaxBytes optionally caps the clipboard text accepted by PUT
+	// clipboard; zero means no limit. It should match the Bridge's limit.
+	ClipboardMaxBytes int
+	// UploadReadTimeout and ClipboardReadTimeout optionally bound how long a
+	// file upload body or clipboard text body may take to arrive. Zero (the
+	// default) sets no deadline, so a large legitimate transfer is never cut off.
+	UploadReadTimeout    time.Duration
+	ClipboardReadTimeout time.Duration
 	// AgentHeartbeat is the interval of heartbeat comments on the agent
 	// policy event stream; zero selects 15 seconds.
 	AgentHeartbeat time.Duration
@@ -133,7 +141,6 @@ func NewHandler(d Deps) http.Handler {
 	if d.Captures == nil {
 		d.Captures = capture.NewStore(0, 0, nil)
 	}
-	d.FileLimits = d.FileLimits.WithDefaults()
 	a := &api{Deps: d}
 	a.display.Store(&vnc.Size{Width: supervisor.ScreenWidth, Height: supervisor.ScreenHeight})
 	if d.CDP != nil {
@@ -387,10 +394,10 @@ func (a *api) checkBinding(w http.ResponseWriter, r *http.Request, t lease.Ticke
 }
 
 // authorizeLeaseRoute authenticates a lease-bound request: workspace, bearer
-// lease token of the wanted mode (registered as an in-flight use, so a
-// takeover waits for it), and epoch/generation binding. The returned release
-// must be called when the request or connection ends.
-func (a *api) authorizeLeaseRoute(w http.ResponseWriter, r *http.Request, want lease.Mode) (lease.Ticket, func(), bool) {
+// lease token of one of the wanted modes (registered as an in-flight use, so
+// a takeover waits for it), and epoch/generation binding. The returned
+// release must be called when the request or connection ends.
+func (a *api) authorizeLeaseRoute(w http.ResponseWriter, r *http.Request, want ...lease.Mode) (lease.Ticket, func(), bool) {
 	if !a.checkWorkspace(w, r) {
 		return lease.Ticket{}, nil, false
 	}
@@ -398,7 +405,17 @@ func (a *api) authorizeLeaseRoute(w http.ResponseWriter, r *http.Request, want l
 	if !ok {
 		return lease.Ticket{}, nil, false
 	}
-	ticket, release, err := a.Leases.AuthorizeTracked(tok, want)
+	var (
+		ticket  lease.Ticket
+		release func()
+		err     error
+	)
+	for _, mode := range want {
+		ticket, release, err = a.Leases.AuthorizeTracked(tok, mode)
+		if !errors.Is(err, lease.ErrWrongMode) {
+			break
+		}
+	}
 	if err != nil {
 		writeLeaseError(w, err)
 		return lease.Ticket{}, nil, false
@@ -666,7 +683,7 @@ func isPlainUTF8(contentType string) bool {
 }
 
 func (a *api) setClipboard(w http.ResponseWriter, r *http.Request) {
-	ticket, release, ok := a.authorizeLeaseRoute(w, r, lease.ModeHuman)
+	ticket, release, ok := a.authorizeLeaseRoute(w, r, lease.ModeHuman, lease.ModeAgent)
 	if !ok {
 		return
 	}
@@ -675,7 +692,7 @@ func (a *api) setClipboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, apiwire.CodeInvalidRequest, "Content-Type must be text/plain; charset=utf-8")
 		return
 	}
-	if r.ContentLength > clipboardBodyLimit {
+	if a.ClipboardMaxBytes > 0 && r.ContentLength > int64(a.ClipboardMaxBytes) {
 		writeError(w, http.StatusRequestEntityTooLarge, apiwire.CodeBodyTooLarge, "clipboard text too large")
 		return
 	}
@@ -683,13 +700,19 @@ func (a *api) setClipboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, apiwire.CodeUpstreamUnavailable, "clipboard unavailable")
 		return
 	}
-	limitReads(w)
-	text, err := io.ReadAll(io.LimitReader(r.Body, clipboardBodyLimit+1))
+	if a.ClipboardReadTimeout > 0 {
+		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(a.ClipboardReadTimeout))
+	}
+	var body io.Reader = r.Body
+	if a.ClipboardMaxBytes > 0 {
+		body = io.LimitReader(r.Body, int64(a.ClipboardMaxBytes)+1)
+	}
+	text, err := io.ReadAll(body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, apiwire.CodeInvalidRequest, "could not read request body")
 		return
 	}
-	if len(text) > clipboardBodyLimit {
+	if a.ClipboardMaxBytes > 0 && len(text) > a.ClipboardMaxBytes {
 		writeError(w, http.StatusRequestEntityTooLarge, apiwire.CodeBodyTooLarge, "clipboard text too large")
 		return
 	}

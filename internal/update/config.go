@@ -34,6 +34,14 @@ const (
 	DefaultDrainSeconds      = 45
 	DefaultHealthSeconds     = 180
 	DefaultProbeURL          = "http://127.0.0.1:8080"
+
+	// DefaultExpireAfterDays is how long unused old system data (unreferenced
+	// checkpoints, retired update volumes, obsolete generation records and
+	// abandoned staging) is kept before automatic expiry removes it. An
+	// explicit 0 disables age expiry.
+	DefaultExpireAfterDays = 30
+	// MaxExpireAfterDays bounds the setting so the age arithmetic cannot overflow.
+	MaxExpireAfterDays = 36500
 )
 
 // Dataset roles.
@@ -116,6 +124,13 @@ type Deployment struct {
 	StopGraceSeconds     int   `json:"stopGraceSeconds,omitempty"`
 	DrainTimeoutSeconds  int   `json:"drainTimeoutSeconds,omitempty"`
 	HealthTimeoutSeconds int   `json:"healthTimeoutSeconds,omitempty"`
+
+	// ExpireAfterDays is the age in days after which unused old system data
+	// expires automatically. Absent means DefaultExpireAfterDays; an explicit 0
+	// disables age expiry. It is independent of RetainCheckpoints: a
+	// checkpoint is removed when either policy selects it, and never when it is
+	// protected (see Engine.ExpireUnused).
+	ExpireAfterDays *int `json:"expireAfterDays,omitempty"`
 
 	Compose ComposeConfig `json:"compose"`
 	// LinuxCLI maps a Docker engine architecture (amd64, arm64) to the Linux
@@ -272,6 +287,9 @@ func (d *Deployment) applyDefaults() {
 	if d.RetainCheckpoints == 0 {
 		d.RetainCheckpoints = DefaultRetainCheckpoints
 	}
+	if d.ExpireAfterDays == nil {
+		d.ExpireAfterDays = new(DefaultExpireAfterDays)
+	}
 	if d.MinFreeBytes == 0 {
 		d.MinFreeBytes = DefaultMinFreeBytes
 	}
@@ -371,6 +389,9 @@ func (d *Deployment) Validate() error {
 	}
 	if d.RetainCheckpoints < 1 {
 		add("retainCheckpoints must be at least 1")
+	}
+	if d.ExpireAfterDays != nil && (*d.ExpireAfterDays < 0 || *d.ExpireAfterDays > MaxExpireAfterDays) {
+		add("expireAfterDays must be between 0 (disabled) and %d", MaxExpireAfterDays)
 	}
 	if d.MinFreeBytes < 0 {
 		add("minFreeBytes must not be negative")
@@ -556,6 +577,15 @@ func (d *Deployment) WorkspaceIDs() []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// ExpireAfter returns the configured expiry age in days; 0 means disabled. An
+// absent setting is the default.
+func (d *Deployment) ExpireAfter() int {
+	if d.ExpireAfterDays == nil {
+		return DefaultExpireAfterDays
+	}
+	return *d.ExpireAfterDays
 }
 
 // Workspace returns the configuration of id.

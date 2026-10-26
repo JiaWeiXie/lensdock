@@ -7,12 +7,9 @@ import (
 	"math"
 )
 
-// maxEffectPixels bounds the summed area of all blur and pixelate rectangles
-// one render processes. It is about four full-size images at the 24 MP
-// capture limit; real feedback blurs a few small regions.
-const maxEffectPixels = 100_000_000
-
-var errEffectBudget = badRequest("blur and pixelate annotations cover too many pixels")
+// errEffectBudget reports blur and pixelate rectangles beyond the optional
+// Limits.MaxEffectPixels budget.
+var errEffectBudget = badRequest("blur and pixelate annotations cover more pixels than the configured limit")
 
 // effectPixelRect converts a normalized effect rectangle to source pixels.
 // The renderers of the web editor use the same rule, so SVG, PNG and the
@@ -30,7 +27,7 @@ func effectPixelRect(w, h int, r normRect) image.Rectangle {
 // order, each reading the result of the previous one. Every alpha channel it
 // touches ends at 255. Buffers are bounded by the affected rectangle and the
 // work is linear in its area, independent of the radius.
-func applyEffects(img *image.RGBA, ops []effectOp) error {
+func applyEffects(img *image.RGBA, ops []effectOp, maxPixels int64) error {
 	w, h := img.Bounds().Dx(), img.Bounds().Dy()
 	var total int64
 	rects := make([]image.Rectangle, len(ops))
@@ -38,7 +35,7 @@ func applyEffects(img *image.RGBA, ops []effectOp) error {
 		rects[i] = effectPixelRect(w, h, op.Rect)
 		total += int64(rects[i].Dx()) * int64(rects[i].Dy())
 	}
-	if total > maxEffectPixels {
+	if maxPixels > 0 && total > maxPixels {
 		return errEffectBudget
 	}
 	for i, op := range ops {
@@ -177,7 +174,7 @@ func fillBlack(img *image.RGBA, rects []image.Rectangle) {
 // secret; the cosmetic effects then run in annotation order; the redactions
 // are applied again last and verified, so overlapping effects cannot lighten
 // a redacted pixel. Blur and pixelate are not redaction.
-func shareBase(img *image.RGBA, reds []normRect, effects []effectOp) error {
+func shareBase(img *image.RGBA, reds []normRect, effects []effectOp, maxEffectPixels int64) error {
 	if len(effects) > 0 {
 		w, h := img.Bounds().Dx(), img.Bounds().Dy()
 		applyRedactions(img, reds)
@@ -186,7 +183,7 @@ func shareBase(img *image.RGBA, reds []normRect, effects []effectOp) error {
 			pad = append(pad, editorRedactionRect(w, h, r))
 		}
 		fillBlack(img, pad)
-		if err := applyEffects(img, effects); err != nil {
+		if err := applyEffects(img, effects, maxEffectPixels); err != nil {
 			return err
 		}
 	}

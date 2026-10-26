@@ -142,10 +142,10 @@ type HelperStore struct {
 }
 
 // NewHelperStore returns a Store that executes self (the runtime binary) with
-// the `__files` subcommand for every operation. Zero limit fields take the
-// defaults.
+// the `__files` subcommand for every operation. A zero limit field means no
+// limit.
 func NewHelperStore(run Runner, self string, limits Limits) *HelperStore {
-	return &HelperStore{run: run, self: self, limits: limits.WithDefaults()}
+	return &HelperStore{run: run, self: self, limits: limits}
 }
 
 func (h *HelperStore) argv(op string, area Area, extra ...string) []string {
@@ -179,7 +179,8 @@ func mapExit(err error) error {
 	return fmt.Errorf("transfer: helper failed with status %d", code)
 }
 
-// cappedBuffer collects at most max bytes and fails the writer beyond that.
+// cappedBuffer collects at most max bytes and fails the writer beyond that;
+// max <= 0 means unlimited.
 type cappedBuffer struct {
 	buf bytes.Buffer
 	max int
@@ -188,7 +189,7 @@ type cappedBuffer struct {
 var errHelperOutput = errors.New("transfer: helper output too large")
 
 func (c *cappedBuffer) Write(p []byte) (int, error) {
-	if c.buf.Len()+len(p) > c.max {
+	if c.max > 0 && c.buf.Len()+len(p) > c.max {
 		return 0, errHelperOutput
 	}
 	return c.buf.Write(p)
@@ -199,7 +200,9 @@ func (h *HelperStore) List(ctx context.Context, area Area) (Listing, error) {
 	if !ValidArea(area) {
 		return Listing{}, ErrInvalidArea
 	}
-	out := &cappedBuffer{max: maxHelperJSON}
+	// The listing is produced by our own helper process and is complete; its
+	// size is not capped (max 0 = unlimited).
+	out := &cappedBuffer{}
 	if err := h.run.RunBrowserProcess(ctx, h.argv("list", area), nil, out); err != nil {
 		return Listing{}, mapExit(err)
 	}
@@ -290,7 +293,7 @@ func (h *HelperStore) Put(ctx context.Context, name string, body io.Reader, size
 	if size < 0 {
 		return Entry{}, ErrSizeMismatch
 	}
-	if size > h.limits.MaxFileBytes {
+	if h.limits.MaxFileBytes > 0 && size > h.limits.MaxFileBytes {
 		return Entry{}, ErrTooLarge
 	}
 	extra := []string{"--name=" + name, "--size=" + strconv.FormatInt(size, 10)}

@@ -37,16 +37,19 @@ func (a *api) vncView(w http.ResponseWriter, r *http.Request) {
 }
 
 // vncControl proxies the control x11vnc (port 5900) for the holder of a HUMAN
-// lease. The socket is bound to the lease ticket: when the lease ends for any
-// reason the upstream connection is closed first, then the WebSocket (4001,
-// or 4002 for a generation change). Serve returns only after nothing of the
+// or AGENT lease: the whole desktop, including Chromium's own toolbar,
+// menus and native dialogs, not only page content. The socket is bound to
+// the lease ticket: when the lease ends for any reason (release, expiry,
+// Agent pause or mode change, takeover, capture, generation change) the
+// upstream connection is closed first, then the WebSocket (4001, or 4002
+// for a generation change). Serve returns only after nothing of the
 // connection can still write, and only then is the in-flight use released, so
 // a takeover never grants a new lease while this socket can still type.
 func (a *api) vncControl(w http.ResponseWriter, r *http.Request) {
 	if rejectOrigin(w, r) {
 		return
 	}
-	ticket, release, ok := a.authorizeLeaseRoute(w, r, lease.ModeHuman)
+	ticket, release, ok := a.authorizeLeaseRoute(w, r, lease.ModeHuman, lease.ModeAgent)
 	if !ok {
 		return
 	}

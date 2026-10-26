@@ -180,7 +180,7 @@ func redChannel(img *image.RGBA) []uint8 {
 func TestBlurAndPixelateGoldenValues(t *testing.T) {
 	// Radius 1 box blur with edge clamping; a single row makes the vertical pass the identity.
 	img := rowImage(0, 0, 255, 0, 0)
-	if err := applyEffects(img, []effectOp{{Kind: "blur", Rect: normRect{X: 0, Y: 0, W: 1, H: 1}, SizePx: 1}}); err != nil {
+	if err := applyEffects(img, []effectOp{{Kind: "blur", Rect: normRect{X: 0, Y: 0, W: 1, H: 1}, SizePx: 1}}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := redChannel(img); !bytes.Equal(got, []uint8{0, 85, 85, 85, 0}) {
@@ -188,7 +188,7 @@ func TestBlurAndPixelateGoldenValues(t *testing.T) {
 	}
 	// Blocks of 2 anchored at the left edge; the cut last block averages itself; halves round up.
 	img = rowImage(10, 11, 0)
-	if err := applyEffects(img, []effectOp{{Kind: "pixelate", Rect: normRect{X: 0, Y: 0, W: 1, H: 1}, SizePx: 2}}); err != nil {
+	if err := applyEffects(img, []effectOp{{Kind: "pixelate", Rect: normRect{X: 0, Y: 0, W: 1, H: 1}, SizePx: 2}}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := redChannel(img); !bytes.Equal(got, []uint8{11, 11, 0}) {
@@ -196,7 +196,7 @@ func TestBlurAndPixelateGoldenValues(t *testing.T) {
 	}
 	// A blur never reads or writes outside its rectangle.
 	img = rowImage(255, 255, 0, 0, 0, 0, 255, 255)
-	if err := applyEffects(img, []effectOp{{Kind: "blur", Rect: normRect{X: 0.25, Y: 0, W: 0.5, H: 1}, SizePx: 2}}); err != nil {
+	if err := applyEffects(img, []effectOp{{Kind: "blur", Rect: normRect{X: 0.25, Y: 0, W: 0.5, H: 1}, SizePx: 2}}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := redChannel(img); !bytes.Equal(got, []uint8{255, 255, 0, 0, 0, 0, 255, 255}) {
@@ -283,7 +283,7 @@ func TestShareBaseNeverBleedsARedactedSecretThroughAnEffect(t *testing.T) {
 		for _, size := range []int{2, 8, 33, 64} {
 			img := build()
 			effects := []effectOp{{Kind: kind, Rect: whole, SizePx: size}, {Kind: kind, Rect: normRect{X: 0.15, Y: 0.2, W: 0.4, H: 0.3}, SizePx: size}}
-			if err := shareBase(img, redaction, effects); err != nil {
+			if err := shareBase(img, redaction, effects, 0); err != nil {
 				t.Fatal(err)
 			}
 			px := pixelRects(160, 100, redaction)
@@ -309,7 +309,7 @@ func TestShareBaseWithoutEffectsIsTheLegacyRedaction(t *testing.T) {
 	b := image.NewRGBA(a.Bounds())
 	copy(b.Pix, a.Pix)
 	reds := []normRect{{X: 0.1, Y: 0.1, W: 0.3, H: 0.4}}
-	if err := shareBase(a, reds, nil); err != nil {
+	if err := shareBase(a, reds, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	applyRedactions(b, reds)
@@ -318,18 +318,27 @@ func TestShareBaseWithoutEffectsIsTheLegacyRedaction(t *testing.T) {
 	}
 }
 
-func TestEffectsRefuseAnExcessiveWorkload(t *testing.T) {
-	img := image.NewRGBA(image.Rect(0, 0, 4096, 2048))
-	ops := make([]effectOp, 13)
+func TestEffectBudgetIsOptIn(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 400, 200))
+	ops := make([]effectOp, 3)
 	for i := range ops {
-		ops[i] = effectOp{Kind: "blur", Rect: normRect{X: 0, Y: 0, W: 1, H: 1}, SizePx: 64}
+		ops[i] = effectOp{Kind: "blur", Rect: normRect{X: 0, Y: 0, W: 1, H: 1}, SizePx: 8}
 	}
-	err := applyEffects(img, ops)
-	if err == nil || asError(err).Code != CodeInvalidRequest {
-		t.Fatalf("err = %v, want a 400 invalid request before any pixel is touched", err)
+	// No budget: three full-image blurs are processed.
+	if err := applyEffects(img, ops, 0); err != nil {
+		t.Fatalf("effects refused without a configured budget: %v", err)
 	}
-	if !bytes.Equal(img.Pix[:16], make([]byte, 16)) {
+	// A configured budget is an exact boundary and refuses before touching any pixel.
+	const area = 400 * 200 * 3
+	fresh := image.NewRGBA(image.Rect(0, 0, 400, 200))
+	if err := applyEffects(fresh, ops, area-1); err == nil || asError(err).Code != CodeInvalidRequest {
+		t.Fatalf("err = %v, want a 400 invalid request", err)
+	}
+	if !bytes.Equal(fresh.Pix[:16], make([]byte, 16)) {
 		t.Fatal("pixels were modified although the workload was refused")
+	}
+	if err := applyEffects(fresh, ops, area); err != nil {
+		t.Fatalf("effects at the budget refused: %v", err)
 	}
 }
 

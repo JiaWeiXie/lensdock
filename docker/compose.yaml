@@ -33,8 +33,12 @@ services:
       - /run:mode=0755
       - /home/browser:uid=10001,gid=10001,mode=0700
     shm_size: 1gb
-    mem_limit: 4g
-    cpus: 2
+    # No default cap. Set LENSDOCK_RUNTIME_MEMORY_LIMIT (for example 4g) and
+    # LENSDOCK_RUNTIME_CPUS in compose.env to opt in; 0 means unlimited.
+    mem_limit: ${LENSDOCK_RUNTIME_MEMORY_LIMIT:-0}
+    cpus: ${LENSDOCK_RUNTIME_CPUS:-0}
+    # Optional process cap: LENSDOCK_RUNTIME_PIDS_LIMIT (0 means unlimited).
+    pids_limit: ${LENSDOCK_RUNTIME_PIDS_LIMIT:-0}
     cap_drop: [ALL]
     # Only root tini retains KILL, to forward stop signals after the runtime drops UID.
     cap_add: [CHOWN, SETUID, SETGID, SETPCAP, KILL]
@@ -67,14 +71,27 @@ services:
     cap_drop: [ALL]
     cap_add: [CHOWN, SETUID, SETGID, SETPCAP]
     security_opt: [no-new-privileges:true]
-    mem_limit: 1g
-    cpus: 2
+    # No default cap. Set LENSDOCK_GATEWAY_MEMORY_LIMIT (for example 1g) and
+    # LENSDOCK_GATEWAY_CPUS in compose.env to opt in; 0 means unlimited.
+    mem_limit: ${LENSDOCK_GATEWAY_MEMORY_LIMIT:-0}
+    cpus: ${LENSDOCK_GATEWAY_CPUS:-0}
+    # Optional process cap: LENSDOCK_GATEWAY_PIDS_LIMIT (0 means unlimited).
+    pids_limit: ${LENSDOCK_GATEWAY_PIDS_LIMIT:-0}
     environment:
       LENSDOCK_HEALTH_ORIGIN: ${LENSDOCK_PUBLIC_ORIGIN:-http://127.0.0.1:18081}
-      # Local demo only (see docs): "1" lets same-origin browsers enter without a token.
-      # The gateway refuses to start with it unless the public origin is loopback, and the
-      # host port below stays bound to 127.0.0.1. Set it in compose.env, never inline.
-      LENSDOCK_DEMO_NO_AUTH: ${LENSDOCK_DEMO_NO_AUTH:-0}
+      # Local browsers enter automatically unless pairing is explicitly required.
+      LENSDOCK_REQUIRE_PAIRING: ${LENSDOCK_REQUIRE_PAIRING:-}
+      LENSDOCK_FEEDBACK_MAX_IMAGE_BYTES: ${LENSDOCK_FEEDBACK_MAX_IMAGE_BYTES:-}
+      LENSDOCK_FEEDBACK_MAX_PIXELS: ${LENSDOCK_FEEDBACK_MAX_PIXELS:-}
+      LENSDOCK_FEEDBACK_MAX_DIMENSION: ${LENSDOCK_FEEDBACK_MAX_DIMENSION:-}
+      LENSDOCK_FEEDBACK_MAX_JSON_BYTES: ${LENSDOCK_FEEDBACK_MAX_JSON_BYTES:-}
+      LENSDOCK_FEEDBACK_DRAFT_TTL_SECONDS: ${LENSDOCK_FEEDBACK_DRAFT_TTL_SECONDS:-}
+      LENSDOCK_FEEDBACK_MAX_DRAFTS: ${LENSDOCK_FEEDBACK_MAX_DRAFTS:-}
+      LENSDOCK_FEEDBACK_MAX_OPEN_CAPTURES: ${LENSDOCK_FEEDBACK_MAX_OPEN_CAPTURES:-}
+      LENSDOCK_FEEDBACK_MAX_PRIVATE_BYTES: ${LENSDOCK_FEEDBACK_MAX_PRIVATE_BYTES:-}
+      LENSDOCK_FEEDBACK_MAX_SHARED_BYTES: ${LENSDOCK_FEEDBACK_MAX_SHARED_BYTES:-}
+      LENSDOCK_FEEDBACK_MAX_EFFECT_PIXELS: ${LENSDOCK_FEEDBACK_MAX_EFFECT_PIXELS:-}
+      LENSDOCK_RUNTIME_TRANSFER_TIMEOUT_SECONDS: ${LENSDOCK_RUNTIME_TRANSFER_TIMEOUT_SECONDS:-}
     ports:
       - "127.0.0.1:${LENSDOCK_HOST_PORT:-18081}:8080"
     volumes:

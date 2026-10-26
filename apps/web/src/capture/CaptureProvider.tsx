@@ -14,9 +14,6 @@ import { newKey } from '@/util/async';
 import type { CapturedFrame } from '@/vnc/controller';
 import { useRfb, useRfbController } from '@/vnc/DesktopProvider';
 
-/** Screenshot resource limits; the server enforces them again. */
-export const MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
-export const MAX_CAPTURE_PIXELS = 24_000_000;
 /** A workspace read older than this means the Gateway is not answering: frames cannot be called current. */
 const MAX_WORKSPACE_AGE_MS = 15_000;
 /**
@@ -191,8 +188,6 @@ export function CaptureProvider({ children }: { children: ReactNode }): ReactNod
         // The frame must still belong to the generation we validated.
         const generation = workspace?.runtimeGeneration;
         if (!generation || rfb.getGeneration() !== generation) throw new GateError('capture.gate.generation');
-        if (frame.blob.size > MAX_CAPTURE_BYTES) throw new GateError('capture.gate.tooLarge');
-        if (frame.width * frame.height > MAX_CAPTURE_PIXELS) throw new GateError('capture.gate.tooManyPixels');
 
         const visible = targets.filter((x) => x.visible === true);
         const warnings: CaptureWarning[] = [];
@@ -283,7 +278,7 @@ export function CaptureProvider({ children }: { children: ReactNode }): ReactNod
             if (!leaseId) throw new GateError('capture.gate.leaseUnknown');
             interrupt = true;
           } else if (workspace.controlState === 'IDLE') {
-            const granted = await take('');
+            const granted = await take();
             if (!granted) throw new GateError('capture.gate.noLease');
             leaseId = granted.leaseId;
           } else {

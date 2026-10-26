@@ -4,14 +4,14 @@
 
 讓你和 Coding Agent 共用同一個持久化 Chromium 工作站。用 noVNC 觀看真實瀏覽器、隨時接管操作，再把標註截圖交給 Agent，不必分享日常使用的瀏覽器 Profile。
 
-- 有視窗的 Chromium、專用持久化 Profile，以及保持啟用的 Sandbox。
-- 人工接管、伺服器強制的 Agent 租約，以及暫停與恢復控制。
+- 有視窗的 Chromium、專用持久化 Profile。
+- 操作桌面時自動取得控制權，保留明確的交還、暫停與恢復操作。
 - 截圖標註、空白畫布、不透明遮蔽、PNG 複製與下載。
-- 用 CLI 或 MCP 交付回饋，透過租約限定的 CDP Bridge 控制瀏覽器。
+- 用 CLI 或 MCP 交付回饋；Agent 可操作同一個瀏覽器的頁面、原生選單與擴充功能。
 
 ## 安裝
 
-需要 macOS 或 Linux、amd64 或 arm64 架構、已啟動的 Docker 與 Compose v2。主機必須支援 Chromium 的 User Namespace Sandbox，Docker 主機至少需要 2 CPU，並建議保留約 8 GiB 記憶體。LensDock 不會為了啟動而關閉 Sandbox。
+需要 macOS 或 Linux、amd64 或 arm64 架構、已啟動的 Docker 與 Compose v2。Docker 主機至少需要 2 CPU，並建議保留約 8 GiB 記憶體。Chromium 自己的 renderer sandbox 預設關閉，任何 Docker 主機都能執行；容器本身仍保有非 root 使用者、唯讀根檔案系統、移除的 capability 與 seccomp profile。要開啟 Chromium sandbox，在 `~/.local/share/lensdock/runtime.env` 設定 `LENSDOCK_CHROMIUM_SANDBOX=true`，再用 `lensdock update compose --deployment ~/.local/share/lensdock/deployment.json -- up -d runtime` 重建 Runtime。開啟後主機必須允許 unprivileged user namespace，否則 Runtime 會維持未就緒，不會自動降級。
 
 ### 私有儲存庫存取權
 
@@ -54,7 +54,7 @@ mise 預設的 [24 小時發布等待期](https://mise.jdx.dev/security.html#min
 
 ### 開啟工作站
 
-開啟 **http://127.0.0.1:18081/**，用 `~/.local/share/lensdock/product/admin-token` 的內容配對。請在本機讀取這個私有檔案，不要貼進 Issue、聊天、網址或截圖。
+開啟 **http://127.0.0.1:18081/** 即可使用。本機單一 Workspace 預設不需輸入 Token。若主動開啟配對要求，請使用 `~/.local/share/lensdock/product` 下的私有 `human-token` 或 `admin-token`，不要把憑證貼進 Issue、聊天、網址或截圖。
 
 預設 Workspace 為 `default`。設定與憑證存放在 `~/.local/share/lensdock`；瀏覽器 Profile、下載、資料庫與回饋圖片保存在 Docker Volume。另有 `human-token`、`viewer-token` 與 `agent-token`，分別限制各角色的權限。Web UI、遠端 Chromium 與桌面都預設英文。Web UI 可在設定切換繁體中文，並保留已儲存的選擇。
 
@@ -69,67 +69,64 @@ mise 預設的 [24 小時發布等待期](https://mise.jdx.dev/security.html#min
 
 ## 多個本機專案
 
-每個獲授權專案都有獨立的 Runtime／Gateway、持久化 Volume、憑證、Workspace ID 與固定 Loopback Origin。主機端 Manager 依共用資源預算決定何時啟動。既有的 18081 獨立工作站不會被遷移，其資源上限會計入外部負載。
+每個專案都有獨立的 Runtime／Gateway、持久化 Volume、憑證、Workspace ID 與固定 Loopback Origin。既有的 18081 獨立工作站不會被遷移。
 
-先用包含部署檔案及兩種 Linux 更新工具的 Release Bundle 初始化 Manager，再由人類授權已存在的專案資料夾：
-
-```bash
-lensdock admin manager init --bundle-dir /path/to/lensdock-release
-lensdock admin project authorize "$HOME/code/site-a" "$HOME/code/site-b"
-lensdock admin project list
-```
-
-Manager 預設放在 `~/.local/share/lensdock-manager`；若改用其他位置，所有相關程序都要設定一致的 `LENSDOCK_MANAGER_DIR`。初始化會把主機執行檔與 Bundle 複製到這個私有目錄，並固定本機 Docker Engine。它不會安裝開機服務，也不管理專案的應用程式伺服器或資料庫。
-
-Agent 不需要 Docker 存取權，即可要求啟動已獲授權的專案：
+安裝 Release Bundle 並啟動 Docker 後，直接使用：
 
 ```bash
-unset LENSDOCK_API LENSDOCK_TOKEN_FILE
-lensdock project up --project "$HOME/code/site-a" --wait 10m
+lensdock project up --project "$HOME/code/site-a"
 lensdock workspace status --project "$HOME/code/site-a"
 lensdock feedback list --project "$HOME/code/site-a"
 lensdock mcp serve --project "$HOME/code/site-a"
 ```
 
-`up` 會回傳已驗證的 API Origin、Workspace 與 Agent Token 檔案位置。開啟該 Origin，使用專案的 `product/human-token` 配對；檔案位於 `admin project list --json` 回傳的 `stateDir` 下。不同 Gateway 即使用相同主機名稱，也不會互相覆蓋 Session 或展示模式的登出狀態。MCP 請按專案設定，詳見 [Agent 整合](docs/AGENT-INTEGRATION.md#project-scoped-local-agents)。
+第一次使用專案指令時，會自動初始化 Manager、登記資料夾並啟動工作站。`project up` 未指定路徑時使用目前目錄。帶有 `--project` 的 MCP 與回饋指令也會自動啟動已停止的工作站，不必先執行 `up`。明確指定 `--project` 會忽略過期的 `LENSDOCK_API`、`LENSDOCK_TOKEN_FILE`，但不能同時指定 API、Workspace 或 Token 旗標。
 
-每個 Runtime 預設上限為 2 GiB／2 CPU，Gateway 為 256 MiB／0.5 CPU。Manager 的專案預算為 6.75 GiB／7.5 CPU，另保留 1 GiB／1 CPU 給生命週期工具、2 GiB／1 CPU 給系統。Docker Engine 的實際容量與外部容器上限可能降低可同時執行的專案數。若外部容器沒有上限，必須由人類明確設定預留量，否則拒絕啟動；預留量不會限制那些容器的用量。
+Manager 預設放在 `~/.local/share/lensdock-manager`；若改用其他位置，各程序都要設定一致的 `LENSDOCK_MANAGER_DIR`。初始化會複製主機執行檔與 Bundle，並固定本機 Docker Engine；不會安裝開機服務，也不管理專案的應用程式伺服器或資料庫。首次初始化可用 `LENSDOCK_RUNTIME_IMAGE`、`LENSDOCK_GATEWAY_IMAGE`、`LENSDOCK_PULL` 選擇映像與拉取政策。
 
-滿載時依 FIFO 等待，不會自動停止別人的瀏覽器。同專案的請求共用一個操作。取消或逾時只移除該呼叫者的等待；已接納的工作繼續執行。釋放租約、關閉 MCP、暫停 Agent 或關閉 UI 都不會停止 Chromium。
+`up` 回傳已驗證的 API Origin、Workspace 與 Agent Token 檔案位置。開啟該 Origin 即可使用，不需配對。不同 Gateway 即使用相同主機名稱，Session 與本機登出狀態也互不影響。MCP 請按專案設定，詳見 [Agent 整合](docs/AGENT-INTEGRATION.md#project-scoped-local-agents)。
 
-停止必須明確同意捨棄記憶體中的頁面與網路工作：
+CPU、記憶體、工具程序數及共用資源預算預設不設上限；外部容器沒有配額也不會擋住啟動。需要限制時，用 `admin manager policy` 設定。既有專案停止後，可用 `admin project limits --id ID ...` 調整；`0` 移除該上限，未指定的項目維持原值。
+
+若要人工核准專案或手動啟動，可開啟 `--require-project-authorization`、`--require-explicit-start`。原有的 `admin manager init`、`admin project authorize` 仍可使用。既有政策與已撤銷的授權不會被自動重設。
+
+只有主動啟用的預算滿載時才會依 FIFO 等待，不會自動停止其他瀏覽器。同專案的請求共用一個操作。等待預設不逾時，需要時再指定 `--wait`。取消等待只影響該呼叫者，已接納的工作繼續執行。釋放租約、關閉 MCP、暫停 Agent 或關閉 UI 都不會停止 Chromium。
+
+確定要捨棄記憶體中的頁面與網路工作時，明確停止：
 
 ```bash
-lensdock project stop --project "$HOME/code/site-a" --discard-page-state
+lensdock project stop --project "$HOME/code/site-a"
 ```
 
-持久化 Profile 與回饋會保留到下次啟動。有租約時拒絕一般停止；人類強制停止也必須提供剛觀察到的 Runtime Generation。符號連結別名會對應同一份授權，Worktree 則各自獨立；搬移或替換資料夾需要人類處理。私有 Manager Socket 防止誤連專案，無法隔離同一 OS 使用者下的惡意程序。資源政策、故障復原與實測限制見 [更新 Runbook](docs/UPDATE-RUNBOOK.md#managed-project-lifecycle)。
+持久化 Profile 與回饋會保留。只有開啟 `--require-stop-confirmation` 才需要 `--discard-page-state`。有租約時仍拒絕一般停止，強制停止則需提供觀察到的 Runtime Generation。搬移、替換或明確撤銷的資料夾需要人工處理，不會自動修復授權。Manager Socket 可防止誤連專案，無法隔離同一 OS 使用者下的惡意程序。政策與復原方式見 [更新 Runbook](docs/UPDATE-RUNBOOK.md#managed-project-lifecycle)。
 
 ## 使用方式
 
-1. 先觀看桌面；需要操作時取得控制權，或從 Agent 接管。
+1. 點擊桌面或在桌面輸入時，自動申請控制權。若 Agent 正在操作，先完成交接。觸發交接的第一個動作不會重播到已改變的頁面；看到控制狀態就緒後再繼續。
 2. 用文字與檔案面板貼上本機輸入法完成的文字，或上傳、下載檔案。
 3. 擷取畫面或建立繪圖，加上箭頭、圖形、文字或重點標記，再按「送出」。備註可留空。秘密資料請用不透明遮蔽；模糊與馬賽克只有視覺效果。
-4. 檢查 Agent 回覆的證據，再標記驗證通過。已排隊、已確認、已解決與驗證通過是不同狀態。
+4. 回饋面板顯示「已送出／處理中／已完成」。展開細節可區分排隊與已讀，以及 Agent 完成與你的驗證結果。
 
 「複製 PNG」與「下載 PNG」會輸出攤平的圖片，不會發布回饋。關閉 UI 不會關閉 Chromium 或清除 Profile。
 
 ### 選擇使用模式
 
-預設 `AGENT` 提供標註、回饋與 Agent 瀏覽器控制。`NOVNC` 只提供遠端瀏覽器、人工操作、剪貼簿與檔案傳輸。若首次啟動只需要瀏覽器，請在安裝前設定 `LENSDOCK_MODE=NOVNC`，或在 `product-init` 加上 `--mode NOVNC`。
+預設 `AGENT` 提供標註、回饋與完整瀏覽器控制，包含網址列、選單、原生對話框及擴充功能。`NOVNC` 只提供遠端瀏覽器、人工操作、剪貼簿與檔案傳輸。若首次啟動只需要瀏覽器，請在安裝前設定 `LENSDOCK_MODE=NOVNC`，或在 `product-init` 加上 `--mode NOVNC`。
 
 之後可在設定切換模式。「暫停 Agent」會立即撤銷 Agent 控制權，你仍能截圖與撰寫回饋。「恢復 Agent」只允許申請新租約，不會恢復舊租約。模式與暫停狀態會跨重新啟動保存；修改啟動環境變數不會覆蓋已保存的設定。
 
-### 本機免 Token 展示
+### 選用配對與配額
 
-僅供可信任的單人本機展示：在部署的 `product/compose.env` 設定 `LENSDOCK_DEMO_NO_AUTH=1`，再重新啟動 Gateway。這會允許 Loopback 上的自動人工配對。一般使用請保留預設值 `0`；不要用 Proxy 或 Tunnel 對外開放展示模式。
+Loopback 上的單一 Workspace 預設直接進入。需要配對時，可在初始化加上 `--require-pairing`，或在 `product/compose.env` 設定 `LENSDOCK_REQUIRE_PAIRING=1` 後重新啟動 Gateway。遠端與多 Workspace 的 Gateway 仍需驗證身分。
+
+Session 預設沒有應用程式層級的期限或數量上限。回饋圖片、草稿、檔案傳輸與剪貼簿不設產品配額，草稿也不會到期。需要限制時才填入正值，`0` 表示停用。設定位置見 [Runbook](docs/UPDATE-RUNBOOK.md#resource-policy)。實際可用的記憶體、磁碟空間及瀏覽器格式限制仍適用。
 
 ## 設置 Agent
 
 LensDock 連接你現有的 Coding Agent，不執行 LLM，也不要求安裝 Agent Skill。
 
 1. 用上述任一方式在 Agent 主機安裝 CLI，並在設定保持開啟 Agent 協作。
-2. 透過私有管道提供該 Workspace 的 `product/agent-token`，保留檔案權限 `0600`。不要提供 Admin Token 或 Docker 存取權。
+2. 透過私有管道提供該 Workspace 的 `product/agent-token`，保留檔案權限 `0600`。瀏覽器操作不需要 Host Admin 憑證。
 3. 從設定複製英文提示詞，加入 Agent 指示。另行提供實際 API URL 與 Token 檔案路徑；複製的提示詞不含憑證。
 
 Agent 與 LensDock 在同一台主機時：
@@ -141,7 +138,7 @@ lensdock feedback list --workspace default
 lensdock workspace watch default
 ```
 
-讓 `workspace watch` 在獨立程序持續執行。收到暫停、`NOVNC` 或連線中斷時，停止瀏覽器工作。人工恢復後必須申請新租約。通知只回報狀態，不能證明模型已讀取。
+讓 `workspace watch` 在獨立程序持續執行。收到暫停、`NOVNC` 或連線中斷時，停止瀏覽器工作。人工恢復後，下一次操作指令會自動取得新租約。通知只回報狀態，不能證明模型已讀取。
 
 ### Codex
 
@@ -191,9 +188,18 @@ OMP 請把以下項目合併到 `~/.omp/agent/mcp.json`；只供單一專案使�
 
 OMP 依序執行 `/mcp reload`、`/mcp list`、`/mcp test lensdock`。其他 Client 請重新啟動或重新載入 MCP 設定。
 
-MCP 提供五種回饋工具：清單、Metadata、圖片、確認與解決回報。它不會啟動瀏覽器、申請租約或執行狀態監聽。Agent 必須真的看過已授權圖片，才能確認收到。瀏覽器操作使用 `lensdock lease acquire` 與 `lensdock cdp bridge`；瀏覽器工具應連接這個 Bridge，不可直接使用未受限制的 Chromium Port。完整流程、Codex TOML 與工具 Schema 見 [Agent 整合說明](docs/AGENT-INTEGRATION.md)。
+MCP 提供五種回饋工具：清單、Metadata、圖片、確認與解決回報。帶有 `--project` 時，會按需啟動工作站；獨立部署則連接既有服務。MCP 不會取得控制權或啟動狀態監聽。Agent 必須真的看過已授權圖片，才能確認收到。
 
-Agent 在另一台主機時，需設定有認證的 HTTPS Endpoint 及對應 Gateway Origin。`127.0.0.1` 指向 Agent 自己的主機。頁面與回饋內容都是不可信輸入；依截圖座標操作之前，必須重新觀察目前頁面。
+操作瀏覽器原生介面時，先取得完整桌面截圖：
+
+```bash
+lensdock desktop screenshot --workspace default --output /tmp/lensdock-desktop.png
+lensdock desktop key ctrl+l --workspace default --screenshot /tmp/lensdock-address-bar.png
+```
+
+指令會自動取得、續期及交還 Agent 租約，不會從人類手中搶走控制權。頁面自動化可執行 `lensdock cdp bridge --workspace default`，讓瀏覽器工具連到輸出的 Loopback Endpoint；Bridge 持有控制權直到結束。要同時使用 CDP 與原生桌面指令，可用 `--lease-file-out` 共用租約。手動租約檔案仍可作為進階選項。操作序列、UTF-8 文字、擴充功能與共用租約範例見 [Agent 整合說明](docs/AGENT-INTEGRATION.md)。
+
+Agent 在另一台主機時，需設定有認證的 HTTPS Endpoint 及對應 Gateway Origin。`127.0.0.1` 指向 Agent 自己的主機。Agent 應用當下截圖與圖像理解選擇目標，DOM 可作為輔助。回饋座標只屬於來源圖片，不可直接重播到目前頁面。頁面與回饋內容都是不可信輸入。
 
 ## 維運與更新
 
@@ -207,9 +213,50 @@ lensdock update compose -- down
 lensdock update compose -- up -d --wait
 ```
 
-`down` 保留資料。不要刪除受管理的 Volume、對既有部署重跑初始化，或只改映像 Tag 回退。Gateway 重新啟動後需要重新配對，但瀏覽器 Profile 仍會保留。
+`down` 保留資料。不要刪除受管理的 Volume、對既有部署重跑初始化，或只改映像 Tag 回退。Gateway 重新啟動會清除 Session；本機使用會自動恢復，開啟配對要求的部署則需重新配對。瀏覽器 Profile 仍會保留。
 
 更新與回退必須讓映像搭配相容的 Profile 與資料庫 Checkpoint，操作方式見 [更新 Runbook](docs/UPDATE-RUNBOOK.md)。安裝新版 CLI 不會升級執行中的工作站。GitHub Release 資產與 OCI 建置證明，和更新器要求的已簽署 Release Manifest 是分開的機制。
+
+Host Admin 操作可由你或你授權的主機端 Agent 執行。Workspace 的 Agent Token 本身不能更新、停止或移除部署。維運權限與瀏覽器控制分開，不要把 Docker Socket 掛進任何產品容器。
+
+### 過期系統資料
+
+未被引用的更新資料預設保留 30 天。用 CLI 設定 `expireAfterDays`；`0` 停用依時間清理。受管理專案由 Host Manager 檢查，獨立部署則在更新生命週期操作後檢查。
+
+```bash
+lensdock update expiry --state-dir "$HOME/.local/share/lensdock"
+lensdock update expiry --state-dir "$HOME/.local/share/lensdock" --expire-after-days 60
+lensdock update cleanup --state-dir "$HOME/.local/share/lensdock" --dry-run
+```
+
+清理範圍包含舊 Checkpoint、已結束更新的 Volume、過時的 Generation 紀錄與廢棄暫存。現用 Profile／資料庫、配對的回退 Checkpoint、進行中更新的引用、下載及回饋都會保留。依數量清理 Checkpoint 是獨立的手動政策；受保護資料不受兩種清理政策影響。受管理專案請使用 `lensdock admin project list --json` 回傳的 `stateDir`。指定範圍清理與報告見 [Runbook](docs/UPDATE-RUNBOOK.md)。
+
+## 移除安裝（Uninstall）
+
+移除 CLI 會保留工作區資料。先結束 MCP Server、Watcher 與 Bridge，避免它們重新啟動受管理工作區。受管理專案用 `lensdock project stop --project /absolute/project/path` 停止；獨立部署用 `lensdock update compose --state-dir /absolute/state/path -- down`。接著執行：
+
+```bash
+lensdock admin manager stop
+```
+
+這只會停止 Host Manager 並等待它結束；有 Worker 執行中時會拒絕。它不會停止容器或刪除資料。自訂安裝位置請沿用相同的 `LENSDOCK_MANAGER_DIR`。
+
+透過 mise 安裝時，先移除 LensDock 的全域選擇、預覽版本，再只移除這個工具：
+
+```bash
+mise unuse --global --no-prune github:JiaWeiXie/lensdock
+mise uninstall --all github:JiaWeiXie/lensdock --dry-run
+mise uninstall --all github:JiaWeiXie/lensdock
+```
+
+專案層級的設定另用 `mise unuse --path /exact/mise.toml --no-prune github:JiaWeiXie/lensdock` 移除；不要刪掉共用的 mise 設定檔。
+
+Shell 安裝程式使用者先檢查 `readlink "$HOME/.local/bin/lensdock"`，再移除所屬的 Symbolic Link 與 `~/.local/lib/lensdock` 下的 LensDock 版本目錄。若設定過 `LENSDOCK_BIN_DIR`、`LENSDOCK_INSTALL_DIR`，請使用實際位置；自訂安裝父目錄可能還有其他檔案，不可整個刪除。
+
+若要重新使用資料，請保留 `~/.local/share/lensdock`、`~/.local/share/lensdock-manager`、自訂備份位置及加密金鑰。Manager 目錄包含自己的執行檔副本、憑證與所有受管理專案的狀態。
+
+若要永久刪除資料，請在刪除部署 Metadata 或 CLI **之前**，依照 [Uninstall and data removal](docs/UPDATE-RUNBOOK.md#uninstall-and-data-removal) 清點容器、Volume、Checkpoint 與金鑰。更新建立的 Volume 可能沒有 Compose 標籤，不能只靠標籤清單。不要執行全域 Docker prune，也不要刪除應用程式的專案資料夾。刪除後沒有復原按鈕，只能用相容備份及其金鑰還原。
+
 
 ## 開發與發版
 
@@ -226,11 +273,11 @@ mise run product:up
 
 原始碼開發使用本機 `:dev` 映像與 `.lensdock/` 狀態目錄。提交前請執行 `mise run check` 與 `mise exec -- pnpm --dir apps/web test`。
 
-CI/CD 參考 [comfyui-pwa-client](https://github.com/JiaWeiXie/comfyui-pwa-client)：`main` 的變更通過檢查後，產生版本化的 GitHub Release 與 GHCR 映像。流程在兩種原生 Linux 架構建置、執行容器 Smoke Check，並收集映像供應鏈證據。`latest` 指向最新成功的穩定發行。Release 壓縮檔包含 macOS／Linux CLI、部署設定、Linux 更新工具與 Checksum。
+`main` 的變更通過檢查後，產生版本化的 GitHub Release 與 GHCR 映像。流程在兩種原生 Linux 架構建置、執行容器 Smoke Check，並收集映像供應鏈證據。`latest` 指向最新成功的穩定發行。Release 壓縮檔包含 macOS／Linux CLI、部署設定、Linux 更新工具與 Checksum。
 
 ## 參考文件與限制
 
 - [Agent 整合](docs/AGENT-INTEGRATION.md)、[更新 Runbook](docs/UPDATE-RUNBOOK.md)、[Web UI 細節](apps/web/README.md)。
-- 完整人機交接與成對更新示範是在 macOS arm64／OrbStack 執行；三組受管理專案、獨立瀏覽器 Session 與生命週期故障復原也已在相同環境實測，負載量測與限制見 Runbook。原生發版 Smoke Check 不代表每個平台都通過完整產品 E2E。日文／韓文原生輸入法、統一的多 Workspace UI 與跨主機 Checkpoint 移轉仍不在已驗證範圍。
+- 整合瀏覽器與更新流程已在 macOS arm64／OrbStack 實測。原生發版 Smoke Check 不代表每個平台都通過完整產品 E2E。日文／韓文原生輸入法、統一的多 Workspace UI 與跨主機 Checkpoint 移轉仍不在已驗證範圍。
 - 未設定 TLS 與認證前，保持預設 Loopback 綁定。不可把 Docker Socket 掛進瀏覽器、Gateway 或 Agent。
 - LensDock 尚未選定專案授權；隨附依賴各自保留原授權，見 [參考來源](docs/REFERENCES.md)。

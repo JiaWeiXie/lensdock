@@ -336,7 +336,7 @@ func TestBridgeWebSocketInjectsTokenAndAppliesRuntimePolicy(t *testing.T) {
 		c := mustDial(t, url, "") // the client holds no token
 		expectEcho(t, c, `{"id":1,"method":"Page.enable"}`)
 
-		writeText(t, c, `{"id":2,"method":"Browser.close"}`)
+		writeText(t, c, `{"id":2,"method":"Browser.crash"}`)
 		_, data, err := readWithin(t, c, 2*time.Second)
 		if err != nil || !strings.Contains(string(data), "Method denied by LensDock policy") {
 			t.Fatalf("policy reply = %s, %v", data, err)

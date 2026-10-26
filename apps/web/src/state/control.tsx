@@ -11,12 +11,19 @@ import {
   requestTakeover,
 } from '@/api/workspace';
 import type { MessageKey } from '@/i18n';
-import { isAbortError, newKey, sleep } from '@/util/async';
+import { createSingleFlight, isAbortError, newKey, sleep } from '@/util/async';
 import { canOperate, useSession } from './session';
+import { decideIntent, ENDED_GUARD, OPEN_GUARD, type IntentGuard, type IntentKind } from './controlIntent';
 import { useWorkspace } from './workspace';
 
 /**
  * Client side of the single-writer lease model.
+ *
+ * A deliberate gesture on the live desktop (`interact`) acquires control: directly when nobody
+ * holds it, otherwise through the graceful takeover handshake. Concurrent gestures share one
+ * acquisition and the gesture itself is never replayed. Nothing acquires on mount, after an
+ * explicit release, after a revocation, or while a handshake is waiting on the user; forcing a
+ * drain timeout stays an explicit action (`forceTake`).
  *
  * The Gateway holds the capability token for this session; the UI only tracks
  * the lease metadata (id, epoch, generation, expiry). A lease that is renewed
@@ -30,6 +37,8 @@ const HEARTBEAT_MS = 10_000;
 const TAKEOVER_POLL_MS = 500;
 const TAKEOVER_MAX_MS = 70_000;
 const RECONCILE_MAX_MS = 45_000;
+/** Audit reason recorded when a desktop gesture takes control from another holder. */
+const AUTO_TAKEOVER_REASON = 'Took control by interacting with the live desktop';
 
 export type TakeoverPhase = 'idle' | 'requesting' | 'draining' | 'drain-timeout' | 'acquiring' | 'failed';
 
@@ -54,9 +63,11 @@ interface ControlCtx {
   /** True while an acquire/release round trip is running. */
   busy: boolean;
   error: ApiError | null;
-  /** Acquires directly when idle, otherwise runs the takeover handshake with `reason`. */
-  take: (reason: string) => Promise<Lease | null>;
-  /** Re-posts the takeover with force after a drain timeout. The user accepted that earlier actions may still take effect. */
+  /** Acquires directly when idle, otherwise runs the graceful takeover handshake. Concurrent calls share one run. */
+  take: () => Promise<Lease | null>;
+  /** Reacts to a deliberate desktop gesture: requests control unless it is held, blocked, suppressed or already being requested. */
+  interact: (kind: IntentKind) => void;
+  /** Re-posts the takeover with force after a drain timeout. Only an explicit user action may call this. */
   forceTake: (reason: string) => Promise<void>;
   cancelTakeover: () => Promise<void>;
   release: () => Promise<void>;
@@ -83,6 +94,17 @@ export function ControlProvider({ children }: { children: ReactNode }): ReactNod
   const takeoverAbort = useRef<AbortController | null>(null);
   const reconciling = useRef<Promise<void> | null>(null);
   const recoverTried = useRef(false);
+  const guardRef = useRef<IntentGuard>(OPEN_GUARD);
+  const actorRef = useRef(actor);
+  const takeoverRef = useRef<TakeoverView>(IDLE_TAKEOVER);
+
+  useEffect(() => {
+    actorRef.current = actor;
+  }, [actor]);
+
+  useEffect(() => {
+    takeoverRef.current = takeover;
+  }, [takeover]);
 
   useEffect(() => {
     workspaceRef.current = workspace;
@@ -96,6 +118,7 @@ export function ControlProvider({ children }: { children: ReactNode }): ReactNod
   const lose = useCallback(
     (code: string) => {
       if (!leaseRef.current) return;
+      guardRef.current = ENDED_GUARD;
       setLease(null);
       setLost({ code, at: Date.now() });
       void refresh();
@@ -283,33 +306,39 @@ export function ControlProvider({ children }: { children: ReactNode }): ReactNod
     [acquire, refresh, workspaceId],
   );
 
-  const take = useCallback(
-    async (reason: string): Promise<Lease | null> => {
-      setError(null);
-      setLost(null);
-      const state = workspaceRef.current?.controlState;
-      if (state === 'IDLE' && !workspaceRef.current?.handoff) {
-        setBusy(true);
-        try {
-          return await acquire();
-        } catch (err) {
-          setError(err instanceof ApiError ? err : new ApiError(0, 'UNKNOWN', 'acquire failed'));
-          return null;
-        } finally {
-          setBusy(false);
-        }
+  const takeOnce = useCallback(async (): Promise<Lease | null> => {
+    setError(null);
+    setLost(null);
+    const state = workspaceRef.current?.controlState;
+    if (state === 'IDLE' && !workspaceRef.current?.handoff) {
+      setBusy(true);
+      try {
+        return await acquire();
+      } catch (err) {
+        setError(err instanceof ApiError ? err : new ApiError(0, 'UNKNOWN', 'acquire failed'));
+        return null;
+      } finally {
+        setBusy(false);
       }
-      await runTakeover(reason, false);
-      return leaseRef.current;
-    },
-    [acquire, runTakeover],
-  );
+    }
+    await runTakeover(AUTO_TAKEOVER_REASON, false);
+    return leaseRef.current;
+  }, [acquire, runTakeover]);
+
+  // Every caller (desktop gesture, shortcut, capture, dialog retry) shares one acquisition.
+  const takeOnceRef = useRef(takeOnce);
+  useEffect(() => {
+    takeOnceRef.current = takeOnce;
+  }, [takeOnce]);
+  const takeFlight = useMemo(() => createSingleFlight(() => takeOnceRef.current()), []);
+  const take = useCallback(() => takeFlight.run(), [takeFlight]);
 
   const forceTake = useCallback((reason: string) => runTakeover(reason, true), [runTakeover]);
 
   const cancelTakeover = useCallback(async (): Promise<void> => {
     takeoverAbort.current?.abort();
     takeoverAbort.current = null;
+    guardRef.current = ENDED_GUARD;
     try {
       await apiCancelTakeover(workspaceId);
     } catch (err) {
@@ -337,6 +366,7 @@ export function ControlProvider({ children }: { children: ReactNode }): ReactNod
         return;
       }
     }
+    guardRef.current = ENDED_GUARD;
     setLease(null);
     setBusy(false);
     void refresh();
@@ -354,9 +384,33 @@ export function ControlProvider({ children }: { children: ReactNode }): ReactNod
     return null;
   }, [actor, workspace]);
 
+  const blockedRef = useRef(blocked);
+  useEffect(() => {
+    blockedRef.current = blocked;
+  }, [blocked]);
+
+  const interact = useCallback(
+    (kind: IntentKind): void => {
+      const ws = workspaceRef.current;
+      const { decision, guard } = decideIntent({
+        kind,
+        guard: guardRef.current,
+        blocked: blockedRef.current,
+        holdsLease: leaseRef.current !== null,
+        inFlight: takeFlight.pending || takeoverAbort.current !== null || takeoverRef.current.phase !== 'idle',
+        controlState: ws?.controlState ?? null,
+        holderIsSelf: ws?.holderId != null && ws.holderId === actorRef.current?.id,
+      });
+      guardRef.current = guard;
+      if (decision.action === 'acquire' || decision.action === 'takeover') void take();
+      else if (decision.action === 'reconcile') void reconcile();
+    },
+    [reconcile, take, takeFlight],
+  );
+
   const value = useMemo<ControlCtx>(
-    () => ({ lease, lost, takeover, blocked, busy, error, take, forceTake, cancelTakeover, release, dismissLost, reconcile }),
-    [lease, lost, takeover, blocked, busy, error, take, forceTake, cancelTakeover, release, dismissLost, reconcile],
+    () => ({ lease, lost, takeover, blocked, busy, error, take, interact, forceTake, cancelTakeover, release, dismissLost, reconcile }),
+    [lease, lost, takeover, blocked, busy, error, take, interact, forceTake, cancelTakeover, release, dismissLost, reconcile],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

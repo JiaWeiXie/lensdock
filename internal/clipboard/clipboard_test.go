@@ -201,6 +201,25 @@ func TestSetRejectsInvalidTextWithoutSpawning(t *testing.T) {
 	}
 }
 
+func TestNoSizeLimitUnlessConfigured(t *testing.T) {
+	// 200 KiB: above the former 64 KiB cap.
+	text := []byte(strings.Repeat("a", 200<<10))
+	if err := Validate(text, 0); err != nil {
+		t.Fatalf("Validate without a limit = %v", err)
+	}
+	if err := Validate(text, len(text)-1); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("Validate one byte over a configured limit = %v, want ErrTooLarge", err)
+	}
+	if err := Validate([]byte{'a', 0xff}, 0); !errors.Is(err, ErrInvalidUTF8) {
+		t.Fatalf("no limit must still require valid UTF-8, got %v", err)
+	}
+
+	sp := &fakeSpawner{}
+	if err := newTestBridge(sp, time.Minute, 0).Set(context.Background(), text, newHolder()); err != nil {
+		t.Fatalf("Set above the former cap without a configured limit = %v", err)
+	}
+}
+
 func TestSetRequiresHolder(t *testing.T) {
 	b := New(&fakeSpawner{}, time.Minute, 8)
 	if err := b.Set(context.Background(), []byte("x"), nil); !errors.Is(err, ErrNoHolder) {

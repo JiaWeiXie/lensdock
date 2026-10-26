@@ -1,4 +1,4 @@
-# LensDock runtime (user-namespace sandbox with the custom Chromium seccomp profile).
+# LensDock runtime (optional user-namespace sandbox, enabled by LENSDOCK_CHROMIUM_SANDBOX=true in runtime.env; custom Chromium seccomp profile).
 # Run via: mise run runtime:up   (requires `mise run image:build` and `mise run runtime:init` first)
 name: lensdock
 
@@ -14,8 +14,12 @@ services:
       - /run:mode=0755
       - /home/browser:uid=10001,gid=10001,mode=0700
     shm_size: 1gb
-    mem_limit: 4g
-    cpus: 4
+    # No default cap. Set LENSDOCK_RUNTIME_MEMORY_LIMIT and LENSDOCK_RUNTIME_CPUS
+    # to opt in; 0 means unlimited.
+    mem_limit: ${LENSDOCK_RUNTIME_MEMORY_LIMIT:-0}
+    cpus: ${LENSDOCK_RUNTIME_CPUS:-0}
+    # Optional process cap: LENSDOCK_RUNTIME_PIDS_LIMIT (0 means unlimited).
+    pids_limit: ${LENSDOCK_RUNTIME_PIDS_LIMIT:-0}
     cap_drop:
       - ALL
     cap_add:

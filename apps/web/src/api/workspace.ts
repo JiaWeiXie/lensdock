@@ -175,6 +175,7 @@ export function putClipboard(id: string, text: string, lease: LeaseFence): Promi
     contentType: 'text/plain; charset=utf-8',
     headers: leaseHeaders(lease),
     idempotencyKey: true,
+    timeoutMs: 0,
   });
 }
 

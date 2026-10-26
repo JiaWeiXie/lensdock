@@ -163,7 +163,7 @@ func (s *Service) readArtifact(ctx context.Context, r *revisionRow, name string)
 	if err != nil {
 		return nil, s.internal("artifact.read", err)
 	}
-	data, err := s.st.Artifacts.Read(r.FeedbackID, r.Revision, name, s.lim.MaxImageBytes+1<<20)
+	data, err := s.st.Artifacts.Read(r.FeedbackID, r.Revision, name, a.Size)
 	if err != nil {
 		s.artifactFailure(ctx, r.WorkspaceID, "artifact.read_failed", r.FeedbackID, r.Revision)
 		return nil, s.internal("artifact.read", err)
@@ -605,14 +605,11 @@ func (s *Service) Resolve(ctx context.Context, fbID string, in ResolveInput, key
 	if err != nil {
 		return Delivery{}, err
 	}
-	if n := len([]rune(in.Summary)); n < 1 || !validText(in.Summary, 12000, true) {
-		return Delivery{}, badRequest("summary is required (max 12000 characters)")
+	if n := len([]rune(in.Summary)); n < 1 || !validText(in.Summary, 0, true) {
+		return Delivery{}, badRequest("summary is required and must not contain control characters")
 	}
-	if n := len([]rune(in.Verification)); n < 1 || !validText(in.Verification, 12000, true) {
-		return Delivery{}, badRequest("verification is required (max 12000 characters)")
-	}
-	if len(in.ResultFeedbackIDs) > 10 {
-		return Delivery{}, badRequest("at most 10 resultFeedbackIds")
+	if n := len([]rune(in.Verification)); n < 1 || !validText(in.Verification, 0, true) {
+		return Delivery{}, badRequest("verification is required and must not contain control characters")
 	}
 	seen := map[string]bool{}
 	for _, id := range in.ResultFeedbackIDs {
@@ -665,14 +662,14 @@ func (s *Service) Verify(ctx context.Context, fbID string, in VerifyInput, key s
 	switch in.Outcome {
 	case "verified":
 	case "rejected":
-		if n := len([]rune(in.Reason)); n < 1 || !validText(in.Reason, 12000, true) {
-			return Delivery{}, badRequest("a rejection requires a reason (max 12000 characters)")
+		if n := len([]rune(in.Reason)); n < 1 || !validText(in.Reason, 0, true) {
+			return Delivery{}, badRequest("a rejection requires a reason without control characters")
 		}
 	default:
 		return Delivery{}, badRequest("outcome must be verified or rejected")
 	}
-	if in.Outcome == "verified" && !validText(in.Reason, 12000, true) {
-		return Delivery{}, badRequest("reason is too long")
+	if in.Outcome == "verified" && !validText(in.Reason, 0, true) {
+		return Delivery{}, badRequest("reason has invalid characters")
 	}
 	input, _ := json.Marshal(in)
 	return idempotent(ctx, s, p, "delivery.verify", fbID, key, input, func(rec *idemRec) (Delivery, error) {
@@ -707,8 +704,8 @@ func (s *Service) Cancel(ctx context.Context, fbID string, in CancelInput, key s
 	if err != nil {
 		return Delivery{}, err
 	}
-	if !validText(in.Reason, 12000, true) {
-		return Delivery{}, badRequest("reason is too long")
+	if !validText(in.Reason, 0, true) {
+		return Delivery{}, badRequest("reason has invalid characters")
 	}
 	input, _ := json.Marshal(in)
 	return idempotent(ctx, s, p, "delivery.cancel", fbID, key, input, func(rec *idemRec) (Delivery, error) {

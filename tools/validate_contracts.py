@@ -35,8 +35,6 @@ def validate_feedback(value: dict[str, Any]) -> None:
     """Validate the schema and selected cross-field product constraints."""
     VALIDATOR.validate(value)
     capture = value['capture']
-    if capture['imageWidthPx'] * capture['imageHeightPx'] > 24_000_000:
-        raise ValueError('Image exceeds the 24-megapixel capture limit.')
     annotation_ids: set[str] = set()
     for annotation in value['annotations']:
         if annotation['id'] in annotation_ids:
@@ -200,11 +198,12 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_feedback(value)
 
-    def test_oversized_image_is_rejected(self) -> None:
-        value = copy.deepcopy(EXAMPLE)
-        value['capture'].update(imageWidthPx=10000, imageHeightPx=10000)
-        with self.assertRaises(ValueError):
-            validate_feedback(value)
+    def test_large_images_are_accepted(self) -> None:
+        # No pixel, dimension or size quota is part of the contract.
+        value = drawing_example()
+        value['capture'].update(imageWidthPx=40000, imageHeightPx=40000)
+        value['artifacts'][0]['sizeBytes'] = 200 * 1024 * 1024
+        validate_feedback(value)
 
     def test_transparent_redaction_is_rejected(self) -> None:
         value = copy.deepcopy(EXAMPLE)
@@ -274,9 +273,6 @@ class ContractTests(unittest.TestCase):
     def test_task_title_is_required_in_every_version(self) -> None:
         value = drawing_example()
         value['task']['title'] = ''
-        with self.assertRaises(ValidationError):
-            validate_feedback(value)
-        value['task']['title'] = 'x' * 201
         with self.assertRaises(ValidationError):
             validate_feedback(value)
 

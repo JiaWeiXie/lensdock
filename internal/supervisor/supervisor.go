@@ -151,6 +151,10 @@ type Supervisor struct {
 	chromiumVer string
 	sandbox     SandboxReport
 
+	// chromiumSandbox is the configured opt-in to Chromium's sandbox. It is
+	// fixed at construction and never changes while running.
+	chromiumSandbox bool
+
 	profileMu   sync.Mutex
 	profileLock *profileLock
 
@@ -159,9 +163,13 @@ type Supervisor struct {
 	packages map[string]string
 }
 
-// New builds a Supervisor. It does not start anything.
-func New(hooks Hooks, log *slog.Logger) *Supervisor {
+// New builds a Supervisor. It does not start anything. chromiumSandbox opts
+// in to Chromium's own sandbox: when true the user-namespace preflight and the
+// renderer sandbox proof are required and fail closed; when false Chromium
+// starts with --no-sandbox.
+func New(hooks Hooks, log *slog.Logger, chromiumSandbox bool) *Supervisor {
 	s := newSupervisor(hooks, log)
+	s.chromiumSandbox = chromiumSandbox
 	s.units = s.buildUnits()
 	return s
 }
@@ -302,14 +310,16 @@ func readDisplayFD(ctx context.Context, r *os.File) error {
 }
 
 func (s *Supervisor) launchChromium(ctx context.Context) (*child, gateFunc, error) {
-	if err := Preflight(ctx); err != nil {
-		return nil, nil, &blockedError{code: apiwire.CodeSandboxPreflightFailed, err: err}
+	if s.chromiumSandbox {
+		if err := Preflight(ctx); err != nil {
+			return nil, nil, &blockedError{code: apiwire.CodeSandboxPreflightFailed, err: err}
+		}
 	}
 	lock, err := s.acquireProfileLock(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	c, err := s.start("chromium", ChromiumArgv())
+	c, err := s.start("chromium", ChromiumArgv(s.chromiumSandbox))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -317,8 +327,9 @@ func (s *Supervisor) launchChromium(ctx context.Context) (*child, gateFunc, erro
 	return c, s.chromiumGate, nil
 }
 
-// chromiumGate waits for the CDP endpoint, then proves the renderer sandbox.
-// A sandbox that cannot be proven blocks readiness permanently.
+// chromiumGate always waits for the CDP endpoint. With the sandbox enabled it
+// then proves the renderer sandbox; a sandbox that cannot be proven blocks
+// readiness permanently. With the sandbox disabled there is nothing to prove.
 func (s *Supervisor) chromiumGate(ctx context.Context, c *child) error {
 	var version string
 	err := pollUntil(ctx, cdpGateTimeout, "CDP /json/version", func(ctx context.Context) error {
@@ -330,20 +341,22 @@ func (s *Supervisor) chromiumGate(ctx context.Context, c *child) error {
 		return err
 	}
 
-	var report SandboxReport
-	err = pollUntil(ctx, sandboxGateTimeout, "sandbox verification", func(context.Context) error {
-		r, err := InspectSandbox(procRoot, c.pid)
-		report = r
-		return err
-	})
-	s.mu.Lock()
-	s.sandbox = report
-	s.mu.Unlock()
-	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	if s.chromiumSandbox {
+		var report SandboxReport
+		err = pollUntil(ctx, sandboxGateTimeout, "sandbox verification", func(context.Context) error {
+			r, err := InspectSandbox(procRoot, c.pid)
+			report = r
+			return err
+		})
+		s.mu.Lock()
+		s.sandbox = report
+		s.mu.Unlock()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return &blockedError{code: apiwire.CodeSandboxPreflightFailed, err: err}
 		}
-		return &blockedError{code: apiwire.CodeSandboxPreflightFailed, err: err}
 	}
 
 	s.mu.Lock()
@@ -729,9 +742,9 @@ func (p *browserProc) Kill() error { return p.c.signal(syscall.SIGKILL) }
 var errOutputTooLarge = errors.New("child output exceeds the limit")
 
 // OutputBrowserProcess runs argv (absolute binary path) as the browser user
-// and returns its stdout, at most maxBytes. Stderr is discarded, and neither
-// the output nor any part of it is logged or put into an error. The child is
-// killed when ctx ends.
+// and returns its stdout, at most maxBytes when positive (zero means no
+// limit). Stderr is discarded, and neither the output nor any part of it is
+// logged or put into an error. The child is killed when ctx ends.
 func (s *Supervisor) OutputBrowserProcess(ctx context.Context, argv []string, maxBytes int) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -757,8 +770,9 @@ func (s *Supervisor) OutputBrowserProcess(ctx context.Context, argv []string, ma
 	return out.buf.Bytes(), nil
 }
 
-// cappedBuffer keeps the first max bytes written and records overflow. It
-// accepts every write so the child never blocks on a full pipe.
+// cappedBuffer keeps the first max bytes written (all of them when max is not
+// positive) and records overflow. It accepts every write so the child never
+// blocks on a full pipe.
 type cappedBuffer struct {
 	max      int
 	buf      bytes.Buffer
@@ -766,7 +780,7 @@ type cappedBuffer struct {
 }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
-	if room := b.max - b.buf.Len(); len(p) > room {
+	if room := b.max - b.buf.Len(); b.max > 0 && len(p) > room {
 		b.overflow = true
 		if room > 0 {
 			b.buf.Write(p[:room])
@@ -805,6 +819,7 @@ func (s *Supervisor) Detail() Detail {
 	s.mu.Lock()
 	d.ChromiumVersion = s.chromiumVer
 	d.Sandbox = s.sandbox
+	d.Sandbox.Enabled = s.chromiumSandbox
 	s.mu.Unlock()
 
 	s.detailMu.Lock()

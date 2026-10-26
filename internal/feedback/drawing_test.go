@@ -146,10 +146,6 @@ func TestDrawingCaptureValidationAndAuthorization(t *testing.T) {
 	post := func(body any) resp { return e.do(&humanP, "POST", "/api/v1/workspaces/ws1/captures", body) }
 
 	for name, body := range map[string]any{
-		"width below 64":          drawingBody(63, 100),
-		"height below 64":         drawingBody(100, 63),
-		"width above 4096":        drawingBody(4097, 100),
-		"height above 4096":       drawingBody(100, 4097),
 		"zero width":              drawingBody(0, 100),
 		"negative height":         drawingBody(100, -1),
 		"missing both":            map[string]any{"source": "drawing"},
@@ -171,13 +167,19 @@ func TestDrawingCaptureValidationAndAuthorization(t *testing.T) {
 		t.Fatalf("a rejected drawing left %d private files", e.privateFiles())
 	}
 
-	// Both ends of the range are accepted, never clipped or defaulted.
-	for _, sz := range [][2]int{{64, 64}, {4096, 64}, {64, 4096}, {4096, 4096}} {
+	// Any positive size is accepted, never clipped or defaulted: below 64
+	// and above 4096 per side included.
+	for _, sz := range [][2]int{{1, 1}, {63, 100}, {4097, 10}, {10, 5000}, {64, 64}} {
 		var st CaptureState
 		post(drawingBody(sz[0], sz[1])).want(202).into(&st)
 		if st.ImageWidthPx != sz[0] || st.ImageHeightPx != sz[1] {
 			t.Fatalf("size = %dx%d, want %dx%d", st.ImageWidthPx, st.ImageHeightPx, sz[0], sz[1])
 		}
+	}
+	// A size whose RGBA buffer cannot be represented is refused before any allocation.
+	post(drawingBody(1<<31-1, 1<<31-1)).wantErr(413, CodeImageTooLarge)
+	if e.privateFiles() != 5 {
+		t.Fatalf("private files = %d, want exactly the 5 accepted canvases", e.privateFiles())
 	}
 
 	// Only a human of the workspace may create one.

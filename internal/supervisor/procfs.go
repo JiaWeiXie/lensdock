@@ -261,8 +261,12 @@ type SandboxProcess struct {
 	CapEff         string `json:"capEff"`
 }
 
-// SandboxReport is the evidence gathered by InspectSandbox.
+// SandboxReport is the evidence gathered by InspectSandbox. Enabled reports
+// whether the Chromium sandbox was requested by configuration, independent of
+// whether it has been proven yet; Verified is true only after the renderer
+// sandbox was actually proven, so it is always false when Enabled is false.
 type SandboxReport struct {
+	Enabled   bool             `json:"enabled"`
 	Verified  bool             `json:"verified"`
 	Processes []SandboxProcess `json:"processes"`
 }

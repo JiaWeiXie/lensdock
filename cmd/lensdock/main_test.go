@@ -413,9 +413,13 @@ func TestClipboardSetSendsStdinVerbatim(t *testing.T) {
 		t.Errorf("request: body %q auth %q type %q", gotBody, gotAuth, gotType)
 	}
 
+	// The CLI imposes no size limit of its own: text above the former 64 KiB cap is sent verbatim.
 	big := strings.Repeat("a", 64*1024+1)
-	if r := runCLI(t, context.Background(), big, nil, "clipboard", "set", "--lease-file", leasePath); r.code == 0 {
-		t.Error("oversized clipboard text was sent")
+	if r := runCLI(t, context.Background(), big, nil, "clipboard", "set", "--lease-file", leasePath); r.code != 0 {
+		t.Fatalf("large clipboard text refused by the CLI: exit %d: %s", r.code, r.stderr)
+	}
+	if string(gotBody) != big {
+		t.Errorf("large body not sent verbatim: %d bytes", len(gotBody))
 	}
 }
 

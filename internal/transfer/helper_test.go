@@ -3,12 +3,14 @@ package transfer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -253,17 +255,22 @@ func (f runnerFunc) RunBrowserProcess(ctx context.Context, argv []string, stdin 
 	return f(ctx, argv, stdin, stdout)
 }
 
-func TestHelperStoreCapsHelperJSONOutput(t *testing.T) {
-	flood := runnerFunc(func(_ context.Context, _ []string, _ io.Reader, stdout io.Writer) error {
-		chunk := bytes.Repeat([]byte("x"), 1<<20)
-		for range 8 {
-			if _, err := stdout.Write(chunk); err != nil {
-				return err
-			}
+func TestHelperStoreListsEveryFileWithoutTruncation(t *testing.T) {
+	// 80000 entries encode to well over the 4 MiB the helper's put output is
+	// capped at, and far beyond the former 2000-entry listing cut.
+	const n = 80000
+	big := runnerFunc(func(_ context.Context, _ []string, _ io.Reader, stdout io.Writer) error {
+		files := make([]Entry, n)
+		for i := range files {
+			files[i] = Entry{Name: "f" + strconv.Itoa(i), Size: int64(i), ModifiedAt: time.Unix(0, 0).UTC()}
 		}
-		return nil
+		return json.NewEncoder(stdout).Encode(Listing{Area: AreaDownloads, Files: files})
 	})
-	if _, err := NewHelperStore(flood, "/bin/rt", Limits{}).List(ctx, AreaDownloads); err == nil {
-		t.Fatal("an oversized helper listing was accepted")
+	l, err := NewHelperStore(big, "/bin/rt", Limits{}).List(ctx, AreaDownloads)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Files) != n {
+		t.Fatalf("listed %d files, want all %d", len(l.Files), n)
 	}
 }

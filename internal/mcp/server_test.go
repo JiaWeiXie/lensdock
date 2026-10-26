@@ -19,7 +19,8 @@ type fakeBackend struct {
 	png     []byte
 	acks    int
 	resolve int
-	big     bool
+	// declared overrides the artifact size the fake feedback advertises.
+	declared int64
 }
 
 func (f *fakeBackend) List(context.Context, delivery.ListQuery) (delivery.List, error) {
@@ -32,8 +33,8 @@ func (f *fakeBackend) AssignedRevision(context.Context, string, string) (int, er
 
 func (f *fakeBackend) Get(_ context.Context, id string, rev int) (*delivery.Feedback, error) {
 	size := int64(len(f.png))
-	if f.big {
-		size = maxInlineImage + 1
+	if f.declared > 0 {
+		size = f.declared
 	}
 	return &delivery.Feedback{
 		SchemaVersion: delivery.SchemaVersion, FeedbackID: id, Revision: rev, WorkspaceID: "ws",
@@ -68,7 +69,12 @@ func (f *fakeBackend) Resolve(_ context.Context, id string, rev int, _ delivery.
 
 func connect(t *testing.T, b Backend) *sdk.ClientSession {
 	t.Helper()
-	srv, err := NewServer(Config{WorkspaceID: "ws", Backend: b})
+	return connectWith(t, Config{WorkspaceID: "ws", Backend: b})
+}
+
+func connectWith(t *testing.T, cfg Config) *sdk.ClientSession {
+	t.Helper()
+	srv, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,9 +196,29 @@ func TestImageIsInlineContentAndAckIsSeparate(t *testing.T) {
 	}
 }
 
-func TestOversizedImageFailsWithCLIFallback(t *testing.T) {
-	cs := connect(t, &fakeBackend{png: testPNG(t), big: true})
+func TestLargeImageIsInlineByDefault(t *testing.T) {
+	// 9 MiB declared: above the former fixed 8 MiB inline cap.
+	b := &fakeBackend{png: testPNG(t), declared: 9 << 20}
+	cs := connect(t, b)
 	res := call(t, cs, "feedback_image", map[string]any{"feedbackId": "fb1"})
+	if res.IsError {
+		t.Fatalf("large image refused without a configured limit: %s", text(res))
+	}
+	inline := false
+	for _, c := range res.Content {
+		if img, ok := c.(*sdk.ImageContent); ok && bytes.Equal(img.Data, b.png) {
+			inline = true
+		}
+	}
+	if !inline {
+		t.Fatal("no inline image content for a large screenshot")
+	}
+}
+
+func TestConfiguredInlineLimitFailsWithCLIFallbackAtExactBoundary(t *testing.T) {
+	const limit = 1000
+	over := connectWith(t, Config{WorkspaceID: "ws", Backend: &fakeBackend{png: testPNG(t), declared: limit + 1}, MaxInlineImageBytes: limit})
+	res := call(t, over, "feedback_image", map[string]any{"feedbackId": "fb1"})
 	if !res.IsError || !strings.Contains(text(res), "lensdock feedback pull") {
 		t.Fatalf("oversized image: %s", text(res))
 	}
@@ -200,6 +226,17 @@ func TestOversizedImageFailsWithCLIFallback(t *testing.T) {
 		if _, ok := c.(*sdk.ImageContent); ok {
 			t.Fatal("image content returned for an oversized screenshot")
 		}
+	}
+
+	exact := connectWith(t, Config{WorkspaceID: "ws", Backend: &fakeBackend{png: testPNG(t), declared: limit}, MaxInlineImageBytes: limit})
+	if res := call(t, exact, "feedback_image", map[string]any{"feedbackId": "fb1"}); res.IsError {
+		t.Fatalf("image at the limit refused: %s", text(res))
+	}
+}
+
+func TestNegativeInlineLimitIsRefused(t *testing.T) {
+	if _, err := NewServer(Config{WorkspaceID: "ws", Backend: &fakeBackend{png: testPNG(t)}, MaxInlineImageBytes: -1}); err == nil {
+		t.Fatal("negative inline image limit accepted")
 	}
 }
 

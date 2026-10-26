@@ -121,7 +121,7 @@ func (c *Client) Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 	}
 	contents[FileManifest] = append(manifest, '\n')
 
-	if err := publish(final, contents); err != nil {
+	if err := publish(final, contents, c.limits); err != nil {
 		return PullResult{}, err
 	}
 	return PullResult{Dir: final, Manifest: m}, nil
@@ -158,7 +158,7 @@ func approveOutput(path string) (string, error) {
 	return final, nil
 }
 
-func publish(final string, contents map[string][]byte) error {
+func publish(final string, contents map[string][]byte, lim Limits) error {
 	parent := filepath.Dir(final)
 	stage, err := os.MkdirTemp(parent, ".lensdock-pull-")
 	if err != nil {
@@ -184,7 +184,7 @@ func publish(final string, contents map[string][]byte) error {
 		}
 	}
 	syncDir(stage)
-	if _, err := VerifyBundle(stage); err != nil {
+	if _, err := VerifyBundle(stage, lim); err != nil {
 		return fmt.Errorf("staged bundle failed verification: %w", err)
 	}
 	if err := renameNoReplace(stage, final); err != nil {
@@ -233,9 +233,10 @@ func syncDir(path string) {
 // VerifyBundle checks a pulled bundle directory from disk: it must be a real
 // directory holding exactly the files its manifest lists under fixed names
 // plus the manifest, every one a regular non-symlink file whose size and
-// SHA-256 match, and its feedback.json must agree with the manifest. It is
-// read-only and returns the manifest.
-func VerifyBundle(dir string) (Manifest, error) {
+// SHA-256 match, and its feedback.json must agree with the manifest. The
+// optional lim (zero means no limit) bounds artifact, total and JSON sizes. It
+// is read-only and returns the manifest.
+func VerifyBundle(dir string, lim Limits) (Manifest, error) {
 	fi, err := os.Lstat(dir)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("bundle directory: %w", err)
@@ -251,7 +252,7 @@ func VerifyBundle(dir string) (Manifest, error) {
 	if err := decodeStrict(raw, &m); err != nil {
 		return Manifest{}, fmt.Errorf("manifest: %w", err)
 	}
-	if err := m.validate(); err != nil {
+	if err := m.validate(lim); err != nil {
 		return Manifest{}, fmt.Errorf("manifest: %w", err)
 	}
 	entries, err := os.ReadDir(dir)
@@ -275,11 +276,11 @@ func VerifyBundle(dir string) (Manifest, error) {
 			return Manifest{}, fmt.Errorf("%s: %w", mf.Name, err)
 		}
 	}
-	feedbackRaw, err := readRegular(filepath.Join(dir, FileFeedback), MaxJSONBody)
+	feedbackRaw, err := readRegular(filepath.Join(dir, FileFeedback), lim.MaxJSONBytes)
 	if err != nil {
 		return Manifest{}, err
 	}
-	f, err := decodeFeedback(feedbackRaw, m.FeedbackID, m.Revision)
+	f, err := decodeFeedback(feedbackRaw, m.FeedbackID, m.Revision, lim)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("%s: %w", FileFeedback, err)
 	}
@@ -307,7 +308,7 @@ func VerifyBundle(dir string) (Manifest, error) {
 	return m, nil
 }
 
-func (m Manifest) validate() error {
+func (m Manifest) validate(lim Limits) error {
 	if !supportedSchemaVersion(m.SchemaVersion) {
 		return fmt.Errorf("unsupported schemaVersion %q", m.SchemaVersion)
 	}
@@ -321,9 +322,10 @@ func (m Manifest) validate() error {
 		return errors.New("revision below 1")
 	}
 	seen := make(map[string]bool, len(m.Files))
-	var total int64
+	var artifactTotal int64
 	for _, f := range m.Files {
 		want, ok := bundleMIME[f.Name]
+		_, isArtifact := artifactMIME[f.Name]
 		switch {
 		case !ok:
 			return fmt.Errorf("file name %q is not a fixed bundle name", f.Name)
@@ -333,19 +335,23 @@ func (m Manifest) validate() error {
 			return fmt.Errorf("file %q has MIME type %q, want %q", f.Name, f.MimeType, want)
 		case !sha256Pattern.MatchString(f.SHA256):
 			return fmt.Errorf("file %q has a malformed sha256", f.Name)
-		case f.SizeBytes < 1 || f.SizeBytes > MaxArtifactBytes:
-			return fmt.Errorf("file %q has size %d outside 1..%d", f.Name, f.SizeBytes, MaxArtifactBytes)
+		case f.SizeBytes < 1 || f.SizeBytes > maxDeclaredBytes:
+			return fmt.Errorf("file %q has size %d outside 1..%d", f.Name, f.SizeBytes, int64(maxDeclaredBytes))
+		case isArtifact && lim.MaxArtifactBytes > 0 && f.SizeBytes > lim.MaxArtifactBytes:
+			return fmt.Errorf("file %q is %d bytes, above the configured per-artifact limit of %d", f.Name, f.SizeBytes, lim.MaxArtifactBytes)
 		}
 		seen[f.Name] = true
-		total += f.SizeBytes
+		if isArtifact {
+			artifactTotal += f.SizeBytes
+		}
 	}
 	for _, req := range []string{FileFeedback, FileTask, FileAnnotations, FileRedacted, FileAnnotated} {
 		if !seen[req] {
 			return fmt.Errorf("required file %q is not listed", req)
 		}
 	}
-	if total > MaxBundleBytes+MaxJSONBody {
-		return fmt.Errorf("files total %d bytes, above the bundle limit", total)
+	if lim.MaxBundleBytes > 0 && artifactTotal > lim.MaxBundleBytes {
+		return fmt.Errorf("artifacts total %d bytes, above the configured bundle limit of %d", artifactTotal, lim.MaxBundleBytes)
 	}
 	return nil
 }
@@ -372,12 +378,20 @@ func openRegular(path string) (*os.File, os.FileInfo, error) {
 	return f, fi2, nil
 }
 
+// readRegular reads a regular, non-symlink file; max <= 0 means no size limit.
 func readRegular(path string, max int64) ([]byte, error) {
 	f, fi, err := openRegular(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	if max <= 0 {
+		data, err := io.ReadAll(f)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", filepath.Base(path), err)
+		}
+		return data, nil
+	}
 	if fi.Size() > max {
 		return nil, fmt.Errorf("%s is larger than %d bytes", filepath.Base(path), max)
 	}

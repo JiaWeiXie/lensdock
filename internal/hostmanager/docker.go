@@ -66,6 +66,7 @@ func (r fixedDockerRunner) Run(ctx context.Context, c update.Cmd) error {
 				return err
 			}
 			r.cfg.Policy.Helpers = current.Policy.Helpers
+			r.cfg.Policy.HelperPidsLimit = current.Policy.HelperPidsLimit
 			if _, err := InspectEngine(ctx, r.cfg); err != nil {
 				return err
 			}
@@ -79,7 +80,8 @@ func (r fixedDockerRunner) Run(ctx context.Context, c update.Cmd) error {
 				}
 			}
 		}
-		memory := r.cfg.Policy.Helpers.MemoryBytes
+		helpers := r.cfg.Policy.Helpers
+		memory := helpers.MemoryBytes
 		for i, arg := range args {
 			if arg == "--memory" && i+1 < len(args) {
 				var err error
@@ -87,13 +89,35 @@ func (r fixedDockerRunner) Run(ctx context.Context, c update.Cmd) error {
 				if err != nil {
 					return err
 				}
+				// A caller may only tighten a configured allowance.
+				if helpers.MemoryBytes > 0 && (memory <= 0 || memory > helpers.MemoryBytes) {
+					return errors.New("helper exceeds the configured lifecycle resource allowance")
+				}
 			}
 		}
-		if memory <= 0 || memory > r.cfg.Policy.Helpers.MemoryBytes || r.cfg.Policy.Helpers.NanoCPUs <= 0 {
-			return errors.New("helper exceeds the configured lifecycle resource allowance")
+		prefix := []string{"run", "--label", managerLabel + "=" + r.cfg.ID, "--label", helperLabel + "=true"}
+		if memory > 0 {
+			prefix = append(prefix, "--memory", strconv.FormatInt(memory, 10), "--memory-swap", strconv.FormatInt(memory, 10))
 		}
-		prefix := []string{"run", "--label", managerLabel + "=" + r.cfg.ID, "--label", helperLabel + "=true", "--memory", strconv.FormatInt(memory, 10), "--memory-swap", strconv.FormatInt(memory, 10), "--cpus", strconv.FormatFloat(float64(r.cfg.Policy.Helpers.NanoCPUs)/1e9, 'f', 9, 64)}
-		args = append(prefix, args[1:]...)
+		if helpers.NanoCPUs > 0 {
+			prefix = append(prefix, "--cpus", cpuArg(helpers.NanoCPUs))
+		}
+		if r.cfg.Policy.HelperPidsLimit > 0 {
+			prefix = append(prefix, "--pids-limit", strconv.FormatInt(r.cfg.Policy.HelperPidsLimit, 10))
+		}
+		// The manager's policy owns the PID cap: a deployment or caller value is
+		// dropped instead of overriding it (the last flag would win in Docker).
+		rest := make([]string, 0, len(args))
+		for i := 1; i < len(args); i++ {
+			switch {
+			case args[i] == "--pids-limit" && i+1 < len(args):
+				i++
+			case strings.HasPrefix(args[i], "--pids-limit="):
+			default:
+				rest = append(rest, args[i])
+			}
+		}
+		args = append(prefix, rest...)
 	}
 	// The explicit endpoint wins over context files. No caller Docker/Compose
 	// environment may select another engine, project, file, or profile.
@@ -115,15 +139,24 @@ func (r fixedDockerRunner) Run(ctx context.Context, c update.Cmd) error {
 	}
 	// Helper limits are operation policy, not immutable project limits. These
 	// trusted values win over both caller and deployment interpolation inputs.
+	// Zero means unlimited and disables the Compose cap.
 	if len(c.Args) > 0 && c.Args[0] == "compose" {
-		env = append(env,
-			"LENSDOCK_MANAGER_HELPER_MEMORY="+strconv.FormatInt(r.cfg.Policy.Helpers.MemoryBytes, 10),
-			"LENSDOCK_MANAGER_HELPER_CPUS="+strconv.FormatFloat(float64(r.cfg.Policy.Helpers.NanoCPUs)/1e9, 'f', 9, 64),
-		)
+		env = append(env, composeHelperPolicyEnv(r.cfg.Policy)...)
 	}
 	c.Name, c.Args, c.Env, c.EnvExact = r.cfg.DockerBinary, args, env, true
 	c.ExtraFiles = append(c.ExtraFiles, locks...)
 	return (update.ExecRunner{}).Run(ctx, c)
+}
+
+// composeHelperPolicyEnv is the trusted Compose interpolation input that
+// carries the manager's helper allowance (CPU, memory and PID cap). Entries
+// are appended after every caller and deployment variable so they win.
+func composeHelperPolicyEnv(p Policy) []string {
+	return []string{
+		"LENSDOCK_MANAGER_HELPER_MEMORY=" + strconv.FormatInt(p.Helpers.MemoryBytes, 10),
+		"LENSDOCK_MANAGER_HELPER_CPUS=" + cpuArg(p.Helpers.NanoCPUs),
+		"LENSDOCK_MANAGER_HELPER_PIDS=" + strconv.FormatInt(p.HelperPidsLimit, 10),
+	}
 }
 
 func dockerOutput(ctx context.Context, cfg Config, args ...string) ([]byte, error) {
@@ -222,6 +255,39 @@ func containerInventory(ctx context.Context, cfg Config) ([]dockerContainer, err
 	return all, nil
 }
 
+// cpuArg renders a CPU quantity for Docker and Compose; zero is unlimited.
+func cpuArg(nano int64) string {
+	if nano <= 0 {
+		return "0"
+	}
+	return strconv.FormatFloat(float64(nano)/1e9, 'f', 9, 64)
+}
+
+// capsHonored reports whether a container enforces every cap in want. A zero
+// dimension of want is unlimited and requires nothing.
+func capsHonored(caps, want Resources) bool {
+	return (want.MemoryBytes <= 0 || caps.MemoryBytes > 0) && (want.NanoCPUs <= 0 || caps.NanoCPUs > 0)
+}
+
+// helperCapsMatch reports whether a running helper is capped within every
+// configured dimension of the helper allowance.
+func helperCapsMatch(caps, allowance Resources) bool {
+	return (allowance.MemoryBytes <= 0 || caps.MemoryBytes > 0 && caps.MemoryBytes <= allowance.MemoryBytes) &&
+		(allowance.NanoCPUs <= 0 || caps.NanoCPUs > 0 && caps.NanoCPUs <= allowance.NanoCPUs)
+}
+
+// configuredCaps returns the caps a project container of the given Compose
+// service must enforce.
+func configuredCaps(l Limits, service string) Resources {
+	switch service {
+	case "runtime":
+		return l.Runtime
+	case "gateway":
+		return l.Gateway
+	}
+	return maxRes(l.Runtime, l.Gateway)
+}
+
 func containerCaps(c dockerContainer) Resources {
 	cpu := c.HostConfig.NanoCpus
 	if cpu <= 0 && c.HostConfig.CpuQuota > 0 {
@@ -278,7 +344,7 @@ func (b DockerBackend) Inspect(ctx context.Context, cfg Config, projects []Proje
 		if labels[managerLabel] == cfg.ID && labels[helperLabel] == "true" {
 			if c.State.Running {
 				caps := containerCaps(c)
-				if caps.MemoryBytes <= 0 || caps.MemoryBytes > cfg.Policy.Helpers.MemoryBytes || caps.NanoCPUs <= 0 || caps.NanoCPUs > cfg.Policy.Helpers.NanoCPUs {
+				if !helperCapsMatch(caps, cfg.Policy.Helpers) {
 					return Inventory{}, errors.New("managed helper resource limits do not match its reserved allowance")
 				}
 			}
@@ -303,8 +369,11 @@ func (b DockerBackend) Inspect(ctx context.Context, cfg Config, projects []Proje
 				caps := containerCaps(c)
 				inv.External.MemoryBytes += max(caps.MemoryBytes, 0)
 				inv.External.NanoCPUs += max(caps.NanoCPUs, 0)
-				if caps.MemoryBytes <= 0 || caps.NanoCPUs <= 0 {
-					inv.Unbounded = append(inv.Unbounded, strings.TrimPrefix(c.Name, "/"))
+				if caps.MemoryBytes <= 0 {
+					inv.UnboundedMemory = append(inv.UnboundedMemory, strings.TrimPrefix(c.Name, "/"))
+				}
+				if caps.NanoCPUs <= 0 {
+					inv.UnboundedCPU = append(inv.UnboundedCPU, strings.TrimPrefix(c.Name, "/"))
 				}
 			}
 			continue
@@ -320,9 +389,9 @@ func (b DockerBackend) Inspect(ctx context.Context, cfg Config, projects []Proje
 		caps := containerCaps(c)
 		o.Enforced.MemoryBytes += max(caps.MemoryBytes, 0)
 		o.Enforced.NanoCPUs += max(caps.NanoCPUs, 0)
-		if caps.MemoryBytes <= 0 || caps.NanoCPUs <= 0 {
+		if !capsHonored(caps, configuredCaps(p.Limits, labels["com.docker.compose.service"])) {
 			o.State = "unknown"
-			o.Blocker = "managed container lacks enforced resource caps"
+			o.Blocker = "managed container lacks the resource caps configured for its project"
 		}
 		if o.State != "unknown" {
 			o.State = "partial"
@@ -529,7 +598,7 @@ func (b DockerBackend) Execute(ctx context.Context, cfg Config, p Project, op Op
 		if berr != nil {
 			return berr
 		}
-		dep, err = product.Initialize(product.InitOptions{StateDir: p.StateDir, Origin: p.Origin, WorkspaceID: p.Workspace, Mode: "AGENT", Project: p.ComposeProject, RuntimeImage: cfg.RuntimeImage, GatewayImage: cfg.GatewayImage, Bundle: bundle, DeploymentID: p.ID, ManagedBy: &update.ManagedOwner{ManagerID: cfg.ID, ProjectID: p.ID, ManagerRoot: cfg.Root}})
+		dep, err = product.Initialize(product.InitOptions{StateDir: p.StateDir, Origin: p.Origin, WorkspaceID: p.Workspace, Mode: "AGENT", Project: p.ComposeProject, RuntimeImage: cfg.RuntimeImage, GatewayImage: cfg.GatewayImage, Bundle: bundle, DeploymentID: p.ID, RequirePairing: cfg.RequirePairing, ManagedBy: &update.ManagedOwner{ManagerID: cfg.ID, ProjectID: p.ID, ManagerRoot: cfg.Root}})
 	}
 	if err != nil {
 		if op.Kind == "stop" && errors.Is(err, os.ErrNotExist) {
@@ -595,40 +664,107 @@ func (b DockerBackend) Execute(ctx context.Context, cfg Config, p Project, op Op
 	}
 }
 
-func ensureResourceProfile(cfg Config, p Project, dep *update.Deployment) error {
+// capLines renders the Compose cap lines of one service. A zero quantity
+// explicitly disables that cap, which also overrides any default cap of the
+// base Compose file; nothing is replaced by a large placeholder.
+func capLines(r Resources) string {
+	mem, swap, cpus := "0", "0", "0"
+	if r.MemoryBytes > 0 {
+		mem = strconv.FormatInt(r.MemoryBytes, 10)
+		swap = mem
+	}
+	if r.NanoCPUs > 0 {
+		cpus = strconv.FormatFloat(float64(r.NanoCPUs)/1e9, 'f', 9, 64)
+	}
+	return fmt.Sprintf("    mem_limit: %s\n    memswap_limit: %s\n    cpus: %s\n", mem, swap, cpus)
+}
+
+// resourceProfile is the exact Compose override of a project's authorized
+// limits. Positive quantities render exactly as in earlier releases, so the
+// profile of an existing explicit policy never changes.
+func resourceProfile(cfg Config, p Project) string {
 	var text strings.Builder
 	text.WriteString("services:\n")
 	for _, svc := range []struct {
 		name      string
 		resources Resources
 	}{{"runtime", p.Limits.Runtime}, {"gateway", p.Limits.Gateway}} {
-		if svc.resources.MemoryBytes <= 0 || svc.resources.NanoCPUs <= 0 {
-			return errors.New("project resource profile has no enforced limits")
-		}
-		fmt.Fprintf(&text, "  %s:\n    mem_limit: %d\n    memswap_limit: %d\n    cpus: %.9f\n    labels:\n      %s: %q\n      %s: %q\n", svc.name, svc.resources.MemoryBytes, svc.resources.MemoryBytes, float64(svc.resources.NanoCPUs)/1e9, managerLabel, cfg.ID, projectLabel, p.ID)
+		fmt.Fprintf(&text, "  %s:\n%s    labels:\n      %s: %q\n      %s: %q\n", svc.name, capLines(svc.resources), managerLabel, cfg.ID, projectLabel, p.ID)
 	}
 	// Compose resolves helper caps from the manager's locked operation policy.
 	// Changing that policy must not rewrite the authorized project pair.
 	fmt.Fprintf(&text, "  config-init:\n    mem_limit: ${LENSDOCK_MANAGER_HELPER_MEMORY:?managed helper policy is required}\n    memswap_limit: ${LENSDOCK_MANAGER_HELPER_MEMORY:?managed helper policy is required}\n    cpus: ${LENSDOCK_MANAGER_HELPER_CPUS:?managed helper policy is required}\n    labels:\n      %s: %q\n      %s: %q\n      %s: \"true\"\n", managerLabel, cfg.ID, projectLabel, p.ID, helperLabel)
-	file := filepath.Join(dep.StateDir, "resources.yaml")
+	return text.String()
+}
+
+// reconcileResourceProfile moves an established resource profile to new
+// limits for an authorized reconfiguration. The file is replaced only when it
+// is still exactly the profile of the project's current limits (or already the
+// requested one after an interrupted attempt); any other content is tampering
+// and is refused. A project that never started has no profile yet.
+func reconcileResourceProfile(cfg Config, p Project, next Limits) error {
+	file := filepath.Join(p.StateDir, "product", "resources.yaml")
 	data, err := os.ReadFile(file)
-	if err == nil {
-		if string(data) != text.String() {
-			return errors.New("existing resource profile differs from the authorized project; refusing silent resize")
-		}
-	} else if errors.Is(err, os.ErrNotExist) {
-		if err := auth.WritePrivateFile(file, []byte(text.String())); err != nil {
-			return err
-		}
-	} else {
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
-	for _, f := range dep.Compose.Files {
-		if f == file {
-			return nil
+	target := p
+	target.Limits = next
+	want := resourceProfile(cfg, target)
+	switch string(data) {
+	case want:
+		return nil
+	case resourceProfile(cfg, p):
+		return writeFileAtomic(file, []byte(want), 0o600)
+	}
+	return errors.New("existing resource profile differs from the authorized project; refusing silent resize")
+}
+
+// helperPolicyProfile is the fixed Compose override that applies the
+// manager's helper PID cap to config-init. It carries no value of its own (the
+// cap is interpolated from the trusted operation policy), so a policy change
+// never rewrites it or the authorized project profile, and it also covers
+// release copies whose base Compose file predates the setting. Its position
+// after the base files makes the manager value win over a deployment one.
+const helperPolicyProfile = "services:\n  config-init:\n    pids_limit: ${LENSDOCK_MANAGER_HELPER_PIDS:?managed helper policy is required}\n"
+
+func ensureResourceProfile(cfg Config, p Project, dep *update.Deployment) error {
+	changed := false
+	for _, profile := range []struct{ name, text, what string }{
+		{"resources.yaml", resourceProfile(cfg, p), "resource profile differs from the authorized project; refusing silent resize"},
+		{product.HelperPolicyFile, helperPolicyProfile, "helper policy profile differs from the manager's; refusing to use it"},
+	} {
+		file := filepath.Join(dep.StateDir, profile.name)
+		data, err := os.ReadFile(file)
+		if err == nil {
+			if string(data) != profile.text {
+				return errors.New("existing " + profile.what)
+			}
+		} else if errors.Is(err, os.ErrNotExist) {
+			if err := auth.WritePrivateFile(file, []byte(profile.text)); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+		listed := false
+		for _, f := range dep.Compose.Files {
+			if f == file {
+				listed = true
+				break
+			}
+		}
+		if !listed {
+			dep.Compose.Files = append(dep.Compose.Files, file)
+			changed = true
 		}
 	}
-	dep.Compose.Files = append(dep.Compose.Files, file)
+	if !changed {
+		return nil
+	}
 	return dep.Save()
 }
 
@@ -653,6 +789,23 @@ func executeUpdate(ctx context.Context, engine *update.Engine, action *UpdateAct
 		return err
 	case "prune":
 		_, err := engine.PruneCheckpoints()
+		return err
+	case "policy":
+		if !action.Confirmed || action.AfterDays == nil {
+			return update.ErrNotConfirmed
+		}
+		return engine.SetExpireAfterDays(*action.AfterDays)
+	case "expire":
+		if action.Automatic {
+			// Scheduled housekeeping: the engine applies the deployment
+			// setting (0 disables) and its own 24h throttle.
+			_, _, err := engine.AutoExpire(ctx)
+			return err
+		}
+		if !action.Confirmed && !action.DryRun {
+			return update.ErrNotConfirmed
+		}
+		_, err := engine.ExpireUnused(ctx, update.ExpireOptions{Scopes: action.Scopes, AfterDays: action.AfterDays, DryRun: action.DryRun})
 		return err
 	case "delete":
 		if !action.Confirmed {

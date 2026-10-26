@@ -94,8 +94,8 @@ func (s starter) capture(ctx context.Context, args ...string) (string, error) {
 // Until a first start has succeeded, the Compose project must hold no
 // resources that this deployment did not create: config-init would replace
 // the credentials of foreign containers and volumes. After the first start
-// the only writes to the product directory are the pin file and the started
-// marker.
+// the only writes to the product directory are the pin file, the helper
+// policy overlay and the started marker.
 func Start(ctx context.Context, dep *update.Deployment, docker update.Docker, opts StartOptions, log io.Writer) error {
 	if log == nil {
 		log = io.Discard
@@ -145,6 +145,14 @@ func Start(ctx context.Context, dep *update.Deployment, docker update.Docker, op
 				if err := s.pinFirstStartImages(ctx, eng, dep, policy); err != nil {
 					return err
 				}
+			}
+		}
+		// A standalone deployment applies LENSDOCK_HELPER_PIDS_LIMIT to
+		// config-init through its own overlay; the managed one is owned by the
+		// host manager and already listed.
+		if dep.ManagedBy == nil {
+			if err := ensureHelperPolicy(dep); err != nil {
+				return err
 			}
 		}
 		cc := update.ComposeCLI{D: docker, Project: dep.Compose.Project, Files: dep.Compose.Files, EnvFiles: dep.Compose.EnvFiles, Dir: dep.Compose.ProjectDir}

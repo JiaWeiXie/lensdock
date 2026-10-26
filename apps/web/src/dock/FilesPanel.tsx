@@ -63,11 +63,11 @@ export function FilesPanel(): ReactNode {
       return;
     }
     const usage = listing?.usage;
-    if (usage && file.size > Math.max(0, usage.quotaBytes - usage.usedBytes)) {
+    if (usage && usage.quotaBytes > 0 && file.size > Math.max(0, usage.quotaBytes - usage.usedBytes)) {
       setUploadError(t('files.quotaWouldExceed', { size: formatBytes(file.size), free: formatBytes(Math.max(0, usage.quotaBytes - usage.usedBytes)) }));
       return;
     }
-    if (usage && usage.fileCount >= usage.maxFiles && !listing?.files.some((f) => f.name === file.name)) {
+    if (usage && usage.maxFiles > 0 && usage.fileCount >= usage.maxFiles && !listing?.files.some((f) => f.name === file.name)) {
       setUploadError(t('files.tooManyFiles', { max: usage.maxFiles }));
       return;
     }
@@ -130,9 +130,11 @@ export function FilesPanel(): ReactNode {
 
       {usage ? (
         <div className="quota">
-          <Meter value={usage.usedBytes} max={usage.quotaBytes} label={t('files.quota')} />
+          {usage.quotaBytes > 0 ? <Meter value={usage.usedBytes} max={usage.quotaBytes} label={t('files.quota')} /> : null}
           <p className="mono">
-            {formatBytes(usage.usedBytes)} / {formatBytes(usage.quotaBytes)} · {t('files.count', { n: usage.fileCount, max: usage.maxFiles })}
+            {formatBytes(usage.usedBytes)}
+            {usage.quotaBytes > 0 ? ` / ${formatBytes(usage.quotaBytes)}` : ''} ·{' '}
+            {usage.maxFiles > 0 ? t('files.count', { n: usage.fileCount, max: usage.maxFiles }) : t('files.countOnly', { n: usage.fileCount })}
           </p>
         </div>
       ) : null}

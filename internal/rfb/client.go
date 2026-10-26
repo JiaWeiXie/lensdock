@@ -1,10 +1,13 @@
-// Package rfb is a minimal RFB 3.8 client for the LensDock end-to-end tests.
+// Package rfb is a minimal RFB 3.8 client: the LensDock desktop CLI drives
+// the runtime's control x11vnc through the lease-fenced WebSocket route with
+// it, and the end-to-end tests dial x11vnc directly.
 //
-// It speaks exactly what x11vnc offers on loopback without authentication
-// (security type 1, "None"), requests only the Raw and CopyRect encodings and
-// keeps an RGBA copy of the framebuffer so tests can write it out as a PNG.
-// It is test tooling: it deliberately has no encryption, no authentication and
-// no support for other encodings.
+// It speaks exactly what x11vnc offers without authentication (security type
+// 1, "None"; the Gateway and Runtime authenticate the WebSocket before any
+// byte reaches x11vnc), requests only the Raw and CopyRect encodings and
+// keeps an RGBA copy of the framebuffer so callers can write it out as a PNG.
+// It deliberately has no encryption, no RFB authentication and no support for
+// other encodings.
 package rfb
 
 import (
@@ -23,7 +26,7 @@ import (
 	"time"
 )
 
-// X11 keysyms used by the tests.
+// X11 keysyms used by the tests and the desktop CLI.
 const (
 	KeyBackSpace uint32 = 0xff08
 	KeyReturn    uint32 = 0xff0d
@@ -33,9 +36,15 @@ const (
 	KeyA         uint32 = 0x0061
 )
 
-// Pointer button masks.
+// Pointer button masks. The wheel is buttons 4 to 7 of the X protocol.
 const (
-	ButtonLeft uint8 = 1 << 0
+	ButtonLeft       uint8 = 1 << 0
+	ButtonMiddle     uint8 = 1 << 1
+	ButtonRight      uint8 = 1 << 2
+	ButtonWheelUp    uint8 = 1 << 3
+	ButtonWheelDown  uint8 = 1 << 4
+	ButtonWheelLeft  uint8 = 1 << 5
+	ButtonWheelRight uint8 = 1 << 6
 )
 
 // RFB message types.
@@ -83,7 +92,10 @@ type Client struct {
 	// storing them. Load generators set it to avoid framebuffer copies.
 	DiscardPixels bool
 
-	fb []byte // Width*Height*4, BGRX as negotiated with SetPixelFormat
+	// fbmu guards fb: the reading goroutine applies updates while another
+	// goroutine may take Image snapshots.
+	fbmu sync.Mutex
+	fb   []byte // Width*Height*4, BGRX as negotiated with SetPixelFormat
 }
 
 // Message is the outcome of one ReadMessage call.
@@ -349,6 +361,10 @@ func (c *Client) Click(x, y int) error {
 	return nil
 }
 
+// IsFramebufferUpdate reports whether the message was a FramebufferUpdate;
+// Rects and Pixels describe it.
+func (m Message) IsFramebufferUpdate() bool { return m.Type == serverFBUpdate }
+
 // ClientCutText sends the bytes verbatim as an RFB ClientCutText message. The
 // protocol defines Latin-1; the tests also send UTF-8 bytes on purpose to
 // observe what the server does with them.
@@ -405,12 +421,26 @@ func (c *Client) ReadMessage() (Message, error) {
 	return m, nil
 }
 
+// rectOp is one decoded rectangle of a FramebufferUpdate, applied together
+// with the rest of its update once the whole update has been read.
+type rectOp struct {
+	x, y, w, h int
+	sx, sy     int
+	copySrc    bool   // CopyRect from (sx, sy)
+	pix        []byte // Raw: w*h*4 bytes
+}
+
+// readUpdate reads a whole FramebufferUpdate off the connection, without
+// holding the framebuffer lock, then applies all of its rectangles under one
+// lock. Image therefore only ever shows the state after a complete update; an
+// update that fails midway changes nothing.
 func (c *Client) readUpdate(m Message) (Message, error) {
 	var h [3]byte
 	if _, err := io.ReadFull(c.br, h[:]); err != nil {
 		return m, fmt.Errorf("rfb: read update header: %w", err)
 	}
 	m.Rects = int(binary.BigEndian.Uint16(h[1:3]))
+	var ops []rectOp
 	for range m.Rects {
 		var r [12]byte
 		if _, err := io.ReadFull(c.br, r[:]); err != nil {
@@ -426,8 +456,16 @@ func (c *Client) readUpdate(m Message) (Message, error) {
 		}
 		switch enc {
 		case encodingRaw:
-			if err := c.readRaw(x, y, w, hh); err != nil {
-				return m, err
+			if c.DiscardPixels {
+				if _, err := io.CopyN(io.Discard, c.br, int64(w)*int64(hh)*4); err != nil {
+					return m, fmt.Errorf("rfb: read raw rectangle: %w", err)
+				}
+			} else {
+				pix := make([]byte, w*hh*4)
+				if _, err := io.ReadFull(c.br, pix); err != nil {
+					return m, fmt.Errorf("rfb: read raw rectangle: %w", err)
+				}
+				ops = append(ops, rectOp{x: x, y: y, w: w, h: hh, pix: pix})
 			}
 			m.Bytes += w * hh * 4
 		case encodingCopyRect:
@@ -440,36 +478,34 @@ func (c *Client) readUpdate(m Message) (Message, error) {
 			if sx+w > c.Width || sy+hh > c.Height {
 				return m, fmt.Errorf("rfb: CopyRect source %d,%d %dx%d outside framebuffer", sx, sy, w, hh)
 			}
-			c.copyRect(x, y, sx, sy, w, hh)
+			if !c.DiscardPixels {
+				ops = append(ops, rectOp{x: x, y: y, w: w, h: hh, sx: sx, sy: sy, copySrc: true})
+			}
 			m.Bytes += 4
 		default:
 			return m, fmt.Errorf("rfb: server used unrequested encoding %d", enc)
 		}
 		m.Pixels += w * hh
 	}
+	if len(ops) > 0 {
+		c.fbmu.Lock()
+		for _, op := range ops {
+			if op.copySrc {
+				c.copyRectLocked(op.x, op.y, op.sx, op.sy, op.w, op.h)
+				continue
+			}
+			for r := 0; r < op.h; r++ {
+				off := ((op.y+r)*c.Width + op.x) * 4
+				copy(c.fb[off:off+op.w*4], op.pix[r*op.w*4:(r+1)*op.w*4])
+			}
+		}
+		c.fbmu.Unlock()
+	}
 	return m, nil
 }
 
-func (c *Client) readRaw(x, y, w, h int) error {
-	if c.DiscardPixels {
-		if _, err := io.CopyN(io.Discard, c.br, int64(w)*int64(h)*4); err != nil {
-			return fmt.Errorf("rfb: read raw rectangle: %w", err)
-		}
-		return nil
-	}
-	for row := 0; row < h; row++ {
-		off := ((y+row)*c.Width + x) * 4
-		if _, err := io.ReadFull(c.br, c.fb[off:off+w*4]); err != nil {
-			return fmt.Errorf("rfb: read raw rectangle: %w", err)
-		}
-	}
-	return nil
-}
-
-func (c *Client) copyRect(dx, dy, sx, sy, w, h int) {
-	if c.DiscardPixels {
-		return
-	}
+// copyRectLocked moves a rectangle inside the framebuffer; fbmu is held.
+func (c *Client) copyRectLocked(dx, dy, sx, sy, w, h int) {
 	step, start, end := 1, 0, h
 	if sy < dy { // overlapping vertical move down: copy bottom-up
 		step, start, end = -1, h-1, -1
@@ -513,6 +549,8 @@ func (c *Client) FetchFramebuffer(ctx context.Context) (*image.RGBA, [][]byte, e
 // Image converts the local framebuffer copy to an opaque RGBA image.
 func (c *Client) Image() *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, c.Width, c.Height))
+	c.fbmu.Lock()
+	defer c.fbmu.Unlock()
 	for i := range c.Width * c.Height {
 		img.Pix[i*4+0] = c.fb[i*4+2] // R
 		img.Pix[i*4+1] = c.fb[i*4+1] // G

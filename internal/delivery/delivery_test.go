@@ -184,7 +184,7 @@ func TestPullReadsEverySchemaVersionAndRejectsOthers(t *testing.T) {
 		if res.Manifest.SchemaVersion != version {
 			t.Fatalf("manifest version = %q, want %q", res.Manifest.SchemaVersion, version)
 		}
-		m, err := VerifyBundle(res.Dir)
+		m, err := VerifyBundle(res.Dir, Limits{})
 		if err != nil || m.SchemaVersion != version {
 			t.Fatalf("verify %s: %v, manifest %q", version, err, m.SchemaVersion)
 		}
@@ -250,7 +250,7 @@ func TestPullReadsVisualOnlyTaskOnlyFromSchema020(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", kind, err)
 		}
-		if _, err := VerifyBundle(res.Dir); err != nil {
+		if _, err := VerifyBundle(res.Dir, Limits{}); err != nil {
 			t.Fatalf("%s: verify: %v", kind, err)
 		}
 		md, err := os.ReadFile(filepath.Join(res.Dir, FileTask))
@@ -292,7 +292,7 @@ func TestPullPublishesVerifiedBundleWithoutAck(t *testing.T) {
 	if res.Dir != filepath.Join(want, "bundle") {
 		t.Fatalf("dir = %s", res.Dir)
 	}
-	if _, err := VerifyBundle(res.Dir); err != nil {
+	if _, err := VerifyBundle(res.Dir, Limits{}); err != nil {
 		t.Fatalf("verify: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(res.Dir, FileAnnotated))
@@ -360,7 +360,7 @@ func TestVerifyBundleDetectsTampering(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "extra.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyBundle(dir); err == nil {
+	if _, err := VerifyBundle(dir, Limits{}); err == nil {
 		t.Fatal("extra file accepted")
 	}
 
@@ -371,7 +371,7 @@ func TestVerifyBundleDetectsTampering(t *testing.T) {
 	if err := os.WriteFile(p, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyBundle(dir); err == nil {
+	if _, err := VerifyBundle(dir, Limits{}); err == nil {
 		t.Fatal("modified screenshot accepted")
 	}
 
@@ -387,7 +387,7 @@ func TestVerifyBundleDetectsTampering(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(dir, FileAnnotated)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyBundle(dir); err == nil {
+	if _, err := VerifyBundle(dir, Limits{}); err == nil {
 		t.Fatal("symlinked screenshot accepted")
 	}
 
@@ -396,7 +396,7 @@ func TestVerifyBundleDetectsTampering(t *testing.T) {
 	if err := os.Symlink(dir, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyBundle(link); err == nil {
+	if _, err := VerifyBundle(link, Limits{}); err == nil {
 		t.Fatal("symlinked bundle directory accepted")
 	}
 }
@@ -424,15 +424,15 @@ func TestDecodeFeedbackRefusals(t *testing.T) {
 			m["sharePolicy"].(map[string]any)["humanApproved"] = false
 		}),
 		"wrong id":  mutate(func(m map[string]any) { m["feedbackId"] = "other" }),
-		"huge file": mutate(func(m map[string]any) { arts(m)[0].(map[string]any)["sizeBytes"] = MaxArtifactBytes + 1 }),
+		"huge file": mutate(func(m map[string]any) { arts(m)[0].(map[string]any)["sizeBytes"] = int64(maxDeclaredBytes) + 1 }),
 		"bad sha":   mutate(func(m map[string]any) { arts(m)[0].(map[string]any)["sha256"] = "XYZ" }),
 	}
 	for name, data := range cases {
-		if _, err := decodeFeedback(data, "fb1", 1); err == nil {
+		if _, err := decodeFeedback(data, "fb1", 1, Limits{}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if _, err := decodeFeedback(g.feedbackJSON(), "fb1", 1); err != nil {
+	if _, err := decodeFeedback(g.feedbackJSON(), "fb1", 1, Limits{}); err != nil {
 		t.Fatalf("valid feedback refused: %v", err)
 	}
 }

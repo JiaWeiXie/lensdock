@@ -20,14 +20,15 @@ import type {
 } from '@/api/types';
 import { Button, Chip, Field, Modal, Notice, useToast } from '@/components/ui';
 import { describeError } from '@/errors';
-import { DELIVERY_LABEL, DELIVERY_ORDER, DeliveryChip, TERMINAL } from '@/feedback/status';
+import { DELIVERY_LABEL, DeliveryChip, TERMINAL } from '@/feedback/status';
+import { PROGRESS_STAGES, STAGE_EVENTS, eventTimes, stepStatuses, type ProgressStage, type StepStatus } from '@/feedback/progress';
 import { useI18n, type MessageKey } from '@/i18n';
 import { canOperate, useSession } from '@/state/session';
 import { useRoute, useUi } from '@/state/ui';
 import { useWorkspace } from '@/state/workspace';
 import { newKey } from '@/util/async';
 import { formatBytes, formatDateTime, shortId } from '@/util/format';
-import { codePointLength, truncateToCodePoints } from '@/util/text';
+import { codePointLength } from '@/util/text';
 
 const FILTERS: readonly (DeliveryState | 'ALL')[] = ['ALL', 'READY', 'QUEUED', 'ACKNOWLEDGED', 'IN_PROGRESS', 'RESOLVED', 'VERIFIED', 'CANCELLED'];
 
@@ -417,8 +418,8 @@ function ReasonModal({
       }
     >
       <p>{body}</p>
-      <Field label={required ? `${t('fb.reason')} *` : t('fb.reason')} hint={t('common.count', { n: codePointLength(reason), max: 12000 })} htmlFor="reason-text">
-        <textarea id="reason-text" className="input" rows={3} value={reason} onChange={(e) => setReason(truncateToCodePoints(e.target.value, 12000))} autoFocus />
+      <Field label={required ? `${t('fb.reason')} *` : t('fb.reason')} hint={t('common.count', { n: codePointLength(reason) })} htmlFor="reason-text">
+        <textarea id="reason-text" className="input" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
       </Field>
       {error ? <Notice tone="danger">{error}</Notice> : null}
     </Modal>
@@ -429,28 +430,25 @@ function ReasonModal({
 
 function Stepper({ delivery }: { delivery: DeliveryDetail | null }): ReactNode {
   const { t, locale } = useI18n();
-  const state = delivery?.state ?? null;
-  const stamps: Record<string, string | undefined> = {
-    READY: undefined,
-    QUEUED: delivery?.queuedAt,
-    ACKNOWLEDGED: delivery?.acknowledgedAt,
-    IN_PROGRESS: delivery?.inProgressAt,
-    RESOLVED: delivery?.resolvedAt,
-    VERIFIED: delivery?.verifiedAt,
-  };
-  const currentIndex = state === 'CANCELLED' || state === null ? -1 : DELIVERY_ORDER.indexOf(state);
+  const statuses: Record<ProgressStage, StepStatus> = delivery
+    ? stepStatuses(delivery.state)
+    : { sent: 'todo', inProgress: 'todo', done: 'todo' };
+  const times = eventTimes(delivery);
   return (
     <ol className="stepper" aria-label={t('fb.stepper')}>
-      {DELIVERY_ORDER.map((s, i) => {
-        const status = state === 'CANCELLED' ? 'skipped' : i < currentIndex ? 'done' : i === currentIndex ? 'current' : 'todo';
+      {PROGRESS_STAGES.map((stage, i) => {
+        const status = statuses[stage];
+        const events = STAGE_EVENTS[stage].flatMap((event) => {
+          const at = times[event];
+          return at ? [`${t(`fb.event.${event}`)} ${formatDateTime(at, locale)}`] : [];
+        });
         return (
-          <li key={s} className={`stepper__step stepper__step--${status}`} aria-current={status === 'current' ? 'step' : undefined}>
+          <li key={stage} className={`stepper__step stepper__step--${status}`} aria-current={status === 'current' ? 'step' : undefined}>
             <span className="stepper__dot" aria-hidden="true">
               {status === 'done' ? '✓' : i + 1}
             </span>
-            <span className="stepper__label">{t(DELIVERY_LABEL[s])}</span>
-            <span className="stepper__by">{t(`fb.by.${s}`)}</span>
-            {stamps[s] ? <span className="stepper__time mono">{formatDateTime(stamps[s], locale)}</span> : null}
+            <span className="stepper__label">{t(`progress.${stage}`)}</span>
+            {events.length > 0 ? <span className="stepper__by">{events.join(' · ')}</span> : null}
             <span className="sr-only">{t(`fb.stepStatus.${status}`)}</span>
           </li>
         );

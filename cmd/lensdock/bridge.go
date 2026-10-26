@@ -45,38 +45,72 @@ type bridgeOutput struct {
 	DiscoveryURL        string `json:"discoveryUrl"`
 	BrowserWebSocketURL string `json:"browserWebSocketUrl"`
 	LeaseID             string `json:"leaseId"`
+	LeaseFile           string `json:"leaseFile,omitempty"`
 }
+
+// bridgeUsageText is appended to the CLI usage text.
+const bridgeUsageText = `  lensdock cdp bridge [--lease-file F | --project PATH | --workspace W [--token-file F] [--api URL]] [--listen 127.0.0.1:0]
+      [--url-file F] [--path-secret] [--lease-file-out F]
+      serves CDP at the loopback root (http://127.0.0.1:PORT); with --path-secret every URL carries a random secret path
+      prefix instead. The bridge holds one AGENT lease for its whole lifetime: without --lease-file it acquires the lease,
+      renews it and releases it on exit, and every CDP connection ends with that lease. --lease-file-out F also writes
+      that lease (mode 0600, removed on exit) so "lensdock desktop ... --lease-file F" drives the native browser UI
+      under the same lease at the same time
+` + agentLeaseUsageText
 
 func (c *cli) cdpBridge(ctx context.Context, args []string) error {
 	fs := c.newFlagSet("cdp bridge")
-	leaseFile := fs.String("lease-file", "", "AGENT lease file")
+	af := c.addAgentLeaseFlags(fs)
 	listen := fs.String("listen", "127.0.0.1:0", "loopback address to listen on")
 	urlFile := fs.String("url-file", "", "also write the output line to this new file (mode 0600)")
 	pathSecret := fs.Bool("path-secret", false, "serve under a random secret URL prefix instead of the root")
-	pf := addProjectFlag(fs)
+	leaseOut := fs.String("lease-file-out", "", "write the acquired AGENT lease to this new file (mode 0600) for other commands; removed on exit")
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
 	}
-	if *leaseFile == "" {
-		return usageErrorf("--lease-file is required")
+	if err := af.validate(); err != nil {
+		return err
+	}
+	if *leaseOut != "" && af.leaseFile != "" {
+		return usageErrorf("--lease-file-out shares a lease the bridge acquired; it cannot be combined with --lease-file")
 	}
 	addr, err := loopbackListenAddr(*listen)
 	if err != nil {
 		return usageErrorf("%v", err)
 	}
-	lf, err := apiclient.ReadLeaseFile(*leaseFile)
-	if err != nil {
-		return leaseErrorf("lease file: %v", err)
-	}
-	if lease.Mode(lf.Lease.Mode) != lease.ModeAgent {
-		return usageErrorf("cdp bridge requires an AGENT lease; refusing a %s lease", lf.Lease.Mode)
-	}
-	if err := c.checkLeaseFileProject(ctx, fs, pf, lf); err != nil {
-		return err
-	}
-	client, err := c.newClient(lf.APIBaseURL)
-	if err != nil {
-		return err
+	var (
+		client *apiclient.Client
+		lf     apiclient.LeaseFile
+	)
+	if af.leaseFile != "" {
+		lf, err = apiclient.ReadLeaseFile(af.leaseFile)
+		if err != nil {
+			return leaseErrorf("lease file: %v", err)
+		}
+		if lease.Mode(lf.Lease.Mode) != lease.ModeAgent {
+			return usageErrorf("cdp bridge requires an AGENT lease; refusing a %s lease", lf.Lease.Mode)
+		}
+		if err := c.checkLeaseFileProject(ctx, fs, af.project, lf); err != nil {
+			return err
+		}
+		client, err = c.newClient(lf.APIBaseURL)
+		if err != nil {
+			return err
+		}
+	} else {
+		var release func()
+		client, lf, release, err = c.acquireAgentLease(ctx, af)
+		if err != nil {
+			return err
+		}
+		defer release()
+		if *leaseOut != "" {
+			remove, err := writeLeaseOut(*leaseOut, lf)
+			if err != nil {
+				return fmt.Errorf("write lease file: %w", err)
+			}
+			defer remove()
+		}
 	}
 	upstream, err := url.Parse(client.BaseURL() + "/api/v1/workspaces/" + url.PathEscape(lf.WorkspaceID) + "/cdp")
 	if err != nil {
@@ -125,7 +159,7 @@ func (c *cli) cdpBridge(ctx context.Context, args []string) error {
 	if err != nil {
 		return &exitError{code: exitUnreachable, msg: fmt.Sprintf("discover browser endpoint: %v", err)}
 	}
-	line, err := json.Marshal(bridgeOutput{DiscoveryURL: eps.DiscoveryURL, BrowserWebSocketURL: eps.BrowserWebSocketURL, LeaseID: lf.Lease.LeaseID})
+	line, err := json.Marshal(bridgeOutput{DiscoveryURL: eps.DiscoveryURL, BrowserWebSocketURL: eps.BrowserWebSocketURL, LeaseID: lf.Lease.LeaseID, LeaseFile: *leaseOut})
 	if err != nil {
 		return err
 	}

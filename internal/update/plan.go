@@ -672,7 +672,7 @@ func planSteps(gateway bool) []string {
 		"05 stop the runtime cleanly; check exit status, Profile lock files and exit_type",
 		"06 write the encrypted, verified checkpoint of Profile, keyring and Gateway database",
 		"07 create candidate volumes from the checkpoint and compare their fingerprints",
-		"08 start the candidate (sandbox, fonts, packages, CDP, local fixture, Gateway migration on the clone)",
+		"08 start the candidate (sandbox when enabled, fonts, packages, CDP, local fixture, Gateway migration on the clone)",
 		"09 prove the candidate has no route to the outside",
 		"10 after your approval: switch to the new images and candidate volumes (new generation)",
 		"11 check health; leases must be acquired again",

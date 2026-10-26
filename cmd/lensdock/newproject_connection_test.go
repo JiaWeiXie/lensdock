@@ -202,6 +202,9 @@ func TestProjectCommandsUseTheProjectsOwnTupleAndAgentCredential(t *testing.T) {
 	e := newProjectEnv(t)
 	dir := t.TempDir()
 	p := e.authorize(dir)
+	// Explicit project selection must win over stale standalone defaults.
+	e.env[envAPI] = "http://127.0.0.1:1"
+	e.env[envTokenFile] = filepath.Join(t.TempDir(), "missing-standalone-token")
 	leasePath := filepath.Join(t.TempDir(), "lease.json")
 
 	r := e.run("", "lease", "acquire", "--project", dir, "--mode", "agent", "--output", leasePath)
@@ -294,10 +297,16 @@ func TestProjectLeaseFilesOfAnotherEndpointAreRefusedBeforeAnyRequest(t *testing
 	}
 }
 
-func TestProjectThatIsNotRunningFailsFastAndPrintsNothing(t *testing.T) {
+func TestExplicitStartPolicyRefusesUnreachableProjectsWithoutProtocolOutput(t *testing.T) {
 	e := newProjectEnv(t)
 	dir := t.TempDir()
 	e.authorize(dir)
+	policy := hostmanager.DefaultPolicy()
+	policy.RequireExplicitStart = true
+	policy.RequireProjectAuthorization = true
+	if _, err := hostmanager.Call(context.Background(), e.root, hostmanager.AdminTokenFile(e.root), hostmanager.Request{Action: hostmanager.ActionPolicy, Policy: &policy}); err != nil {
+		t.Fatal(err)
+	}
 	e.backend.set(func(hostmanager.Project) (hostmanager.Connection, error) {
 		return hostmanager.Connection{}, os.ErrNotExist
 	})
@@ -318,9 +327,6 @@ func TestProjectThatIsNotRunningFailsFastAndPrintsNothing(t *testing.T) {
 		}
 		if r.stdout != "" {
 			t.Errorf("%s: wrote %q to stdout", name, r.stdout)
-		}
-		if name != "unlisted" && name != "clip" && !strings.Contains(r.stderr, "lensdock project up --project") {
-			t.Errorf("%s: stderr %q does not tell the user how to start the project", name, r.stderr)
 		}
 		if time.Since(start) > 15*time.Second {
 			t.Errorf("%s: took %v; a stopped project must not be waited for", name, time.Since(start))
@@ -398,25 +404,21 @@ func TestProjectRefusesManualConnectionOverrides(t *testing.T) {
 		env  map[string]string
 		args []string
 	}{
-		"status --api":               {nil, []string{"workspace", "status", "--project", dir, "--api", srv.URL}},
-		"status operator token":      {nil, []string{"workspace", "status", "--project", dir, "--operator-token-file", tok}},
-		"status positional":          {nil, []string{"workspace", "status", "default", "--project", dir}},
-		"status $LENSDOCK_API":       {map[string]string{"LENSDOCK_API": srv.URL}, []string{"workspace", "status", "--project", dir}},
-		"watch --token-file":         {nil, []string{"workspace", "watch", "--project", dir, "--token-file", tok}},
-		"watch positional":           {nil, []string{"workspace", "watch", "default", "--project", dir}},
-		"watch $LENSDOCK_TOKEN_FILE": {map[string]string{"LENSDOCK_TOKEN_FILE": tok}, []string{"workspace", "watch", "--project", dir}},
-		"acquire --api":              {nil, []string{"lease", "acquire", "--project", dir, "--mode", "agent", "--output", out, "--api", srv.URL}},
-		"acquire positional":         {nil, []string{"lease", "acquire", "default", "--project", dir, "--mode", "agent", "--output", out}},
-		"acquire human":              {nil, []string{"lease", "acquire", "--project", dir, "--mode", "human", "--output", out}},
-		"release positional":         {nil, []string{"lease", "release", "default", "--project", dir, "--lease-id", "l"}},
-		"release --api":              {nil, []string{"lease", "release", "--project", dir, "--lease-file", leasePath, "--api", srv.URL}},
-		"release $LENSDOCK_API":      {map[string]string{"LENSDOCK_API": srv.URL}, []string{"lease", "release", "--project", dir, "--lease-file", leasePath}},
-		"feedback --workspace":       {nil, []string{"feedback", "list", "--project", dir, "--workspace", "default"}},
-		"feedback --api":             {nil, []string{"feedback", "get", "fb1", "--project", dir, "--revision", "1", "--api", srv.URL}},
-		"feedback token env":         {map[string]string{"LENSDOCK_TOKEN_FILE": tok}, []string{"feedback", "list", "--project", dir}},
-		"mcp --workspace":            {nil, []string{"mcp", "serve", "--project", dir, "--workspace", "default"}},
-		"mcp --token-file":           {nil, []string{"mcp", "serve", "--project", dir, "--token-file", tok}},
-		"empty project":              {nil, []string{"mcp", "serve", "--project="}},
+		"status --api":          {nil, []string{"workspace", "status", "--project", dir, "--api", srv.URL}},
+		"status operator token": {nil, []string{"workspace", "status", "--project", dir, "--operator-token-file", tok}},
+		"status positional":     {nil, []string{"workspace", "status", "default", "--project", dir}},
+		"watch --token-file":    {nil, []string{"workspace", "watch", "--project", dir, "--token-file", tok}},
+		"watch positional":      {nil, []string{"workspace", "watch", "default", "--project", dir}},
+		"acquire --api":         {nil, []string{"lease", "acquire", "--project", dir, "--mode", "agent", "--output", out, "--api", srv.URL}},
+		"acquire positional":    {nil, []string{"lease", "acquire", "default", "--project", dir, "--mode", "agent", "--output", out}},
+		"acquire human":         {nil, []string{"lease", "acquire", "--project", dir, "--mode", "human", "--output", out}},
+		"release positional":    {nil, []string{"lease", "release", "default", "--project", dir, "--lease-id", "l"}},
+		"release --api":         {nil, []string{"lease", "release", "--project", dir, "--lease-file", leasePath, "--api", srv.URL}},
+		"feedback --workspace":  {nil, []string{"feedback", "list", "--project", dir, "--workspace", "default"}},
+		"feedback --api":        {nil, []string{"feedback", "get", "fb1", "--project", dir, "--revision", "1", "--api", srv.URL}},
+		"mcp --workspace":       {nil, []string{"mcp", "serve", "--project", dir, "--workspace", "default"}},
+		"mcp --token-file":      {nil, []string{"mcp", "serve", "--project", dir, "--token-file", tok}},
+		"empty project":         {nil, []string{"mcp", "serve", "--project="}},
 	} {
 		env := map[string]string{"LENSDOCK_MANAGER_DIR": filepath.Join(dir, "no-manager")}
 		for k, v := range tc.env {

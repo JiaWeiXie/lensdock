@@ -8,7 +8,6 @@
  * x+width <= 1 and y+height <= 1 exactly, after rounding to COORD_DECIMALS.
  */
 import type { Annotation, AnnotationKind, AnnotationStyle, ArrowAnnotation, ArrowStyle, NormRect, Point, TextStyle } from '@/api/types';
-import { codePointLength, truncateToCodePoints } from '@/util/text';
 import { flattenPath, flattenQuad, smoothPath, type PxPoint } from './paths';
 
 export interface ImageSize {
@@ -16,10 +15,6 @@ export interface ImageSize {
   height: number;
 }
 
-export const MAX_ANNOTATIONS = 100;
-export const MAX_TEXT_CP = 2000;
-export const MAX_COMMENT_CP = 4000;
-export const MAX_FREEHAND_POINTS = 10000;
 export const COORD_DECIMALS = 6;
 export const LINE_HEIGHT = 1.25;
 /** First baseline offset from the text box top, in font-size units. */
@@ -220,11 +215,12 @@ export function labelPadding(fontSizePx: number): { x: number; y: number } {
   return { x: fontSizePx * 0.45, y: fontSizePx * 0.22 };
 }
 
-export function nextPinNumber(list: readonly Annotation[]): number | null {
+export function nextPinNumber(list: readonly Annotation[]): number {
   const used = new Set<number>();
   for (const a of list) if (a.kind === 'pin') used.add(a.geometry.number);
-  for (let n = 1; n <= 100; n += 1) if (!used.has(n)) return n;
-  return null;
+  let n = 1;
+  while (used.has(n)) n += 1;
+  return n;
 }
 
 export function newAnnotationId(): string {
@@ -646,13 +642,11 @@ function polylineHit(p: PxPoint, points: readonly PxPoint[], tol: number): boole
 // -------------------------------------------------------------- validation
 
 export type AnnotationIssue =
-  | { code: 'tooMany' }
   | { code: 'duplicateId'; id: string }
   | { code: 'pinNumber'; id: string }
   | { code: 'pinDuplicate'; id: string }
   | { code: 'bounds'; id: string }
   | { code: 'textLength'; id: string }
-  | { code: 'commentLength'; id: string }
   | { code: 'freehandPoints'; id: string };
 
 const EPS = 0;
@@ -660,13 +654,11 @@ const EPS = 0;
 /** Client-side mirror of the server's cross-field checks. The server remains authoritative. */
 export function validateAnnotations(list: readonly Annotation[]): AnnotationIssue[] {
   const issues: AnnotationIssue[] = [];
-  if (list.length > MAX_ANNOTATIONS) issues.push({ code: 'tooMany' });
   const ids = new Set<string>();
   const pins = new Set<number>();
   for (const a of list) {
     if (ids.has(a.id)) issues.push({ code: 'duplicateId', id: a.id });
     ids.add(a.id);
-    if ((a.comment ?? '').length > 0 && codePointLength(a.comment ?? '') > MAX_COMMENT_CP) issues.push({ code: 'commentLength', id: a.id });
     switch (a.kind) {
       case 'rectangle':
       case 'ellipse':
@@ -682,18 +674,17 @@ export function validateAnnotations(list: readonly Annotation[]): AnnotationIssu
       }
       case 'pin': {
         const n = a.geometry.number;
-        if (!Number.isInteger(n) || n < 1 || n > 100) issues.push({ code: 'pinNumber', id: a.id });
+        if (!Number.isInteger(n) || n < 1) issues.push({ code: 'pinNumber', id: a.id });
         if (pins.has(n)) issues.push({ code: 'pinDuplicate', id: a.id });
         pins.add(n);
         break;
       }
       case 'text': {
-        const len = codePointLength(a.geometry.text);
-        if (len < 1 || len > MAX_TEXT_CP) issues.push({ code: 'textLength', id: a.id });
+        if (a.geometry.text.length < 1) issues.push({ code: 'textLength', id: a.id });
         break;
       }
       case 'freehand':
-        if (a.geometry.points.length < 2 || a.geometry.points.length > MAX_FREEHAND_POINTS) issues.push({ code: 'freehandPoints', id: a.id });
+        if (a.geometry.points.length < 2) issues.push({ code: 'freehandPoints', id: a.id });
         break;
       case 'arrow': {
         const c = a.geometry.control;
@@ -709,12 +700,12 @@ export function validateAnnotations(list: readonly Annotation[]): AnnotationIssu
 
 /**
  * Wire form of the annotations. Redactions carry `mode: "solid"` and no style
- * key at all (the schema forbids one); comments are cut at the limit on a
- * grapheme boundary; coordinates are snapped to the grid.
+ * key at all (the schema forbids one); comments and text are sent as typed;
+ * coordinates are snapped to the grid.
  */
 export function toWire(list: readonly Annotation[]): Annotation[] {
   return list.map((a): Annotation => {
-    const comment = truncateToCodePoints(a.comment ?? '', MAX_COMMENT_CP);
+    const comment = a.comment ?? '';
     switch (a.kind) {
       case 'redact':
         return { id: a.id, kind: 'redact', mode: 'solid', geometry: snapRect(a.geometry), comment };
@@ -769,7 +760,7 @@ export function toWire(list: readonly Annotation[]): Annotation[] {
         return {
           id: a.id,
           kind: 'text',
-          geometry: { position: snapPoint(a.geometry.position), text: truncateToCodePoints(a.geometry.text, MAX_TEXT_CP) },
+          geometry: { position: snapPoint(a.geometry.position), text: a.geometry.text },
           comment,
           style,
         };

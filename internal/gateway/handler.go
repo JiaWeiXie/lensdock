@@ -42,11 +42,14 @@ func New(c Config, d Integrations) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.DemoNoAuth {
-		if len(c.Runtimes) != 1 {
-			return nil, errors.New("gateway: demo no-auth requires exactly one workspace")
-		}
-		if err := identities.enableDemo(c.Runtimes[0].WorkspaceID); err != nil {
+	if c.SessionLimits.TTLSeconds < 0 || c.SessionLimits.TTLSeconds > int64((1<<63-1)/time.Second) || c.SessionLimits.MaxSessions < 0 {
+		return nil, errors.New("gateway: session limits must be nonnegative and session TTL must fit a duration")
+	}
+	identities.limits = c.SessionLimits
+	origin, _ := url.Parse(c.Origin)
+	local := origin.Hostname() == "127.0.0.1" || origin.Hostname() == "localhost" || origin.Hostname() == "::1"
+	if !c.RequirePairing && local && len(c.Runtimes) == 1 {
+		if err := identities.enableLocalAccess(c.Runtimes[0].WorkspaceID); err != nil {
 			return nil, err
 		}
 	}
@@ -253,8 +256,15 @@ func (g *Gateway) workspace(w http.ResponseWriter, r *http.Request, p Identity, 
 		e.stream(w, r, e.operator, p.ID)
 	case suffix == "vnc/control" && r.Method == "GET", suffix == "clipboard" && r.Method == "PUT", suffix == "resolution" && r.Method == "PUT":
 		l, ok := g.requestLease(r, p)
-		if !ok || !human(p) || l.Grant.Lease.Mode != "HUMAN" {
-			fail(w, 403, "LEASE_REQUIRED", "active human lease required")
+		// The desktop (Chromium toolbar, menus, native dialogs) and its
+		// clipboard belong to the lease holder: a human holds a HUMAN lease,
+		// an Agent an AGENT lease. Resizing the display stays with humans.
+		if !ok || !desktopLease(p, l, suffix != "resolution") {
+			fail(w, 403, "LEASE_REQUIRED", "active lease of your role required")
+			return
+		}
+		if p.Role == "agent" && r.Header.Get("Origin") != "" {
+			fail(w, 403, "ORIGIN_NOT_ALLOWED", "browser access with an agent credential is forbidden")
 			return
 		}
 		if suffix == "vnc/control" {
@@ -297,6 +307,20 @@ func (g *Gateway) workspace(w http.ResponseWriter, r *http.Request, p Identity, 
 		fail(w, 404, "NOT_FOUND", "no such workspace route")
 	}
 }
+
+// desktopLease reports whether the lease may drive the workspace desktop for
+// the identity: HUMAN lease for a human or admin, AGENT lease for an Agent
+// when agentOK.
+func desktopLease(p Identity, l ownedLease, agentOK bool) bool {
+	switch l.Grant.Lease.Mode {
+	case "HUMAN":
+		return human(p)
+	case "AGENT":
+		return agentOK && p.Role == "agent"
+	}
+	return false
+}
+
 func (g *Gateway) requestLease(r *http.Request, p Identity) (ownedLease, bool) {
 	tok := r.Header.Get("X-LensDock-Lease")
 	if tok == "" {

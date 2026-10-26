@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/JiaWeiXie/lensdock/internal/auth"
 )
@@ -26,7 +25,7 @@ type isolatedGateway struct {
 	tokenFile string
 }
 
-func startIsolatedGateway(t *testing.T, deploymentID, workspace string, demo bool) *isolatedGateway {
+func startIsolatedGateway(t *testing.T, deploymentID, workspace string, localAccess bool) *isolatedGateway {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<title>test</title>"), 0600); err != nil {
@@ -42,12 +41,12 @@ func startIsolatedGateway(t *testing.T, deploymentID, workspace string, demo boo
 	t.Cleanup(edge.Close)
 	origin := "http://" + edge.Listener.Addr().String()
 	g, err := New(Config{
-		Origin:       origin,
-		DeploymentID: deploymentID,
-		WebDir:       dir,
-		DemoNoAuth:   demo,
-		Identities:   []Identity{{ID: "human-" + workspace, Role: "human", WorkspaceID: workspace, TokenSHA256: digest("pair-" + workspace)}},
-		Runtimes:     []RuntimeConfig{{WorkspaceID: workspace, URL: upstream.URL, OperatorTokenFile: tokenFile}},
+		Origin:         origin,
+		DeploymentID:   deploymentID,
+		WebDir:         dir,
+		RequirePairing: !localAccess,
+		Identities:     []Identity{{ID: "human-" + workspace, Role: "human", WorkspaceID: workspace, TokenSHA256: digest("pair-" + workspace)}},
+		Runtimes:       []RuntimeConfig{{WorkspaceID: workspace, URL: upstream.URL, OperatorTokenFile: tokenFile}},
 	}, Integrations{})
 	if err != nil {
 		t.Fatal(err)
@@ -95,9 +94,9 @@ func (g *isolatedGateway) call(t *testing.T, c *http.Client, method, path string
 }
 
 type sessionProbe struct {
-	Actor Identity `json:"actor"`
-	CSRF  string   `json:"csrfToken"`
-	Demo  bool     `json:"demo"`
+	Actor       Identity `json:"actor"`
+	CSRF        string   `json:"csrfToken"`
+	LocalAccess bool     `json:"localAccess"`
 }
 
 func (g *isolatedGateway) pair(t *testing.T, c *http.Client) string {
@@ -206,44 +205,44 @@ func TestSameHostGatewaysKeepIndependentSessionsInOneCookieJar(t *testing.T) {
 	}
 }
 
-func TestSameHostGatewaysKeepDemoSignOutIsolated(t *testing.T) {
+func TestSameHostGatewaysKeepLocalSignOutIsolated(t *testing.T) {
 	a := startIsolatedGateway(t, "proj-a", "alpha", true)
 	b := startIsolatedGateway(t, "proj-b", "beta", true)
 	client, _ := newJarClient(t)
 
 	_, sa, body := a.probe(t, client, browserHeaders(""))
 	_, sb, body2 := b.probe(t, client, browserHeaders(""))
-	if !sa.Demo || sa.Actor.WorkspaceID != "alpha" || !sb.Demo || sb.Actor.WorkspaceID != "beta" || sa.CSRF == "" || sb.CSRF == "" {
-		t.Fatalf("demo sessions not established: %s / %s", body, body2)
+	if !sa.LocalAccess || sa.Actor.WorkspaceID != "alpha" || !sb.LocalAccess || sb.Actor.WorkspaceID != "beta" || sa.CSRF == "" || sb.CSRF == "" {
+		t.Fatalf("local sessions not established: %s / %s", body, body2)
 	}
-	// Both demo sessions coexist in one jar.
-	a.requireActor(t, client, browserHeaders(""), demoActorID, sa.CSRF)
-	b.requireActor(t, client, browserHeaders(""), demoActorID, sb.CSRF)
+	// Both local sessions coexist in one jar.
+	a.requireActor(t, client, browserHeaders(""), localActorID, sa.CSRF)
+	b.requireActor(t, client, browserHeaders(""), localActorID, sb.CSRF)
 
 	if got := a.logout(t, client, sa.CSRF, a.origin); got != 204 {
-		t.Fatalf("demo logout A: %d", got)
+		t.Fatalf("local logout A: %d", got)
 	}
 	// A is signed out and stays out until explicit re-entry.
 	status, _, reply := a.probe(t, client, browserHeaders(""))
-	if status != 401 || !strings.Contains(reply, "DEMO_SIGNED_OUT") {
-		t.Fatalf("A reload after demo logout: %d %s", status, reply)
+	if status != 401 || !strings.Contains(reply, "LOCAL_SIGNED_OUT") {
+		t.Fatalf("A reload after local logout: %d %s", status, reply)
 	}
 	// B keeps the very same session; A's sign-out marker does not leak to it.
-	b.requireActor(t, client, browserHeaders(""), demoActorID, sb.CSRF)
+	b.requireActor(t, client, browserHeaders(""), localActorID, sb.CSRF)
 
 	// A new sibling Gateway on the same host still auto-enters despite A's marker.
 	c := startIsolatedGateway(t, "proj-c", "gamma", true)
-	if status, s, reply := c.probe(t, client, browserHeaders("")); status != 200 || !s.Demo || s.Actor.WorkspaceID != "gamma" {
-		t.Fatalf("fresh Gateway inherited A's demo sign-out: %d %s", status, reply)
+	if status, s, reply := c.probe(t, client, browserHeaders("")); status != 200 || !s.LocalAccess || s.Actor.WorkspaceID != "gamma" {
+		t.Fatalf("fresh Gateway inherited A's local sign-out: %d %s", status, reply)
 	}
 
 	// Explicit re-entry on A clears only A's marker.
-	status, entry := a.call(t, client, "POST", "/api/v1/session", browserHeaders(a.origin), `{"demo":true}`)
+	status, entry := a.call(t, client, "POST", "/api/v1/session", browserHeaders(a.origin), `{"localAccess":true}`)
 	if status != 200 {
-		t.Fatalf("explicit demo re-entry: %d %s", status, entry)
+		t.Fatalf("explicit local re-entry: %d %s", status, entry)
 	}
-	a.requireActor(t, client, browserHeaders(""), demoActorID, "")
-	b.requireActor(t, client, browserHeaders(""), demoActorID, sb.CSRF)
+	a.requireActor(t, client, browserHeaders(""), localActorID, "")
+	b.requireActor(t, client, browserHeaders(""), localActorID, sb.CSRF)
 }
 
 func TestCookieNamesAreStableAndNamespacedByOriginAndDeployment(t *testing.T) {
@@ -259,7 +258,7 @@ func TestCookieNamesAreStableAndNamespacedByOriginAndDeployment(t *testing.T) {
 	const origin = "http://127.0.0.1:18101"
 	base := mk(origin, "proj-a")
 	again := mk(origin, "proj-a")
-	if base.sessionCookie != again.sessionCookie || base.demoOffCookie != again.demoOffCookie {
+	if base.sessionCookie != again.sessionCookie || base.localOffCookie != again.localOffCookie {
 		t.Fatal("cookie names differ between identically configured Gateways")
 	}
 	if mk(origin, "").sessionCookie != mk(origin, "").sessionCookie {
@@ -275,7 +274,7 @@ func TestCookieNamesAreStableAndNamespacedByOriginAndDeployment(t *testing.T) {
 		"origin only, port":       mk("http://127.0.0.1:18102", ""),
 		"same port, hostname":     mk("http://localhost:18101", "proj-a"),
 	} {
-		for _, name := range []string{a.sessionCookie, a.demoOffCookie} {
+		for _, name := range []string{a.sessionCookie, a.localOffCookie} {
 			if prev, dup := seen[name]; dup {
 				t.Fatalf("%q and %q share cookie name %q", prev, label, name)
 			}
@@ -302,7 +301,7 @@ func TestCookieNamesAreStableAndNamespacedByOriginAndDeployment(t *testing.T) {
 		return cs[0]
 	}
 	c := login(base, origin)
-	if c.Name != base.sessionCookie || c.Path != "/" || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.MaxAge != int(sessionTTL/time.Second) || c.Secure {
+	if c.Name != base.sessionCookie || c.Path != "/" || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Secure {
 		t.Fatalf("session cookie attributes changed: %+v", c)
 	}
 	if sc := login(mk("https://lensdock.example.com", "proj-a"), "https://lensdock.example.com"); !sc.Secure {

@@ -202,10 +202,42 @@ func TestCopyRectOverlappingDownwardCopiesBottomUp(t *testing.T) {
 	for i := range 4 {
 		c.fb[i*4] = byte(i + 1)
 	}
-	c.copyRect(0, 1, 0, 0, 1, 3) // rows 0..2 move to rows 1..3
+	c.copyRectLocked(0, 1, 0, 0, 1, 3) // rows 0..2 move to rows 1..3
 	for i, want := range []byte{1, 1, 2, 3} {
 		if c.fb[i*4] != want {
 			t.Fatalf("row %d = %d, want %d", i, c.fb[i*4], want)
+		}
+	}
+}
+
+func TestImageNeverShowsAHalfAppliedUpdate(t *testing.T) {
+	row := bytes.Repeat([]byte{0x40, 0x50, 0x60, 0}, 4)
+	release := make(chan struct{})
+	addr := serve(t, func(conn net.Conn) {
+		handshake(t, conn, 4, 2, "d")
+		readN(t, conn, 20+12)
+		msg := updateMsg(rawRect(0, 0, 4, 1, row), rawRect(0, 1, 4, 1, row))
+		split := 4 + 12 + len(row) // header, first rectangle complete
+		_, _ = conn.Write(msg[:split])
+		<-release
+		_, _ = conn.Write(msg[split:])
+	})
+	c := dial(t, addr)
+	done := make(chan error, 1)
+	go func() { _, err := c.ReadMessage(); done <- err }()
+	// The first rectangle has been sent whole; its update is not complete.
+	time.Sleep(100 * time.Millisecond)
+	if got := c.Image().RGBAAt(0, 0); got != (color.RGBA{A: 0xff}) {
+		t.Fatalf("pixel (0,0) = %v before the update was complete", got)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	img := c.Image()
+	for y := range 2 {
+		if got := img.RGBAAt(0, y); got != (color.RGBA{R: 0x60, G: 0x50, B: 0x40, A: 0xff}) {
+			t.Errorf("pixel (0,%d) = %v after the complete update", y, got)
 		}
 	}
 }

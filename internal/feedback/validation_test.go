@@ -71,11 +71,8 @@ func TestParseAnnotationsRejectsInvalid(t *testing.T) {
 		"font too small":      `{"id":"a","kind":"text","geometry":{"position":{"x":0,"y":0},"text":"x"},"style":{"fontSizePx":4}}`,
 		"one freehand point":  `{"id":"a","kind":"freehand","geometry":{"points":[{"x":0,"y":0}]}}`,
 		"empty text":          `{"id":"a","kind":"text","geometry":{"position":{"x":0,"y":0},"text":""}}`,
-		"long text":           `{"id":"a","kind":"text","geometry":{"position":{"x":0,"y":0},"text":"` + strings.Repeat("a", 2001) + `"}}`,
 		"control char text":   `{"id":"a","kind":"text","geometry":{"position":{"x":0,"y":0},"text":"a\u0000b"}}`,
-		"long comment":        `{"id":"a","kind":"rectangle","geometry":{"x":0,"y":0,"width":0.1,"height":0.1},"comment":"` + strings.Repeat("a", 4001) + `"}`,
 		"pin number 0":        `{"id":"a","kind":"pin","geometry":{"position":{"x":0,"y":0},"number":0}}`,
-		"pin number 101":      `{"id":"a","kind":"pin","geometry":{"position":{"x":0,"y":0},"number":101}}`,
 		"redact without mode": `{"id":"a","kind":"redact","geometry":{"x":0,"y":0,"width":0.1,"height":0.1}}`,
 		"redact blur":         `{"id":"a","kind":"redact","mode":"blur","geometry":{"x":0,"y":0,"width":0.1,"height":0.1}}`,
 		"redact with style":   `{"id":"a","kind":"redact","mode":"solid","geometry":{"x":0,"y":0,"width":0.1,"height":0.1},"style":{"fill":"#000000"}}`,
@@ -112,17 +109,16 @@ func TestParseAnnotationsCrossAnnotationRules(t *testing.T) {
 	if _, _, err := ParseAnnotations(raws(t, pin("a", 1), pin("b", 1))); err == nil {
 		t.Fatal("duplicate pin numbers accepted")
 	}
+	// Annotation, freehand point, text and comment counts are not capped:
+	// 101 annotations, a 10001-point stroke, a 5000-character text and a
+	// 9000-character comment are all accepted.
 	many := make([]json.RawMessage, 101)
 	for i := range many {
 		many[i] = json.RawMessage(fmt.Sprintf(`{"id":"r%d","kind":"rectangle","geometry":{"x":0,"y":0,"width":0.1,"height":0.1}}`, i))
 	}
-	if _, _, err := ParseAnnotations(many); err == nil {
-		t.Fatal("101 annotations accepted")
+	if _, _, err := ParseAnnotations(many); err != nil {
+		t.Fatalf("101 annotations refused: %v", err)
 	}
-	if _, _, err := ParseAnnotations(many[:100]); err != nil {
-		t.Fatal(err)
-	}
-	// A freehand stroke at the point limit is fine, one above is not.
 	pts := func(n int) string {
 		var b strings.Builder
 		for i := range n {
@@ -133,11 +129,17 @@ func TestParseAnnotationsCrossAnnotationRules(t *testing.T) {
 		}
 		return `{"id":"f","kind":"freehand","geometry":{"points":[` + b.String() + `]}}`
 	}
-	if _, _, err := ParseAnnotations(raws(t, pts(10000))); err != nil {
-		t.Fatal(err)
+	if _, _, err := ParseAnnotations(raws(t, pts(10001))); err != nil {
+		t.Fatalf("10001 points refused: %v", err)
 	}
-	if _, _, err := ParseAnnotations(raws(t, pts(10001))); err == nil {
-		t.Fatal("10001 points accepted")
+	longText := `{"id":"t","kind":"text","geometry":{"position":{"x":0,"y":0},"text":"` + strings.Repeat("a", 5000) + `"}}`
+	longComment := `{"id":"c","kind":"rectangle","geometry":{"x":0,"y":0,"width":0.1,"height":0.1},"comment":"` + strings.Repeat("a", 9000) + `"}`
+	if _, _, err := ParseAnnotations(raws(t, longText, longComment)); err != nil {
+		t.Fatalf("long text or comment refused: %v", err)
+	}
+	hugePin := `{"id":"p","kind":"pin","geometry":{"position":{"x":0,"y":0},"number":101}}`
+	if _, _, err := ParseAnnotations(raws(t, hugePin)); err != nil {
+		t.Fatalf("pin number above 100 refused: %v", err)
 	}
 }
 
@@ -150,26 +152,18 @@ func TestValidateTask(t *testing.T) {
 		"kind":          func(x *Task) { x.Kind = "epic" },
 		"intent":        func(x *Task) { x.Intent = "" },
 		"title newline": func(x *Task) { x.Title = "a\nb" },
-		"long title":    func(x *Task) { x.Title = strings.Repeat("t", 201) },
-		"long desc":     func(x *Task) { x.Description = strings.Repeat("d", 12001) },
 		"control":       func(x *Task) { x.Description = "a\x07b" },
-		"31 steps":      func(x *Task) { x.ReproductionSteps = make([]string, 31) },
 		"empty step":    func(x *Task) { x.ReproductionSteps = []string{""} },
 	}
 	for name, mut := range cases {
 		x := ok
 		x.ReproductionSteps = append([]string{}, ok.ReproductionSteps...)
 		mut(&x)
-		if name == "31 steps" {
-			for i := range x.ReproductionSteps {
-				x.ReproductionSteps[i] = "s"
-			}
-		}
 		if err := validateTask(&x); err == nil {
 			t.Fatalf("%s accepted", name)
 		}
 	}
-	// A multi-line description with CJK/emoji is kept verbatim at the limit.
+	// Long CJK descriptions remain valid.
 	long := ok
 	long.Description = strings.Repeat("字", 12000)
 	if err := validateTask(&long); err != nil {
@@ -209,19 +203,17 @@ func TestValidateTask(t *testing.T) {
 	if err := prepareTaskForPublish(&explicit); err != nil || explicit.Title != "  keep me  " {
 		t.Fatalf("supplied title = %q, %v", explicit.Title, err)
 	}
-	// Limits and character checks still apply at publication.
-	tooLong := ok
-	tooLong.ExpectedResult = strings.Repeat("e", maxExpected+1)
-	if err := prepareTaskForPublish(&tooLong); err == nil {
-		t.Fatal("oversized expected result published")
+	// Prose length is not capped at publication either.
+	long = ok
+	long.ExpectedResult = strings.Repeat("e", 20000)
+	if err := prepareTaskForPublish(&long); err != nil {
+		t.Fatalf("long expected result refused: %v", err)
 	}
+	// Character checks still apply.
 	control := ok
 	control.Title = "a\x07"
 	if err := prepareTaskForPublish(&control); err == nil {
 		t.Fatal("control character in title published")
-	}
-	if DefaultTitle != "Visual feedback" {
-		t.Fatalf("DefaultTitle = %q", DefaultTitle)
 	}
 
 	// Schema 0.1.0 readers need the prose; everything without it is 0.2.0.

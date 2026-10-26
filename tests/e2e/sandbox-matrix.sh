@@ -11,7 +11,7 @@
 # Needs: image lensdock/runtime:dev, .lensdock/runtime.env, docker compose >= 2.24,
 #        bin/ host binaries for TestRT02 (mise run build e2e:build-host; Linux host: bin/linux-<arch>).
 # Output: $LENSDOCK_E2E_OUT/sandbox-matrix/<cell>/... and $LENSDOCK_E2E_OUT/sandbox-matrix/matrix.json.
-# Side effect: leaves the default userns runtime (cell 1 configuration) running at the end.
+# Side effect: restores the default runtime configuration at the end.
 
 # shellcheck source=lib.sh disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -20,6 +20,9 @@ M=$OUT/sandbox-matrix
 mkdir -p "$M"
 BASE=$ROOT/docker/browser/compose.yaml
 NOSECCOMP=$E2E_DIR/compose.default-seccomp.yaml
+SANDBOX=$M/compose.sandbox.yaml
+# Both existing cells exercise the opt-in sandbox without weakening their checks.
+printf 'services:\n  runtime:\n    environment:\n      LENSDOCK_CHROMIUM_SANDBOX: "true"\n' >"$SANDBOX"
 CELLS=("$@")
 if [ "${#CELLS[@]}" -eq 0 ]; then CELLS=(1 2); fi
 
@@ -33,6 +36,7 @@ run_cell() {
   shift 2
   local files=() f
   for f in "$@"; do files+=(-f "$f"); done
+  files+=(-f "$SANDBOX")
   local d=$M/$name rc=-1
   mkdir -p "$d"
   log "cell $name: restarting runtime ($expect expected)"

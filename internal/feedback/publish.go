@@ -255,7 +255,7 @@ func (s *Service) Publish(ctx context.Context, fbID, ifMatch string, in PublishI
 			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(a.size_bytes), 0) FROM artifacts a JOIN feedback f ON f.id = a.feedback_id WHERE f.workspace_id = ?`, r.WorkspaceID).Scan(&shared); err != nil {
 				return err
 			}
-			if shared+total > s.lim.MaxSharedBytes {
+			if s.lim.MaxSharedBytes > 0 && shared+total > s.lim.MaxSharedBytes {
 				return ErrQuotaExceeded
 			}
 			res, err := tx.ExecContext(ctx, `UPDATE revisions SET status = 'PUBLISHED', title = ?, published_at = ?, publisher_id = ?, manifest_sha256 = ?, redacted_sha256 = ?,

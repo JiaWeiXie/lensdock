@@ -4,8 +4,6 @@ Upstream sources below were last checked on 2026-10-24. They are design referenc
 
 ## Upstream projects
 
-**jlesage/docker-chromium** (https://github.com/jlesage/docker-chromium). Reference for the split between GUI container, persistent data and CDP bridge. Its Dockerfile uses an Alpine base, so LensDock does not inherit the image and builds its own Debian slim Runtime. No source from that project is copied. Upstream declares the MIT license: https://github.com/jlesage/docker-chromium/blob/master/LICENSE.
-
 **vercel-labs/agent-browser** (https://github.com/vercel-labs/agent-browser). A CLI that controls an existing browser. LensDock pins a version and checks CDP attach and detach, that no local browser is launched by mistake, target selection and bridge compatibility. Upstream declares the Apache-2.0 license: https://github.com/vercel-labs/agent-browser/blob/main/LICENSE. Its screenshot element labels are not assumed to equal LensDock's human annotation workflow.
 
 **noVNC** (https://github.com/novnc/noVNC). The core is MPL-2.0, and some assets carry other licenses (https://github.com/novnc/noVNC/blob/master/LICENSE.txt). LensDock imports the npm package `@novnc/novnc` 1.7.0 unmodified, uses only the public RFB API and ships the license files with the UI (`apps/web/public/licenses/`). Any reuse or modification still has to follow each file's actual license. This file records upstream declarations and is not a legal review.
@@ -22,11 +20,14 @@ Upstream sources below were last checked on 2026-10-24. They are design referenc
 | https://modelcontextprotocol.io/specification/2026-07-28/server/tools | MCP tool text, image and structured results |
 | https://developers.openai.com/codex/mcp/ and https://code.claude.com/docs/en/mcp | Codex and Claude Code MCP client configuration |
 | https://github.com/can1357/oh-my-pi/blob/main/docs/tools/browser.md | OMP CDP, target, screenshot and lifecycle behavior |
-| https://chromedevtools.github.io/devtools-protocol/tot/Page/ and `/Runtime/` | CDP page, screenshot and navigation capabilities; the side effects of `Runtime.evaluate` |
+| https://chromedevtools.github.io/devtools-protocol/tot/Browser/, `/Extensions/`, `/Page/` and `/Runtime/` | Browser lifecycle, extension management, page automation and evaluation |
 | https://developer.chrome.com/blog/remote-debugging-port | Chrome's restriction on remote debugging with the default data directory |
 | https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md | User-namespace sandbox limits on hosts with AppArmor |
 | https://www.docker.com/resources/what-container/ | Containers use the host kernel |
 | https://docs.docker.com/build/building/best-practices/ | Image rebuilds, versions and digest pinning |
+| https://github.com/rfbproto/rfbproto/blob/master/rfbproto.rst | RFB wire protocol for the Agent's lease-bound native-desktop client |
+| https://mise.jdx.dev/cli/unuse.html and https://mise.jdx.dev/cli/uninstall.html | Removing LensDock tool configuration and installed CLI versions |
+| https://docs.docker.com/reference/cli/docker/volume/rm/ and https://docs.docker.com/reference/cli/docker/volume/ls/ | Exact volume removal, in-use refusal and label-based inventory |
 
 ## Recording a new dependency
 
@@ -34,9 +35,9 @@ For every dependency that ships in the product, record the project, upstream URL
 
 ## Shipped dependencies and licenses (2026-10-25)
 
-The annotation editor is built in this repository as a React and SVG editing layer with a Canvas raster export. It uses no tldraw or Excalidraw SDK, code or dependency: neither name appears in `apps/web/package.json`, `apps/web/pnpm-lock.yaml` or `go.mod`, so no whiteboard SDK license applies.
+The annotation editor uses repository-owned React/SVG code and Canvas raster export. The package manifests list its dependencies.
 
-LensDock's own license has not been chosen (see the root README). This file does not decide it. A license decision, the SBOM and the third-party notices are still required before an executable product is distributed.
+LensDock's own license has not been selected. Bundled dependencies retain their licenses; release packaging must account for their notices and SBOM inputs.
 
 Web UI runtime dependencies (`apps/web/package.json`). The license column is what each installed package declares in its own `package.json`: an upstream declaration, not a legal review.
 

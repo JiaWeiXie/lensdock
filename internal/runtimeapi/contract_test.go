@@ -783,7 +783,7 @@ func TestVNCViewIsOperatorOnlyAndNeverReachesTheControlInstance(t *testing.T) {
 	}
 }
 
-func TestVNCControlAdmitsOnlyTheBoundHumanLease(t *testing.T) {
+func TestVNCControlAdmitsOnlyTheBoundHumanOrAgentLease(t *testing.T) {
 	e := newCEnv(t)
 	agent := e.grant("AGENT", "actor:bot")
 	status := func(token string, hdr map[string]string) int {
@@ -801,14 +801,29 @@ func TestVNCControlAdmitsOnlyTheBoundHumanLease(t *testing.T) {
 		t.Errorf("no token = %d, want 401", got)
 	}
 	if got := status(operatorTok, nil); got != 401 {
-		t.Errorf("operator token = %d, want 401 (control needs a HUMAN lease)", got)
+		t.Errorf("operator token = %d, want 401 (control needs a HUMAN or AGENT lease)", got)
 	}
-	if got := status(agent.CapabilityToken, nil); got != 403 {
-		t.Errorf("AGENT lease = %d, want 403 WRONG_LEASE_MODE", got)
+	if got := status(agent.CapabilityToken, map[string]string{"Origin": "https://evil.test"}); got != 403 {
+		t.Errorf("AGENT Origin = %d, want 403", got)
 	}
-	if err := e.leases.Release(agent.Lease.LeaseID); err != nil {
-		t.Fatal(err)
+	if got := status(agent.CapabilityToken, map[string]string{headerEpoch: fmt.Sprint(agent.Lease.Epoch + 1)}); got != 412 {
+		t.Errorf("AGENT stale epoch = %d, want 412", got)
 	}
+	agentHdr := map[string]string{headerEpoch: fmt.Sprint(agent.Lease.Epoch), headerGeneration: agent.Lease.RuntimeGeneration}
+	ac, _, err := e.dial(base+"/vnc/control", agent.CapabilityToken, agentHdr)
+	if err != nil {
+		t.Fatalf("bound AGENT dial: %v", err)
+	}
+	defer ac.CloseNow()
+	mustWrite(t, ac, "from-agent")
+	if got, err := readWS(t, ac); err != nil || got != "echo:from-agent" {
+		t.Fatalf("AGENT echo = %q, %v", got, err)
+	}
+	e.expect("agent release", e.call("DELETE", base+"/leases/"+agent.Lease.LeaseID, agent.CapabilityToken, nil, nil), 204, "")
+	if _, err := readWS(t, ac); websocket.CloseStatus(err) != vnc.CloseLeaseEnded {
+		t.Fatalf("AGENT close after release = %d (%v)", websocket.CloseStatus(err), err)
+	}
+	beforeRejected := e.ctlUp.got()
 	human := e.grant("HUMAN", "actor:alice")
 	if got := status(human.CapabilityToken, map[string]string{"Origin": "https://evil.test"}); got != 403 {
 		t.Errorf("Origin = %d, want 403", got)
@@ -822,7 +837,7 @@ func TestVNCControlAdmitsOnlyTheBoundHumanLease(t *testing.T) {
 	if got := status(human.CapabilityToken, map[string]string{headerEpoch: "abc"}); got != 400 {
 		t.Errorf("malformed epoch = %d, want 400", got)
 	}
-	if got := e.ctlUp.got(); got != "" {
+	if got := e.ctlUp.got(); got != beforeRejected {
 		t.Fatalf("a rejected connection reached x11vnc: %q", got)
 	}
 
@@ -863,6 +878,32 @@ func TestVNCControlSocketClosesWith4002OnAGenerationChange(t *testing.T) {
 	}
 	if _, resp, err := e.dial(base+"/vnc/control", human.CapabilityToken, nil); err == nil || resp == nil || resp.StatusCode != 409 {
 		t.Fatalf("pre-restart token reconnect = %v %v, want 409", err, resp)
+	}
+}
+
+func TestAgentVNCControlSocketEndsWhenTheAgentIsPausedOrDisabled(t *testing.T) {
+	for name, end := range map[string]func(*cenv){
+		"pause":      func(e *cenv) { e.leases.PauseAgent() },
+		"novnc":      func(e *cenv) { e.leases.SetAgentMode(apiwire.AgentModeNOVNC) },
+		"generation": func(e *cenv) { e.leases.StartGeneration() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newCEnv(t)
+			agent := e.grant("AGENT", "actor:bot")
+			c, _, err := e.dial(base+"/vnc/control", agent.CapabilityToken, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.CloseNow()
+			end(e)
+			_, err = readWS(t, c)
+			if got := websocket.CloseStatus(err); got != vnc.CloseLeaseEnded && got != vnc.CloseGenerationChanged {
+				t.Fatalf("close = %d (%v), want 4001 or 4002", got, err)
+			}
+			if _, resp, err := e.dial(base+"/vnc/control", agent.CapabilityToken, nil); err == nil || resp == nil || resp.StatusCode < 400 {
+				t.Fatalf("old agent token reconnect = %v %v, want a refusal", resp, err)
+			}
+		})
 	}
 }
 

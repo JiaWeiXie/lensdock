@@ -293,7 +293,7 @@ func TestProxyDeniedMethodGetsSyntheticErrorAndConnectionStaysUsable(t *testing.
 	_, tok := env.acquire(t, lease.ModeAgent, "k1")
 	c := mustDial(t, env.wsURL("/devtools/browser/"+browserID), tok.Reveal())
 
-	writeText(t, c, `{"id":41,"method":"Browser.close"}`)
+	writeText(t, c, `{"id":41,"method":"Browser.crash"}`)
 	typ, data, err := readWithin(t, c, 2*time.Second)
 	if err != nil || typ != websocket.MessageText {
 		t.Fatalf("read: %v %v", typ, err)
@@ -302,7 +302,7 @@ func TestProxyDeniedMethodGetsSyntheticErrorAndConnectionStaysUsable(t *testing.
 		t.Fatalf("reply = %s, want %s", got, want)
 	}
 
-	writeText(t, c, `{"id":42,"method":"Page.enable","method":"Browser.close"}`)
+	writeText(t, c, `{"id":42,"method":"Page.enable","method":"Browser.crash"}`)
 	_, data, err = readWithin(t, c, 2*time.Second)
 	if err != nil || !strings.Contains(string(data), `"code":-32700`) {
 		t.Fatalf("malformed reply = %s, %v", data, err)
@@ -310,7 +310,7 @@ func TestProxyDeniedMethodGetsSyntheticErrorAndConnectionStaysUsable(t *testing.
 
 	expectEcho(t, c, `{"id":43,"method":"Browser.getVersion"}`)
 	for _, m := range env.chromium.receivedMessages() {
-		if strings.Contains(m, "Browser.close") {
+		if strings.Contains(m, "Browser.crash") {
 			t.Errorf("denied message reached Chromium: %s", m)
 		}
 	}

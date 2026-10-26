@@ -42,11 +42,13 @@ const (
 
 var cdpAddr = cdpHost + ":" + strconv.Itoa(cdpPort)
 
-// ChromiumArgv returns the complete, fixed Chromium command line (argv[0] is
-// the binary). There is deliberately no way to add flags: the sandbox stays
-// on and cannot be weakened by configuration.
-func ChromiumArgv() []string {
-	return []string{
+// ChromiumArgv returns the complete Chromium command line (argv[0] is the
+// binary). The only configurable flag is the sandbox: with sandbox true
+// Chromium keeps its namespace sandbox; with false --no-sandbox is added and
+// the Docker container is the isolation boundary. There is deliberately no
+// other way to add flags.
+func ChromiumArgv(sandbox bool) []string {
+	argv := []string{
 		chromiumBinary,
 		"--user-data-dir=" + profileDir,
 		"--remote-debugging-address=" + cdpHost,
@@ -59,8 +61,11 @@ func ChromiumArgv() []string {
 		"--window-size=1920,1080",
 		"--start-maximized",
 		"--disk-cache-dir=" + cacheDir,
-		"about:blank",
 	}
+	if !sandbox {
+		argv = append(argv, "--no-sandbox")
+	}
+	return append(argv, "about:blank")
 }
 
 // childEnv is the explicit environment allowlist for every child process.

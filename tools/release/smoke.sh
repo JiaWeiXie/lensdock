@@ -5,8 +5,8 @@
 # runtime and gateway images, in a throwaway state directory, install directory and Compose
 # project, then proves the product works and the workload sandbox is intact:
 #   - the installed CLI reports the release version
-#   - the Gateway becomes ready (it only is when the Runtime proved its Chromium user-namespace
-#     sandbox and seccomp profile, so a host that cannot sandbox fails here, never degrades)
+#   - the default workspace starts, then the opt-in Chromium sandbox reaches readiness
+#     (a host that cannot sandbox fails the opt-in check, never degrades)
 #   - the web UI is served, an Agent lease works and the CDP bridge reaches the real Chromium
 #   - no container is privileged, mounts a Docker socket or runs without seccomp, and no
 #     Chromium process uses --no-sandbox
@@ -95,6 +95,10 @@ LENSDOCK_INSTALL_ARCHIVE="$archive" \
   bash "$SMOKE_DIST/install.sh"
 
 cli="$work/bin/lensdock"
+# Installation exercises the default mode. Recreate only this throwaway Runtime
+# with sandbox enabled before running the existing sandbox assertions.
+printf '\nLENSDOCK_CHROMIUM_SANDBOX=true\n' >>"$work/state/runtime.env"
+"$cli" update compose --deployment "$work/state/deployment.json" -- up -d --wait runtime
 step "the installed CLI reports the release version"
 reported=$("$cli" version)
 [[ $reported == "lensdock $SMOKE_VERSION ("* ]] || die "'lensdock version' printed '$reported', want 'lensdock $SMOKE_VERSION (<commit>)'"

@@ -824,16 +824,24 @@ func (r *updateRun) candidateSmoke(ctx context.Context) (string, error) {
 		return "", err
 	}
 	var failed []string
+	sandboxOn := false
 	for _, c := range resp.Verify.Checks {
-		if c.Status != CheckPass && c.ID != "egress-denied" {
+		if c.blocks() && c.ID != "egress-denied" {
 			failed = append(failed, c.ID+": "+c.Detail)
+		}
+		if c.ID == "sandbox" && c.Status == CheckPass {
+			sandboxOn = true
 		}
 	}
 	if len(failed) > 0 {
 		sort.Strings(failed)
 		return "", fmt.Errorf("candidate verification failed: %s", strings.Join(failed, "; "))
 	}
-	notes = append(notes, "sandbox, fonts, packages, Chromium, CDP and the local fixture passed")
+	passed := "fonts, packages, Chromium, CDP and the local fixture passed"
+	if sandboxOn {
+		passed = "sandbox, " + passed
+	}
+	notes = append(notes, passed)
 	return strings.Join(notes, "; "), nil
 }
 
@@ -955,7 +963,7 @@ func (r *updateRun) migrateGateway(ctx context.Context) error {
 	}
 	args := []string{
 		"run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
-		"--security-opt", "no-new-privileges:true", "--pids-limit", "256", "--memory", "1g",
+		"--security-opt", "no-new-privileges:true",
 		"--user", g.User, "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
 	}
 	for _, ds := range r.sets {

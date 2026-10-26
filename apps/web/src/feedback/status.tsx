@@ -3,13 +3,13 @@ import type { DeliveryState } from '@/api/types';
 import { Chip, type Tone } from '@/components/ui';
 import type { IconName } from '@/components/icons';
 import { useI18n, type MessageKey } from '@/i18n';
+import { hasDetail, progressLabel } from './progress';
 
 /**
- * Delivery states are deliberately distinct: "published", "queued" and
- * "acknowledged" are different facts and never collapse into one "sent".
+ * The chip shows the primary progress (Sent / In progress / Done, or ready/canceled). When the
+ * exact delivery state says more, that detail is appended so "queued" and "read" never pass for
+ * "executed" and an Agent-reported result never passes for verified.
  */
-export const DELIVERY_ORDER: readonly DeliveryState[] = ['READY', 'QUEUED', 'ACKNOWLEDGED', 'IN_PROGRESS', 'RESOLVED', 'VERIFIED'];
-
 export const DELIVERY_LABEL: Record<DeliveryState, MessageKey> = {
   READY: 'delivery.READY',
   QUEUED: 'delivery.QUEUED',
@@ -42,9 +42,10 @@ const ICON: Record<DeliveryState, IconName> = {
 
 export function DeliveryChip({ state }: { state: DeliveryState }): ReactNode {
   const { t } = useI18n();
+  const primary = t(progressLabel(state));
   return (
     <Chip tone={TONE[state]} icon={ICON[state]}>
-      {t(DELIVERY_LABEL[state])}
+      {hasDetail(state) ? `${primary} · ${t(DELIVERY_LABEL[state])}` : primary}
     </Chip>
   );
 }

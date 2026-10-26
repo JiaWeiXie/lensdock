@@ -24,7 +24,8 @@ type CaptureStats struct {
 	Failed         int `json:"failed"`
 }
 
-// StatsLimits are the effective quotas next to the usage they bound.
+// StatsLimits are the configured optional limits next to the usage they bound;
+// zero means no limit is configured.
 type StatsLimits struct {
 	MaxDrafts       int   `json:"maxDrafts"`
 	MaxOpenCaptures int   `json:"maxOpenCaptures"`

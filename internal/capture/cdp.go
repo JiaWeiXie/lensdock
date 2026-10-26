@@ -11,7 +11,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-const cdpReadLimit = 64 << 20 // a base64 PNG of the size limit plus overhead
+// cdpReadLimit disables the WebSocket message size limit (coder/websocket
+// treats -1 as unlimited): a full-page PNG arrives as one base64 message.
+// Screenshot size is bounded only by the optional Config limits.
+const cdpReadLimit = -1
 
 // cdpConn is a minimal serial CDP client: one command in flight, events are
 // discarded. It exists for the runtime's own short capture and probe

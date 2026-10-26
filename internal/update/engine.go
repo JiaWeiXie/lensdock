@@ -306,7 +306,6 @@ func (e *Engine) sidecarProbe(ctx context.Context, image, containerID, cli strin
 		"--network", "container:" + containerID,
 		"--read-only", "--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges:true",
-		"--pids-limit", "64", "--memory", "256m",
 		"--user", "65532:65532",
 		"--mount", "type=bind,src=" + cli + ",dst=/usr/local/bin/lensdock,readonly",
 		"--entrypoint", "/usr/local/bin/lensdock",
