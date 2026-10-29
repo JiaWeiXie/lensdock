@@ -4,8 +4,10 @@
   - One desktop, no pager, no desktop switching.
   - No keybindings: nothing can launch a terminal or application, and no chord is grabbed
     from the page.
-  - Mouse: click-to-focus only. No Root/Desktop bindings, so no root menu or window list
-    can be opened from the display.
+  - Mouse: click-to-focus on windows. The only Root (empty desktop) binding is a right-click
+    that opens root-menu, whose single fixed item restores the browser window. No window
+    list and no Desktop binding. The Client context keeps its focus/raise-only bindings, so
+    webpage context menus are unchanged.
   - Normal windows are undecorated and maximized; Chromium draws its own frame.
 -->
 <openbox_config xmlns="http://openbox.org/3.4/rc">
@@ -124,6 +126,13 @@
       <mousebind button="Right" action="Press">
         <action name="Focus"/>
         <action name="Raise"/>
+      </mousebind>
+    </context>
+    <context name="Root">
+      <mousebind button="Right" action="Press">
+        <action name="ShowMenu">
+          <menu>root-menu</menu>
+        </action>
       </mousebind>
     </context>
   </mouse>

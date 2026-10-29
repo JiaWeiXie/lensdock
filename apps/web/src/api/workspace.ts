@@ -3,6 +3,7 @@ import type {
   AgentControl,
   AgentMode,
   AgentSetup,
+  BrowserDestination,
   FileArea,
   FileListing,
   Handoff,
@@ -21,6 +22,11 @@ const ws = (id: string): string => `/api/v1/workspaces/${encodeURIComponent(id)}
 export async function listWorkspaces(signal?: AbortSignal): Promise<Workspace[]> {
   const res = await request<{ workspaces: Workspace[] }>('/api/v1/workspaces', { signal });
   return res.workspaces;
+}
+
+export async function listBrowserDestinations(signal?: AbortSignal): Promise<BrowserDestination[]> {
+  const res = await request<{ destinations: BrowserDestination[] }>('/api/v1/browser-destinations', { signal });
+  return res.destinations;
 }
 
 export function getWorkspace(id: string, signal?: AbortSignal): Promise<Workspace> {

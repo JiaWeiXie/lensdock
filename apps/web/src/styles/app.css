@@ -203,9 +203,29 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
-  padding: 4px 8px;
+  gap: 12px;
+  padding: 10px 12px;
   min-height: var(--topbar-h);
+}
+
+.top__identity {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1 1 420px;
+  min-width: 0;
+}
+
+.top__row--commands {
+  border-top: 1px solid var(--line);
+}
+
+.top__primary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 
 .top__row--actions {
@@ -215,20 +235,21 @@
   padding-block: 6px;
 }
 
-.top--compact .top__ws,
 .top--compact .top__browser,
 .top--compact .lang {
   display: none;
 }
 
-.top--compact>.top__row>.btn {
-  padding: 4px 8px;
-  font-size: var(--fs-xs);
+.top--compact .top__primary>.btn {
+  padding: 6px 10px;
+  min-height: 32px;
+  font-size: var(--fs-sm);
 }
 
 .top--compact .drawing-split .btn {
-  padding: 4px 8px;
-  font-size: var(--fs-xs);
+  padding: 6px 10px;
+  min-height: 32px;
+  font-size: var(--fs-sm);
 }
 
 /* New drawing: one click creates the default canvas; the attached chevron opens optional settings. */
@@ -317,10 +338,44 @@
   line-height: 1.1;
 }
 
-.top__ws {
-  font-size: var(--fs-sm);
+.workspace-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 320px;
+}
+
+.workspace-switcher__field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
   color: var(--ink-2);
+  font-size: var(--fs-xs);
+}
+
+.workspace-switcher__field>span {
   white-space: nowrap;
+}
+
+.workspace-switcher__field .input {
+  width: 100%;
+  min-width: 0;
+  max-width: 360px;
+  min-height: 32px;
+  padding-inline: 10px 32px;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+}
+
+.workspace-switcher__error {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--danger);
+  font-size: var(--fs-xs);
 }
 
 .top__browser {
@@ -335,7 +390,7 @@
 .top__status {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: 8px;
   margin-left: auto;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -346,8 +401,9 @@
   flex-wrap: wrap;
   min-width: 0;
   align-items: center;
-  gap: var(--sp-2);
-  padding-left: var(--sp-3);
+  gap: 8px;
+  margin-left: auto;
+  padding-left: 12px;
   border-left: 1px solid var(--line);
 }
 
@@ -2054,16 +2110,71 @@ textarea.input {
     display: none;
   }
 
-  /* The two primary actions stay visible on a phone; long labels wrap instead of widening the page. */
-  .top__row>.btn,
-  .top__row>.drawing-split,
-  .top__row>.drawing-split .drawing-launch {
+  .top__identity {
+    flex-basis: 100%;
+  }
+
+  .top--compact {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 8px;
+    padding: 10px 12px;
+  }
+
+  .top--compact>.top__row--identity,
+  .top--compact>.top__row--commands {
+    display: contents;
+  }
+
+  .top--compact .top__identity {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .top--compact .top__primary {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .top--compact .top__status {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .top--compact .top__tools {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .top--compact>.capture-error,
+  .top--compact>.top__error {
+    grid-column: 1 / -1;
+  }
+
+  .workspace-switcher__field {
+    gap: 8px;
+  }
+
+  .workspace-switcher__field .input {
+    max-width: none;
+    min-height: 36px;
+  }
+
+  .top__primary {
+    flex: 1 1 100%;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .top__primary>.btn,
+  .top__primary>.drawing-split,
+  .top__primary>.drawing-split .drawing-launch {
     min-width: 0;
     max-width: 100%;
   }
 
-  .top__row>.btn,
-  .top__row>.drawing-split .drawing-launch {
+  .top__primary>.btn,
+  .top__primary>.drawing-split .drawing-launch {
     white-space: normal;
     text-align: start;
     overflow-wrap: anywhere;
@@ -2124,7 +2235,7 @@ textarea.input {
 
   .top__row {
     flex-wrap: wrap;
-    padding: 4px;
+    padding: 8px 12px;
   }
 
   .top__status {
@@ -2135,6 +2246,7 @@ textarea.input {
   .top__tools {
     border-left: 0;
     padding-left: 0;
+    margin-left: auto;
   }
 
   .workspace {

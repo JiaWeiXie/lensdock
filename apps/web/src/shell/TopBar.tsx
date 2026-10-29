@@ -16,12 +16,13 @@ import { useWorkspace } from '@/state/workspace';
 import { shortId } from '@/util/format';
 import { useRfb } from '@/vnc/DesktopProvider';
 import { OwnerGlyph, useOwner } from './owner';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 /** Top control zone: identity, health, controller, target, and the primary actions. */
 export function TopBar(): ReactNode {
   const { t, lang, setLang } = useI18n();
   const { actor, logout } = useSession();
-  const { workspace, workspaceId, feedStatus } = useWorkspace();
+  const { workspace, feedStatus } = useWorkspace();
   const { lease, release, busy, error: controlError } = useControl();
   const owner = useOwner();
   const rfb = useRfb();
@@ -60,36 +61,16 @@ export function TopBar(): ReactNode {
 
   return (
     <header className={`top${toolsExpanded ? ' top--expanded' : ' top--compact'}`}>
-      <div className="top__row">
-        <div className="top__id">
-          <span className="top__brand">LensDock</span>
-          <span className="top__ws" title={workspaceId}>
-            {t('top.workspace')} <strong className="mono">{shortId(workspaceId, 16)}</strong>
-          </span>
-          <span className="top__browser" title={workspace?.browserVersion ?? undefined}>
-            {workspace?.browserVersion ?? t('top.browserUnknown')}
-          </span>
+      <div className="top__row top__row--identity">
+        <div className="top__identity">
+          <div className="top__id">
+            <span className="top__brand">LensDock</span>
+            <span className="top__browser" title={workspace?.browserVersion ?? undefined}>
+              {workspace?.browserVersion ?? t('top.browserUnknown')}
+            </span>
+          </div>
+          <WorkspaceSwitcher />
         </div>
-        {lease ? (
-          <Button small variant="warn" icon="release" busy={busy} onClick={() => void release()}>
-            {t('top.release')}
-          </Button>
-        ) : null}
-        <AgentControlButton variant="toolbar" />
-        {collaboration ? (
-          <>
-            <DrawingButton />
-            <Button
-              className="screenshot-launch"
-              icon="camera"
-              busy={capture.busy}
-              disabledReason={capture.desktopBlocked ? t(capture.desktopBlocked) : null}
-              onClick={() => void capture.annotateDesktop()}
-            >
-              {t('top.captureAnnotate')}
-            </Button>
-          </>
-        ) : null}
 
         <div className="top__status" role="group" aria-label={t('top.status')}>
           <Chip tone={health.tone} icon={health.tone === 'ok' ? 'check' : 'warning'}>
@@ -103,6 +84,30 @@ export function TopBar(): ReactNode {
             {t(owner.labelKey)}
           </span>
           {collaboration && feedStatus === 'reconnecting' ? <Chip tone="amber" icon="warning">{t('top.events.polling')}</Chip> : null}
+        </div>
+      </div>
+      <div className="top__row top__row--commands">
+        <div className="top__primary">
+          {lease ? (
+            <Button small variant="warn" icon="release" busy={busy} onClick={() => void release()}>
+              {t('top.release')}
+            </Button>
+          ) : null}
+          <AgentControlButton variant="toolbar" />
+          {collaboration ? (
+            <>
+              <DrawingButton />
+              <Button
+                className="screenshot-launch"
+                icon="camera"
+                busy={capture.busy}
+                disabledReason={capture.desktopBlocked ? t(capture.desktopBlocked) : null}
+                onClick={() => void capture.annotateDesktop()}
+              >
+                {t('top.captureAnnotate')}
+              </Button>
+            </>
+          ) : null}
         </div>
 
         <div className="top__tools">

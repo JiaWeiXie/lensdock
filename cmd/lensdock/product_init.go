@@ -60,10 +60,16 @@ func (c *cli) productInit(args []string) error {
 	if *gatewayImage == "" {
 		*gatewayImage = defaultGateway
 	}
+	// $LENSDOCK_DESTINATIONS_DIR, else the per-user directory every deployment
+	// of this machine shares for browser destination discovery.
+	destinationsDir := c.getenv(product.EnvDestinationsDir)
+	if home := c.homeDir(); destinationsDir == "" && home != "" {
+		destinationsDir = product.DestinationsDirIn(home)
+	}
 	dep, err := product.Initialize(product.InitOptions{
 		StateDir: *state, Origin: *origin, WorkspaceID: *ws, Mode: *mode, Project: *project,
 		RuntimeImage: *runtimeImage, GatewayImage: *gatewayImage, SourceDir: cwd, Bundle: bundle,
-		RequirePairing: *requirePairing,
+		RequirePairing: *requirePairing, DestinationsDir: destinationsDir,
 	})
 	if err != nil {
 		return productError(err)

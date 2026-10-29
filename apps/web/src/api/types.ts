@@ -47,6 +47,14 @@ export interface LeaseGrant {
   lease: Lease;
 }
 
+export interface BrowserDestination {
+  id: string;
+  name: string;
+  workspaceId: string;
+  origin: string;
+  current: boolean;
+}
+
 export interface Workspace {
   id: string;
   runtimeGeneration: string;

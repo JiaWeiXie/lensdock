@@ -133,6 +133,13 @@ Two x11vnc instances read the same display: 5900 for lease-bound control and 590
 
 `lensdock desktop` connects through this fenced path to capture the full screen and send pointer, keyboard and UTF-8 input. It reaches Chromium's address bar, menus, native dialogs and extension interfaces without a DOM target. A fresh screenshot provides the coordinates; the CLI checks the live desktop bounds. `lensdock cdp bridge --lease-file-out FILE` lets CDP and native desktop commands share one Agent lease. Both channels close when that lease ends.
 
+Right-click the empty desktop and choose **Restore browser** to recover a minimized
+or missing browser window. Openbox invokes the fixed `lensdock-runtime restore-browser`
+command. It uses the existing loopback CDP endpoint to restore and activate a page
+window, or creates an `about:blank` window when none exists. It does not launch a
+second Chromium, reset the Profile or change webpage context menus. Input still
+requires a valid control lease; the first gesture used to acquire control is consumed.
+
 ## Clean stop
 
 The supervisor sends `Browser.close` first (waiting up to 3 seconds) and falls back to signals, because the SIGTERM path does not remove the Profile locks. Integrated runs showed `profile.exit_type` of `Normal` and no `Singleton*` locks, and restart after `SIGKILL` was also exercised. The update flow judges a checkpoint clean by the same conditions (exit code, locks, `profile.exit_type`, SQLite journal).

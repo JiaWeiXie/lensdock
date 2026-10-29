@@ -95,6 +95,10 @@ func classifyModeRoute(r *http.Request, ws string) modeRoute {
 	switch {
 	case path == "/api/v1/workspaces":
 		return modeRoute{state: true}
+	case path == "/api/v1/browser-destinations":
+		// A human may switch destination in any usage mode; the handler itself
+		// refuses Agent identities.
+		return modeRoute{state: true}
 	case strings.HasPrefix(path, "/api/v1/workspaces/"):
 		rest := strings.TrimPrefix(path, "/api/v1/workspaces/")
 		id, suffix, _ := strings.Cut(rest, "/")

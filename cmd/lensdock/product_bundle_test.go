@@ -233,7 +233,7 @@ func TestProductStartThroughTheCLIPinsAndReportsTheOrigin(t *testing.T) {
 	}
 	state := filepath.Join(t.TempDir(), "state")
 	bundle := writeBundle(t, "1.2.3")
-	if r := runCLI(t, context.Background(), "", nil, "admin", "product-init", "--state-dir", state, "--bundle-dir", bundle, "--origin", "http://127.0.0.1:"+port); r.code != 0 {
+	if r := runCLI(t, context.Background(), "", map[string]string{"LENSDOCK_DESTINATIONS_DIR": t.TempDir()}, "admin", "product-init", "--state-dir", state, "--bundle-dir", bundle, "--origin", "http://127.0.0.1:"+port); r.code != 0 {
 		t.Fatalf("init failed: %s", r.stderr)
 	}
 	f := &fakeDocker{pulled: map[string]bool{}}

@@ -55,6 +55,13 @@ type Config struct {
 	// RequirePairing disables automatic access for same-origin local browsers.
 	RequirePairing bool          `json:"requirePairing,omitempty"`
 	SessionLimits  SessionLimits `json:"sessionLimits,omitzero"`
+	// DestinationName is the optional display name this deployment publishes
+	// and shows as its own browser destination; empty derives one.
+	DestinationName string `json:"destinationName,omitempty"`
+	// DestinationsDir is the directory of published destination records.
+	// Empty means DefaultDestinationsDir, where the product Compose file
+	// mounts the host directory read-only.
+	DestinationsDir string `json:"destinationsDir,omitempty"`
 }
 
 // ValidateDeploymentID accepts the empty standalone ID or 1-64 ASCII letters,
@@ -100,6 +107,11 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if err = ValidateDeploymentID(c.DeploymentID); err != nil {
 		return c, err
+	}
+	if c.DestinationName != "" {
+		if err = ValidateDestinationName(c.DestinationName); err != nil {
+			return c, err
+		}
 	}
 	return c, nil
 }

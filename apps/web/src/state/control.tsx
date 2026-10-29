@@ -70,7 +70,8 @@ interface ControlCtx {
   /** Re-posts the takeover with force after a drain timeout. Only an explicit user action may call this. */
   forceTake: (reason: string) => Promise<void>;
   cancelTakeover: () => Promise<void>;
-  release: () => Promise<void>;
+  /** Releases our lease; false keeps the caller on this workspace when release failed. */
+  release: () => Promise<boolean>;
   dismissLost: () => void;
   /** Re-reads the current lease (used after the desktop control stream is fenced). */
   reconcile: () => Promise<void>;
@@ -351,9 +352,9 @@ export function ControlProvider({ children }: { children: ReactNode }): ReactNod
     void refresh();
   }, [refresh, workspaceId]);
 
-  const release = useCallback(async (): Promise<void> => {
+  const release = useCallback(async (): Promise<boolean> => {
     const mine = leaseRef.current;
-    if (!mine) return;
+    if (!mine) return true;
     setBusy(true);
     setError(null);
     try {
@@ -363,13 +364,14 @@ export function ControlProvider({ children }: { children: ReactNode }): ReactNod
       if (!(err instanceof ApiError && (err.status === 404 || err.status === 409))) {
         setError(err instanceof ApiError ? err : new ApiError(0, 'UNKNOWN', 'release failed'));
         setBusy(false);
-        return;
+        return false;
       }
     }
     guardRef.current = ENDED_GUARD;
     setLease(null);
     setBusy(false);
     void refresh();
+    return true;
   }, [refresh, setLease, workspaceId]);
 
   const dismissLost = useCallback(() => setLost(null), []);

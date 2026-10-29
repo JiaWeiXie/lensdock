@@ -100,6 +100,10 @@ services:
       - gateway-artifacts:/data/artifacts
       - gateway-credentials:/run/lensdock:ro
       - ${LENSDOCK_STATE_DIR:-../.lensdock}/product/public:/run/lensdock-status:ro
+      # The host directory of published browser destinations is mounted read-only at
+      # /run/lensdock-destinations by destinations.yaml, an override that
+      # `lensdock admin product-start` adds beside this file (so release copies of this
+      # file that predate the mount gain it too). It holds only non-secret metadata.
     networks: [control, gateway-edge]
     depends_on:
       runtime:

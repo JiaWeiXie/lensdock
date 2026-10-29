@@ -75,7 +75,8 @@ func releaseOptions(t *testing.T, origin string) InitOptions {
 	runtime, gateway := DefaultImages(b)
 	return InitOptions{
 		StateDir: filepath.Join(t.TempDir(), "state"), Origin: origin, WorkspaceID: DefaultWorkspace,
-		Project: "lensdock-smoke", RuntimeImage: runtime, GatewayImage: gateway, Bundle: b,
+		DestinationsDir: t.TempDir(),
+		Project:         "lensdock-smoke", RuntimeImage: runtime, GatewayImage: gateway, Bundle: b,
 	}
 }
 

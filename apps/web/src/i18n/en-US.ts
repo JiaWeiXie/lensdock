@@ -33,7 +33,11 @@ export const enUS: Record<MessageKey, string> = {
   'role.agent': 'Agent',
   'role.admin': 'Administrator',
 
-  'top.workspace': 'Workspace',
+  'top.workspace': 'Project / Workspace',
+  'top.workspaceLoading': 'Loading browsers…',
+  'top.workspaceSwitching': 'Switching browser…',
+  'top.workspaceLoadFailed': 'Could not load the browser list.',
+  'top.workspaceSwitchNote': 'Switch browsers without stopping their tabs or downloads.',
   'top.browserUnknown': 'Browser version unknown',
   'top.status': 'Connection and control state',
   'top.conn.none': 'Desktop not connected',
@@ -114,6 +118,7 @@ export const enUS: Record<MessageKey, string> = {
 
   'stage.label': 'Remote desktop',
   'stage.toolbar': 'Desktop tools',
+  'stage.restoreHint': 'Browser window missing? Right-click the empty remote desktop and choose Restore browser. If you are viewing only, first click the desktop to take control.',
   'stage.scale': 'Scaling',
   'stage.fit': 'Fit',
   'stage.native': 'Actual size',

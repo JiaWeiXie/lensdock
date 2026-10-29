@@ -55,6 +55,7 @@ a lease capability token, and no credential appears in a URL.
 |---|---|
 | Pair / session | `POST|GET|DELETE /api/v1/session` → `{actor, csrfToken}` |
 | Workspace state | `GET /api/v1/workspaces`, `/workspaces/{ws}` (runtime state flattened: `controlState, holderId, ready, runtimeGeneration, epoch, holderMode, lease, leaseExpiresAt, browserVersion, handoff, locked, lockCode, maintenance, capture, resources`) |
+| Local browser destinations | `GET /api/v1/browser-destinations` → `{destinations:[{id,name,workspaceId,origin,current}]}`; human, viewer or admin session, including `NOVNC` mode |
 | Health | `GET /workspaces/{ws}/health` → raw runtime readiness detail |
 | Targets | `GET /workspaces/{ws}/targets` → `{targets:[{id,type,title,url,visible}]}` |
 | Lease | `POST /workspaces/{ws}/leases {mode,ttlSeconds?}` (+`X-LensDock-Takeover-ID`), `POST .../leases/{id}/renew {epoch,runtimeGeneration}`, `DELETE .../leases/{id}`, `GET .../leases/current`; response modelled as `{lease}` only |
@@ -84,11 +85,22 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
 - **Workspace**: health chip, runtime readiness, lock/maintenance/capture/
   handoff notices, controller and holder, tab list with foreground honesty
   (an Agent-held target is stated as untracked, not guessed).
+  Project / Workspace lists the current browser and other published local
+  deployments, refreshed on mount and focus. Switching releases this UI's
+  control lease before navigating to the destination root; release failure
+  prevents navigation. No credentials or editor route cross origins, and
+  neither Runtime is stopped. Capture and control transitions disable switching.
+  Identity/status and primary actions have separate toolbar groups. Narrow
+  layouts wrap actions, and the native select reserves space for its arrow;
+  long names truncate in the closed control and remain available in the list.
 - **Desktop**: noVNC RFB via the public API only (`toBlob`, `sendKey`,
   `qualityLevel`, `compressionLevel`, `scaleViewport`); bounded retries with
   backoff; freshness gate (last frame age, Gateway state age) before any
   capture; fit/actual size, fullscreen, quality/compression, remote resolution
   picker (only advertised sizes), combo keys, release-all-modifiers.
+  Right-click the empty remote desktop for Restore browser. This Runtime-owned
+  menu restores an existing window or opens a window in the same Chromium
+  instance; page context menus and the normal control handoff remain unchanged.
 - **Control**: deliberate desktop pointer input or typing automatically requests
   a lease and starts graceful takeover when needed. The first gesture is consumed,
   never replayed into a changed page. Concurrent intentions share one request.

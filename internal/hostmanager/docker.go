@@ -599,7 +599,7 @@ func (b DockerBackend) Execute(ctx context.Context, cfg Config, p Project, op Op
 		if berr != nil {
 			return berr
 		}
-		dep, err = product.Initialize(product.InitOptions{StateDir: p.StateDir, Origin: p.Origin, WorkspaceID: p.Workspace, Mode: "AGENT", Project: p.ComposeProject, RuntimeImage: cfg.RuntimeImage, GatewayImage: cfg.GatewayImage, Bundle: bundle, DeploymentID: p.ID, RequirePairing: cfg.RequirePairing, ManagedBy: &update.ManagedOwner{ManagerID: cfg.ID, ProjectID: p.ID, ManagerRoot: cfg.Root}})
+		dep, err = product.Initialize(product.InitOptions{StateDir: p.StateDir, Origin: p.Origin, WorkspaceID: p.Workspace, Mode: "AGENT", Project: p.ComposeProject, RuntimeImage: cfg.RuntimeImage, GatewayImage: cfg.GatewayImage, Bundle: bundle, DeploymentID: p.ID, RequirePairing: cfg.RequirePairing, DestinationsDir: cfg.DestinationsDir, DestinationName: destinationName(p.Root), ManagedBy: &update.ManagedOwner{ManagerID: cfg.ID, ProjectID: p.ID, ManagerRoot: cfg.Root}})
 	}
 	if err != nil {
 		if op.Kind == "stop" && errors.Is(err, os.ErrNotExist) {
@@ -654,9 +654,18 @@ func (b DockerBackend) Execute(ctx context.Context, cfg Config, p Project, op Op
 		if err := product.Start(ctx, dep, docker, product.StartOptions{PullPolicy: cfg.PullPolicy}, log); err != nil {
 			return err
 		}
-		return verifyGatewayIdentity(ctx, p)
+		if err := verifyGatewayIdentity(ctx, p); err != nil {
+			// A Gateway that does not answer as this project must not stay listed.
+			withdrawDestination(ctx, p.StateDir)
+			return err
+		}
+		return nil
 	case "stop":
-		return engine.StopProject(ctx, p.Workspace, update.ProjectStopOptions{DiscardPageState: op.DiscardPageState, Force: op.Force, ExpectedGeneration: op.ExpectedGeneration})
+		if err := engine.StopProject(ctx, p.Workspace, update.ProjectStopOptions{DiscardPageState: op.DiscardPageState, Force: op.Force, ExpectedGeneration: op.ExpectedGeneration}); err != nil {
+			return err
+		}
+		withdrawDestination(ctx, p.StateDir)
+		return nil
 	case "update":
 		return executeUpdate(ctx, engine, op.Update)
 	default:

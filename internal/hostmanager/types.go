@@ -63,6 +63,11 @@ type Config struct {
 	// RequirePairing records the opt-in pairing requirement chosen at
 	// initialization; the access-policy code interprets it.
 	RequirePairing bool `json:"requirePairing"`
+	// DestinationsDir is the host directory where managed projects publish
+	// their browser destinations. Initialization records $LENSDOCK_DESTINATIONS_DIR
+	// or the per-user default; an older configuration without one makes each
+	// project use the default.
+	DestinationsDir string `json:"destinationsDir,omitempty"`
 }
 
 type DirectoryIdentity struct {

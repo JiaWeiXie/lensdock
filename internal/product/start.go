@@ -95,7 +95,9 @@ func (s starter) capture(ctx context.Context, args ...string) (string, error) {
 // resources that this deployment did not create: config-init would replace
 // the credentials of foreign containers and volumes. After the first start
 // the only writes to the product directory are the pin file, the helper
-// policy overlay and the started marker.
+// policy overlay, the destinations mount overlay (with its recorded directory
+// in compose.env) and the started marker. Once the Gateway is ready the
+// deployment publishes itself as a browser destination.
 func Start(ctx context.Context, dep *update.Deployment, docker update.Docker, opts StartOptions, log io.Writer) error {
 	if log == nil {
 		log = io.Discard
@@ -160,6 +162,12 @@ func Start(ctx context.Context, dep *update.Deployment, docker update.Docker, op
 			return fmt.Errorf("prepare credentials (config-init): %w", err)
 		}
 	}
+
+	// Existing releases gain discovery without replacing their pinned Compose
+	// files, browser data or credentials.
+	if err := ensureDestinationsMount(dep); err != nil {
+		return fmt.Errorf("prepare browser destination discovery: %w", err)
+	}
 	name, argv, err := eng.ComposeCommand([]string{"up", "-d", "--wait", "--wait-timeout", "300", "--pull=never"})
 	if err != nil {
 		return err
@@ -175,6 +183,11 @@ func Start(ctx context.Context, dep *update.Deployment, docker update.Docker, op
 	if bootstrap {
 		if err := writeFileAtomic(startedPath, []byte("started\n"), 0o600); err != nil {
 			return fmt.Errorf("record the first start: %w", err)
+		}
+	}
+	if dep.Gateway != nil && dep.Gateway.ReadyURL != "" {
+		if err := PublishDestination(ctx, dep); err != nil {
+			return fmt.Errorf("publish browser destination: %w", err)
 		}
 	}
 	return nil

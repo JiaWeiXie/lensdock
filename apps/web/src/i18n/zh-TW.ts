@@ -35,7 +35,11 @@ export const zhTW = {
   'role.agent': 'Agent',
   'role.admin': '管理者',
 
-  'top.workspace': 'Workspace',
+  'top.workspace': '專案 / Workspace',
+  'top.workspaceLoading': '正在載入瀏覽器…',
+  'top.workspaceSwitching': '正在切換瀏覽器…',
+  'top.workspaceLoadFailed': '無法載入瀏覽器清單。',
+  'top.workspaceSwitchNote': '切換瀏覽器不會關閉原本的分頁或下載。',
   'top.browserUnknown': 'Browser 版本未知',
   'top.status': '連線與控制狀態',
   'top.conn.none': '未連線桌面',
@@ -116,6 +120,7 @@ export const zhTW = {
 
   'stage.label': '遠端桌面',
   'stage.toolbar': '桌面工具',
+  'stage.restoreHint': '瀏覽器視窗不見了？在遠端桌面的空白處按右鍵，選擇 Restore browser。若目前是唯讀監看，請先點一下桌面取得控制權。',
   'stage.scale': '縮放方式',
   'stage.fit': '符合視窗',
   'stage.native': '原始大小',

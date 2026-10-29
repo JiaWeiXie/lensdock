@@ -39,7 +39,16 @@ func TestMain(m *testing.M) {
 			os.Exit(0)
 		}
 	}
-	os.Exit(m.Run())
+	// Managers initialized by the tests publish destinations here, never into
+	// the developer's real per-user directory.
+	dir, err := os.MkdirTemp("", "lensdock-destinations-")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("LENSDOCK_DESTINATIONS_DIR", dir)
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func managerMain(args []string) int {

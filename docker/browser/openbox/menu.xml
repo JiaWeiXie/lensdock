@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Intentionally empty: the display exposes no way to launch applications. -->
+<!--
+  Opened by right-clicking the empty desktop (see rc.xml). The single fixed item runs the
+  runtime's DevTools-only recovery action: it restores a minimized Chromium window, or opens
+  a new about:blank window when Chromium is alive without one. It never starts a browser and
+  the menu offers no shell, terminal or other application.
+-->
 <openbox_menu xmlns="http://openbox.org/3.4/menu">
-  <menu id="root-menu" label="LensDock"/>
+  <menu id="root-menu" label="LensDock">
+    <item label="Restore browser">
+      <action name="Execute">
+        <command>/usr/local/bin/lensdock-runtime restore-browser</command>
+      </action>
+    </item>
+  </menu>
 </openbox_menu>

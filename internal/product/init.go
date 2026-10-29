@@ -124,6 +124,13 @@ type InitOptions struct {
 	// ManagedBy records the host manager that must admit lifecycle changes of
 	// the deployment. It requires DeploymentID to equal ManagedBy.ProjectID.
 	ManagedBy *update.ManagedOwner
+	// DestinationsDir is the host directory of published browser destinations
+	// that this deployment records in compose.env. Empty means the per-user
+	// default (see DefaultDestinationsDir).
+	DestinationsDir string
+	// DestinationName is the display name the Gateway shows and publishes for
+	// this deployment. Empty derives one. It must not contain a path.
+	DestinationName string
 }
 
 const (
@@ -151,6 +158,8 @@ type initPlan struct {
 	requirePairing     bool
 	bundle             *Bundle
 	managedBy          *update.ManagedOwner
+	destinationsDir    string
+	destinationName    string
 	fingerprint        string
 }
 
@@ -215,6 +224,15 @@ func newPlan(opts InitOptions) (*initPlan, error) {
 	if err := gateway.ValidateDeploymentID(p.deploymentID); err != nil {
 		return nil, optionErrorf("deployment ID: %v", err)
 	}
+	if p.destinationsDir, err = ResolveDestinationsDir(opts.DestinationsDir); err != nil {
+		return nil, optionErrorf("%v", err)
+	}
+	if opts.DestinationName != "" {
+		if err := gateway.ValidateDestinationName(opts.DestinationName); err != nil {
+			return nil, optionErrorf("destination name: %v", err)
+		}
+		p.destinationName = opts.DestinationName
+	}
 	if opts.ManagedBy != nil {
 		m := *opts.ManagedBy
 		if m.ProjectID == "" || m.ProjectID != p.deploymentID {
@@ -258,7 +276,8 @@ func (p *initPlan) computeFingerprint() string {
 		BundleVersion                          string
 		ManagedBy                              *update.ManagedOwner
 		RequirePairing                         bool `json:",omitempty"`
-	}{p.root, p.origin, p.workspace, p.mode, p.project, p.runtimeImage, p.gatewayImage, p.sourceDir, p.deploymentID, "", p.managedBy, p.requirePairing}
+		DestinationsDir, DestinationName       string
+	}{p.root, p.origin, p.workspace, p.mode, p.project, p.runtimeImage, p.gatewayImage, p.sourceDir, p.deploymentID, "", p.managedBy, p.requirePairing, p.destinationsDir, p.destinationName}
 	if p.bundle != nil {
 		in.BundleVersion = p.bundle.Version
 	}
@@ -529,6 +548,7 @@ func (p *initPlan) build() (rec *pendingRecord, err error) {
 	}
 	cfg := gateway.Config{Listen: ":8080", Origin: p.origin, DeploymentID: p.deploymentID, DataDir: "/data", WebDir: "/app/web", Identities: identities, Runtimes: []gateway.RuntimeConfig{{WorkspaceID: p.workspace, URL: "https://runtime:8080", OperatorTokenFile: "/run/lensdock/operator-token", CAFile: "/run/lensdock/ca.crt", ClientCertFile: "/run/lensdock/gateway.crt", ClientKeyFile: "/run/lensdock/gateway.key"}}}
 	cfg.RequirePairing = p.requirePairing
+	cfg.DestinationName = p.destinationName
 	cfg.StatusFile = "/run/lensdock-status/deployment-status.json"
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -543,6 +563,7 @@ func (p *initPlan) build() (rec *pendingRecord, err error) {
 		cfg.DataDir = filepath.Join(p.root, "gateway-data")
 		cfg.WebDir = filepath.Join(p.sourceDir, "apps/web/dist")
 		cfg.StatusFile = filepath.Join(p.dir, "public", "deployment-status.json")
+		cfg.DestinationsDir = p.destinationsDir
 		cfg.Runtimes = []gateway.RuntimeConfig{{WorkspaceID: p.workspace, URL: "http://127.0.0.1:18080", OperatorTokenFile: filepath.Join(p.root, OperatorTokenFile)}}
 		if b, err = json.MarshalIndent(cfg, "", "  "); err != nil {
 			return nil, err
@@ -551,7 +572,7 @@ func (p *initPlan) build() (rec *pendingRecord, err error) {
 			return nil, err
 		}
 	}
-	env := fmt.Sprintf("LENSDOCK_WORKSPACE_ID=%s\nLENSDOCK_MODE=%s\nLENSDOCK_STATE_DIR=%s\nLENSDOCK_HOST_PORT=%s\nLENSDOCK_PUBLIC_ORIGIN=%s\n%s=%s\n%s=%s\n", p.workspace, p.mode, composeEnvValue(p.root), p.port, composeEnvValue(p.origin), EnvRuntimeImage, composeEnvValue(p.runtimeImage), EnvGatewayImage, composeEnvValue(p.gatewayImage))
+	env := fmt.Sprintf("LENSDOCK_WORKSPACE_ID=%s\nLENSDOCK_MODE=%s\nLENSDOCK_STATE_DIR=%s\nLENSDOCK_HOST_PORT=%s\nLENSDOCK_PUBLIC_ORIGIN=%s\n%s=%s\n%s=%s\n%s=%s\n", p.workspace, p.mode, composeEnvValue(p.root), p.port, composeEnvValue(p.origin), EnvRuntimeImage, composeEnvValue(p.runtimeImage), EnvGatewayImage, composeEnvValue(p.gatewayImage), EnvDestinationsDir, composeEnvValue(p.destinationsDir))
 	if err := writeNew(filepath.Join(sd, "compose.env"), []byte(env), 0o600); err != nil {
 		return nil, err
 	}

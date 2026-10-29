@@ -161,6 +161,8 @@ export function DesktopStage({ stageRef }: { stageRef: RefObject<HTMLDivElement 
             <hr />
             <ResolutionPicker />
             <p className="menu-form__note">{t('stage.resolutionNote')}</p>
+            <hr />
+            <p id="desktop-restore-hint" className="menu-form__note">{t('stage.restoreHint')}</p>
           </div>
         </Popover>
 
@@ -216,6 +218,7 @@ export function DesktopStage({ stageRef }: { stageRef: RefObject<HTMLDivElement 
           tabIndex={0}
           role="group"
           aria-label={t('stage.screen')}
+          aria-description={t('stage.restoreHint')}
           onPointerDownCapture={(e) => {
             if (e.isTrusted) interact('pointer');
           }}

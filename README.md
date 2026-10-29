@@ -86,6 +86,10 @@ The default manager directory is `~/.local/share/lensdock-manager`; set `LENSDOC
 
 `up` returns the verified API origin, workspace and Agent token-file location. Open that origin to enter without pairing. Sessions and local sign-out markers stay separate even when Gateways share a hostname. See [Agent integration](docs/AGENT-INTEGRATION.md#project-scoped-local-agents) for project-scoped MCP configurations.
 
+Use **Project / Workspace** in the toolbar to switch between local browsers. Switching releases your current control lease and opens the selected workspace; it does not stop either browser, reload its pages or interrupt background downloads. A failed lease release keeps you in the current workspace. Each destination uses its own session and credentials.
+
+Started deployments share non-secret discovery records in `~/.local/share/lensdock-destinations`. Set `LENSDOCK_DESTINATIONS_DIR` consistently before initialization to use another directory. Existing installations need the current CLI and Gateway, then one `admin product-start` to add the read-only discovery mount without replacing their copied Compose file or data. Use the normal update workflow for their images; never rerun `product-init` to upgrade.
+
 CPU, memory, helper process limits and aggregate budgets are off by default. Uncapped external containers do not block starts. Optional restrictions are configured with `admin manager policy`; `admin project limits --id ID ...` changes an existing stopped project's caps. Zero removes a cap, and omitted dimensions stay unchanged.
 
 To require manual registration or startup, opt into `--require-project-authorization` or `--require-explicit-start`. Manual setup remains available through `admin manager init` and `admin project authorize`. Existing configured policies and revoked grants are not silently reset.
@@ -108,6 +112,8 @@ Persistent profiles and feedback remain. `--discard-page-state` is required only
 4. Follow Sent, In progress and Done in the feedback panel. Expand details to distinguish queued from read, and Agent completion from your verification.
 
 Copy PNG and Download PNG save the flattened image without publishing it. Closing the UI does not close Chromium or clear its profile.
+
+If the browser window is minimized or missing, right-click the **empty remote desktop** and choose **Restore browser**. It brings back an existing window or opens one in the same Chromium instance and Profile. If the first click acquires control, wait for the control indicator and right-click again. Right-clicking inside a web page still opens Chromium's normal context menu.
 
 ### Choose a usage mode
 

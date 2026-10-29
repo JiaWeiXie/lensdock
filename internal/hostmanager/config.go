@@ -248,6 +248,11 @@ func validateConfig(cfg Config, bundleExists bool) error {
 	if cfg.RuntimeImage == "" || cfg.GatewayImage == "" || strings.ContainsAny(cfg.RuntimeImage+cfg.GatewayImage, " \t") {
 		return errors.New("Runtime and Gateway images are required and must not contain spaces")
 	}
+	if cfg.DestinationsDir != "" {
+		if err := product.CheckDestinationsDir(cfg.DestinationsDir); err != nil {
+			return err
+		}
+	}
 	switch cfg.PullPolicy {
 	case "always", "missing", "never":
 	default:
@@ -317,6 +322,12 @@ func Initialize(cfg Config) (Config, error) {
 	}
 	if cfg.PullPolicy == "" {
 		cfg.PullPolicy = "always"
+	}
+	if cfg.DestinationsDir == "" {
+		cfg.DestinationsDir = os.Getenv(product.EnvDestinationsDir)
+	}
+	if cfg.DestinationsDir, err = product.ResolveDestinationsDir(cfg.DestinationsDir); err != nil {
+		return Config{}, err
 	}
 	if cfg.PortFirst == 0 && cfg.PortLast == 0 {
 		cfg.PortFirst, cfg.PortLast = defaultPortFirst, defaultPortLast

@@ -301,6 +301,15 @@ func (s *server) relocate(pid, path string) (Response, error) {
 // revoke removes a project's capability and cancels its queued work. Running
 // containers and data stay; stop remains available to the human by ID.
 func (s *server) revoke(pid string) (Response, error) {
+	resp, err := s.revokeProject(pid)
+	if err == nil {
+		// Outside the registry lock: withdrawing probes other destinations.
+		withdrawDestination(context.Background(), projectStateDir(s.root, pid))
+	}
+	return resp, err
+}
+
+func (s *server) revokeProject(pid string) (Response, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.reg.Projects[pid] == nil {

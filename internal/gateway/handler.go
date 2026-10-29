@@ -177,6 +177,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.system(w, r, p)
 		return
 	}
+	if r.URL.Path == "/api/v1/browser-destinations" {
+		g.browserDestinations(w, r, p)
+		return
+	}
 	if r.URL.Path == "/api/v1/workspaces" && r.Method == "GET" {
 		jsonReply(w, 200, map[string]any{"workspaces": []map[string]any{g.workspaceSnapshot(r.Context(), p.WorkspaceID)}})
 		return

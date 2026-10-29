@@ -138,6 +138,28 @@ The first compose argument must be one of `up`, `down`, `stop`, `start`, `restar
 
 The Gateway keeps browser sessions in memory. After any Gateway restart (an update switch, a rollback, `restart gateway`, a host reboot) every browser session is gone. Default local access resumes automatically. If pairing is required, open the UI and pair again with the human or viewer token from the private product directory; never put the token in a URL. Control leases do not survive a Runtime restart either, so humans and Agents acquire new ones.
 
+### Adding local browser discovery
+
+The current CLI adds a `product/destinations.yaml` override on `admin product-start`.
+It mounts the host discovery directory read-only in the Gateway and records
+`LENSDOCK_DESTINATIONS_DIR` in `product/compose.env` when missing. The default is
+`~/.local/share/lensdock-destinations`; a configured manager persists its selected
+directory for every project. This enrollment leaves the installed release's copied
+Compose file, image pins, volume mappings and credentials unchanged.
+
+Upgrade the Gateway through the normal image update workflow, then start with the
+current CLI to enroll an existing standalone deployment. Do not rerun
+`product-init`. Managed projects enroll when started. Discovery metadata contains
+only names, workspace IDs, loopback origins and publication timestamps; it grants
+no access to another workspace and adds no Docker socket mount.
+
+A ready start publishes a record. Managed stop or revoke withdraws it. Temporary
+connection failures and Gateway server errors retain peer records so concurrent
+starts or updates do not make a project disappear. A reused origin that answers
+as another deployment is removed. An out-of-band stop may leave an unavailable
+entry until that deployment is started again or explicitly withdrawn.
+
+
 ### Stopping the host manager
 
 ```bash

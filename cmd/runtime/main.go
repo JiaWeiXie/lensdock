@@ -3,7 +3,8 @@
 //
 //	CGO_ENABLED=0 go build -o lensdock-runtime ./cmd/runtime
 //
-// Subcommands: supervise (container entrypoint), healthcheck, and the hidden
+// Subcommands: supervise (container entrypoint), healthcheck, restore-browser
+// (the desktop menu action, run as the browser user by openbox), and the hidden
 // helpers __signal, __preflight-userns, __files and __profile-lock that the
 // supervisor re-executes as the browser user.
 package main
@@ -63,7 +64,7 @@ func main() {
 
 func run(args []string, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: lensdock-runtime supervise [--mode NOVNC|AGENT] | healthcheck [--url URL]")
+		fmt.Fprintln(stderr, "usage: lensdock-runtime supervise [--mode NOVNC|AGENT] | healthcheck [--url URL] | restore-browser")
 		return 2
 	}
 	switch args[0] {
@@ -83,6 +84,12 @@ func run(args []string, stderr io.Writer) int {
 			return 2
 		}
 		return report(supervisor.RunHealthcheck(context.Background(), *url), stderr)
+	case "restore-browser":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "usage: lensdock-runtime restore-browser")
+			return 2
+		}
+		return report(restoreBrowser(context.Background(), chromiumDevToolsAddr, os.Stdout), stderr)
 	case "__signal":
 		return report(supervisor.RunSignalHelper(args[1:]), stderr)
 	case "__preflight-userns":

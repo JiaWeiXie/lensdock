@@ -224,14 +224,15 @@ func TestStartAppliesTheHelperPidCapToAnInstalledReleaseCopyWithoutEditingIt(t *
 		t.Fatal("the pinned release copy of the Compose file must stay byte for byte")
 	}
 	loaded, err := update.LoadDeployment(dep.File)
-	if err != nil || loaded.Compose.Files[len(loaded.Compose.Files)-1] != overlay || len(loaded.Compose.Files) != 3 {
+	// release copy, pin file, helper policy, then the destinations mount.
+	if err != nil || len(loaded.Compose.Files) != 4 || loaded.Compose.Files[2] != overlay || loaded.Compose.Files[3] != filepath.Join(dep.StateDir, DestinationsFile) {
 		t.Fatalf("the persisted deployment must list the helper policy after the release copy and pin file: %v %v", err, loaded)
 	}
 	assertHelperPidCapFollowsTheSetting(t, loaded)
 
 	// A repeated start keeps the overlay as it is, and a changed one is not trusted.
 	before := readFile(t, overlay)
-	if err := start(t, loaded, f, ""); err != nil || readFile(t, overlay) != before || len(loaded.Compose.Files) != 3 {
+	if err := start(t, loaded, f, ""); err != nil || readFile(t, overlay) != before || len(loaded.Compose.Files) != 4 {
 		t.Fatalf("a repeated start must keep the overlay: %v %v", err, loaded.Compose.Files)
 	}
 	writeFile(t, overlay, "services:\n  config-init:\n    pids_limit: 100000\n", 0o600)

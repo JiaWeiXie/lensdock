@@ -86,6 +86,10 @@ Manager 預設放在 `~/.local/share/lensdock-manager`；若改用其他位置�
 
 `up` 回傳已驗證的 API Origin、Workspace 與 Agent Token 檔案位置。開啟該 Origin 即可使用，不需配對。不同 Gateway 即使用相同主機名稱，Session 與本機登出狀態也互不影響。MCP 請按專案設定，詳見 [Agent 整合](docs/AGENT-INTEGRATION.md#project-scoped-local-agents)。
 
+用工具列的「專案 / Workspace」切換本機瀏覽器。切換會先釋放目前的控制租約，再開啟選定的工作站；不會停止任一瀏覽器、重新載入頁面或中斷背景下載。釋放租約失敗時會留在原工作站。每個工作站各自使用自己的 Session 與憑證。
+
+已啟動的部署會在 `~/.local/share/lensdock-destinations` 共用不含機密的探索資料。若要改用其他資料夾，請在初始化前一致設定 `LENSDOCK_DESTINATIONS_DIR`。既有部署需更新 CLI 與 Gateway，再執行一次 `admin product-start`，加入唯讀探索掛載；原有 Compose 副本與資料不會被替換。映像仍走正常更新流程，不要用 `product-init` 升級。
+
 CPU、記憶體、工具程序數及共用資源預算預設不設上限；外部容器沒有配額也不會擋住啟動。需要限制時，用 `admin manager policy` 設定。既有專案停止後，可用 `admin project limits --id ID ...` 調整；`0` 移除該上限，未指定的項目維持原值。
 
 若要人工核准專案或手動啟動，可開啟 `--require-project-authorization`、`--require-explicit-start`。原有的 `admin manager init`、`admin project authorize` 仍可使用。既有政策與已撤銷的授權不會被自動重設。
@@ -108,6 +112,8 @@ lensdock project stop --project "$HOME/code/site-a"
 4. 回饋面板顯示「已送出／處理中／已完成」。展開細節可區分排隊與已讀，以及 Agent 完成與你的驗證結果。
 
 「複製 PNG」與「下載 PNG」會輸出攤平的圖片，不會發布回饋。關閉 UI 不會關閉 Chromium 或清除 Profile。
+
+瀏覽器視窗最小化或不見時，在**遠端空白桌面**按右鍵，再選 **Restore browser**。它會叫回原有視窗，或在同一個 Chromium 與 Profile 中開啟視窗。若第一次點擊正在取得控制權，等控制狀態就緒後再按一次右鍵。網頁內的右鍵仍開啟 Chromium 原本的選單。
 
 ### 選擇使用模式
 

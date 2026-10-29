@@ -55,6 +55,62 @@ paths:
                     pattern: '^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,63})?$'
         '405':
           description: METHOD_NOT_ALLOWED. Only GET is supported.
+  /api/v1/browser-destinations:
+    get:
+      operationId: listBrowserDestinations
+      summary: List browsers available in the project and workspace switcher
+      description: >-
+        Human, admin and viewer identities can read the current workspace and
+        published local browser destinations. Agent identities cannot enumerate
+        other projects. Available in AGENT and NOVNC modes. Records contain only
+        display names, workspace IDs and Gateway origins, never credentials or
+        project filesystem paths. Switching navigates to the destination Gateway,
+        which authenticates its own browser session; this list grants no access
+        to another workspace. Clients release their current HUMAN lease before
+        navigating and do not stop either browser.
+      responses:
+        '200':
+          description: Current destination first, followed by published local browsers.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [destinations]
+                properties:
+                  destinations:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, name, workspaceId, origin, current]
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        workspaceId:
+                          type: string
+                        origin:
+                          type: string
+                          format: uri
+                          description: Gateway origin without path, query, fragment or credentials.
+                        current:
+                          type: boolean
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Agent identities cannot enumerate browser destinations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: METHOD_NOT_ALLOWED. Only GET is supported.
   /api/v1/workspaces/{workspaceId}:
     get:
       operationId: getWorkspace
