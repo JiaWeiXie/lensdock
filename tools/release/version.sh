@@ -22,8 +22,10 @@
 # minor version while the major version is 0.
 #
 # --check-tag requires that the tag
-#   - is a strict stable tag vX.Y.Z that points at the checked-out commit (HEAD),
-#   - points at a commit that is an ancestor of origin/main (override: RELEASE_MAIN_REF),
+#   - is a strict stable tag vX.Y.Z that points at the checked-out commit (HEAD); on a
+#     tag-triggered run the checkout is the tag, so this only guards manual runs,
+#   - points at a commit that is an ancestor of origin/main, not necessarily its tip
+#     (override: RELEASE_MAIN_REF),
 #   - is newer than the latest earlier release tag, which must be an ancestor of HEAD, and
 #   - is exactly the version computed from the commits since that tag.
 # Tags are immutable: to fix a bad release, push the next patch tag.

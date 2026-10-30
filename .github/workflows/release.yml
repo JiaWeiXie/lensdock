@@ -1,16 +1,20 @@
 name: Release
 
-# A release is cut by pushing a tag vX.Y.Z on a commit that is already on main;
+# A release is cut by creating a tag vX.Y.Z on a commit that is already on main;
 # merging to main releases nothing. The only technical control is the repository's
-# `v*` tag ruleset, which limits who can create, move or delete a release tag.
-# Approval of each tag is a process rule (the maintainers' release procedure);
-# GitHub has no human approval step for a private repository on this plan, and this
+# `v*` tag ruleset, whose bypass list is empty: a plain `git push` of a release tag
+# is refused for everyone, and this workflow's token cannot create tags either.
+# Approval of each tag is a process rule: after the release approver approves a
+# specific tag, a named step on the admin login opens the ruleset, creates that tag
+# only, closes the ruleset, reads it back and logs it (charter section 7). GitHub
+# has no human approval step for a private repository on this plan, and this
 # workflow uses no deployment environment. See docs/UPDATE-RUNBOOK.md, "Cutting a
-# release". Find the tag to push with `tools/release/version.sh`.
+# release". Find the version the tag must have with `tools/release/version.sh`.
 #
 # The run first verifies the tag (tools/release/version.sh --check-tag): strict
-# format, on main, newer than the previous release, and exactly the version computed
-# from the Conventional Commits since it (cliff.toml). It then runs CI, builds the
+# format, the tagged commit is an ancestor of main (not necessarily its tip), newer
+# than the previous release, and exactly the version computed from the Conventional
+# Commits since it (cliff.toml). It then runs CI, builds the
 # release assets and both container images natively on amd64 and arm64, scans and
 # smoke-tests them, and only then publishes. Nothing is visible to users until every
 # gate has passed:
