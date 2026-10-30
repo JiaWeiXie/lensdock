@@ -30,7 +30,13 @@ case $mode in
   changelog)
     cd "$(dirname "${BASH_SOURCE[0]}")/../.."
     command -v git-cliff >/dev/null 2>&1 || die "git-cliff is required"
-    out=$(git-cliff --config cliff.toml --unreleased --tag "v$version" --strip header) || die "git-cliff failed"
+    if git rev-parse --verify --quiet "refs/tags/v$version" >/dev/null; then
+      # The release tag already exists (a pushed tag starts the release): its commits are the latest release.
+      [[ $(git rev-parse "v$version^{commit}") == "$(git rev-parse HEAD)" ]] || die "tag v$version does not point at HEAD"
+      out=$(git-cliff --config cliff.toml --latest --strip header) || die "git-cliff failed"
+    else
+      out=$(git-cliff --config cliff.toml --unreleased --tag "v$version" --strip header) || die "git-cliff failed"
+    fi
     # Trim surrounding blank lines.
     out=${out#"${out%%[![:space:]]*}"}
     out=${out%"${out##*[![:space:]]}"}

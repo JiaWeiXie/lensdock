@@ -5,8 +5,9 @@
 # Environment: GH_TOKEN (contents: write) and GITHUB_REPOSITORY (OWNER/REPO).
 #
 # The release is first created as a draft and filled with every file of DIR, then published in
-# one step, so nobody ever sees a release with missing assets. Publishing creates the tag
-# v<version> at COMMIT (a lightweight tag made by the API, so it triggers no other workflow).
+# one step, so nobody ever sees a release with missing assets. The tag v<version> must
+# already exist and point at COMMIT (it was pushed to start the release workflow); this
+# script never creates or moves a tag.
 # Re-running after a partial failure is safe: a leftover draft is replaced, and a published
 # release is accepted only when its tag points at COMMIT and it carries the same asset names.
 set -euo pipefail
@@ -51,9 +52,11 @@ if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
   fi
 fi
 
+[[ $(tag_commit) == "$sha" ]] || die "tag $tag must exist and point at $sha, but points at '$(tag_commit)'"
+
 files=()
 for f in "$assets"/*; do files+=("$f"); done
-gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --target "$sha" \
+gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
   --title "LensDock $tag" --notes-file "$notes" "${files[@]}"
 [[ $(release_assets) == "$expected" ]] || die "draft $tag has different assets than $assets: $(release_assets)"
 gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest

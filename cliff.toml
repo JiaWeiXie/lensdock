@@ -1,7 +1,7 @@
 # git-cliff configuration for LensDock releases.
 #
-# Used by tools/release/version.sh (next version) and tools/release/notes.sh
-# (GitHub release notes) from .github/workflows/release.yml. No CHANGELOG file
+# Used by tools/release/version.sh (next version, tag verification) and
+# tools/release/notes.sh (GitHub release notes) from .github/workflows/release.yml. No CHANGELOG file
 # is generated or committed; the release notes are the changelog.
 #
 # Versioning policy (Conventional Commits on main):

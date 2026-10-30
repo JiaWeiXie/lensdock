@@ -133,6 +133,18 @@ A rollback restores the old images, the Profile from before the update, the keyr
 - Before a rollback, the CLI keeps both the checkpoint's old images and the currently running images under keep tags. If any is unavailable, nothing is stopped.
 - The retained usage policy is not rewound by a compatible rollback. A Runtime release from before usage modes cannot enforce it: do not assume that a saved `NOVNC` mode or a pause protects a workspace running such a Runtime.
 
+## Cutting a release
+
+Merging to `main` releases nothing. A release is made by pushing a tag `vX.Y.Z` on a commit that is already on `main`; the tag is the approval, so only people allowed to release push it.
+
+1. Make sure the commit to release is on `main` and its CI passed.
+2. Run `tools/release/version.sh` (needs git-cliff) on that commit. It prints the version the tag must have, computed from the Conventional Commits since the previous release (`feat` raises the minor version, other commits the patch version, a breaking change the minor version while the major version is 0).
+3. Push exactly that tag: `git tag vX.Y.Z <commit>` then `git push origin vX.Y.Z`.
+4. The Release workflow verifies the tag first (`tools/release/version.sh --check-tag`): strict `vX.Y.Z` format, the commit is on `main`, the version is newer than the previous release and equals the computed version. Any mismatch stops the run before anything is built or published. It then builds, scans, smoke-tests and publishes. There is no human approval step inside GitHub: the run starts as soon as the tag exists.
+5. If a run fails, fix the cause and re-run the workflow for the same tag. Never move, delete or reuse a published tag; if the commit itself must change, merge the fix and push the next patch tag.
+
+The control is a repository `v*` tag ruleset (owner only) that restricts creating, updating and deleting release tags; set it before the workflow is merged, or any tag push could release. Approval of each tag is a process rule, not a GitHub setting: a required-reviewer environment is not available on a private repository on this plan, so the workflow uses none. The ruleset has no bypass list; each tag is created only through the maintainers' release procedure after the release approver has approved that exact tag. Anyone whose account could create a `v*` tag or bypass the ruleset could release, so keep the bypass list empty.
+
 ## Version and security update policy
 
 Releases pin images by digest and never depend on `latest`. CI may propose Debian security and upstream candidates with package lists and reproducible sources. A major Chromium or Debian upgrade needs a full Profile compatibility and rollback test. An urgent patch still gets the sandbox (when enabled), persistence and handoff smoke checks, and still takes a backup.

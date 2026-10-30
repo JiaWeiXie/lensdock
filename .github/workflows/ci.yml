@@ -1,12 +1,15 @@
 name: CI
 
-# Runs on pull requests and is called by release.yml for every push to main, so a
-# release is only built from commits that passed exactly these checks. Tool versions
+# Runs on pull requests and on every push to main, and is called by release.yml for
+# every release tag, so a release is only built from commits that passed exactly
+# these checks. Tool versions
 # come from mise.toml and mise.lock (installed with --locked), the same pins that
 # `mise run check` uses on a workstation.
 
 on:
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
   workflow_call:
 
@@ -87,3 +90,18 @@ jobs:
             echo "::error::lensdock version printed '$got', want '$want'"
             exit 1
           fi
+
+  release-scripts:
+    name: Release scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: git-cliff@2.13.1
+      - name: Tag verification and release notes tests
+        run: tools/release/version_test.sh

@@ -1,27 +1,37 @@
 name: Release
 
-# Every push to main is checked by CI. When the commits since the last release
-# call for a new version (cliff.toml, Conventional Commits), the same run builds
-# the release assets and both container images natively on amd64 and arm64,
-# scans and smoke-tests them, and only then publishes. Nothing is visible to
-# users until every gate has passed:
+# A release is cut by pushing a tag vX.Y.Z on a commit that is already on main;
+# merging to main releases nothing. The only technical control is the repository's
+# `v*` tag ruleset, which limits who can create, move or delete a release tag.
+# Approval of each tag is a process rule (the maintainers' release procedure);
+# GitHub has no human approval step for a private repository on this plan, and this
+# workflow uses no deployment environment. See docs/UPDATE-RUNBOOK.md, "Cutting a
+# release". Find the tag to push with `tools/release/version.sh`.
+#
+# The run first verifies the tag (tools/release/version.sh --check-tag): strict
+# format, on main, newer than the previous release, and exactly the version computed
+# from the Conventional Commits since it (cliff.toml). It then runs CI, builds the
+# release assets and both container images natively on amd64 and arm64, scans and
+# smoke-tests them, and only then publishes. Nothing is visible to users until every
+# gate has passed:
 #
 #   ci + version -> bundles, images -> scan, smoke -> publish-images (version tags)
-#                                                  -> release (tag + GitHub release)
+#                                                  -> release (GitHub release on the tag)
 #                                                  -> latest (image tag `latest`)
 #
 # Images are first pushed untagged, by digest. Only the final jobs give them
-# names, and `latest` moves last. A failed run leaves no tag and no release; the
-# next push to main recomputes the same version and tries again. No personal
-# access token is used: the tag and the release are created through the API with
-# the workflow token, which does not trigger further workflows.
+# names, and `latest` moves last. A failed run leaves the tag but no published
+# release; fix the cause and re-run the workflow for the same tag. A tag is never
+# moved or reused: if the commit itself must change, push the next patch tag.
+# No personal access token is used by the workflow: the release is created through
+# the API with the workflow token, which does not trigger further workflows.
 #
 # Repository variables (optional): LENSDOCK_AMD64_RUNNER and LENSDOCK_ARM64_RUNNER
 # replace the default runner labels, for example with a larger-runner label.
 
 on:
   push:
-    branches: [main]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
 concurrency:
   group: release
@@ -55,9 +65,11 @@ jobs:
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: git-cliff@2.13.1
-      - name: Compute the next version
+      - name: Verify the tag and compute the version
         id: next
-        run: tools/release/version.sh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: tools/release/version.sh --check-tag "$RELEASE_TAG"
       - name: Summary
         env:
           REASON: ${{ steps.next.outputs.reason }}
