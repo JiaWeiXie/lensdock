@@ -517,6 +517,10 @@ func TestFileTokenSourceRequiresPrivateFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("ldt_x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// WriteFile applies the process umask; force the mode this test depends on.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := FileTokenSource(path)(); err == nil {
 		t.Fatal("group/world-readable token file accepted")
 	}
