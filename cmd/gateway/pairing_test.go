@@ -2,7 +2,7 @@ package main
 
 import "testing"
 
-func TestPairingEnvironmentOverridesConfiguration(t *testing.T) {
+func TestBooleanSettingEnvironmentOverridesConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		configured bool
 		env        string
@@ -16,7 +16,7 @@ func TestPairingEnvironmentOverridesConfiguration(t *testing.T) {
 		{false, "true", true, false},
 		{true, "invalid", false, true},
 	} {
-		got, err := pairingRequired(tc.configured, tc.env)
+		got, err := boolSetting("LENSDOCK_REQUIRE_PAIRING", tc.configured, tc.env)
 		if got != tc.want || (err != nil) != tc.wantErr {
 			t.Fatalf("configured=%v env=%q: got %v, %v", tc.configured, tc.env, got, err)
 		}

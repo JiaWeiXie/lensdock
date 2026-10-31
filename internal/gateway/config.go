@@ -52,7 +52,13 @@ type Config struct {
 	// FeedbackLimits are optional feedback restrictions; every zero value
 	// means no limit. Environment variables LENSDOCK_FEEDBACK_* override them.
 	FeedbackLimits feedback.Limits `json:"feedbackLimits,omitzero"`
-	// RequirePairing disables automatic access for same-origin local browsers.
+	// LocalAutoEntry opts a loopback, single-workspace Gateway into automatic
+	// human sessions for same-origin local browsers. It is off by default: the
+	// entry check trusts request headers, so any local process, including a local
+	// proxy, can obtain the session. Without it every session needs a pairing token.
+	LocalAutoEntry bool `json:"localAutoEntry,omitempty"`
+	// RequirePairing disables automatic local access even when LocalAutoEntry is
+	// set, so an explicit pairing requirement always wins.
 	RequirePairing bool          `json:"requirePairing,omitempty"`
 	SessionLimits  SessionLimits `json:"sessionLimits,omitzero"`
 	// DestinationName is the optional display name this deployment publishes

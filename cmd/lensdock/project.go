@@ -20,7 +20,7 @@ import (
 	"github.com/JiaWeiXie/lensdock/internal/update"
 )
 
-const projectUsageText = `  lensdock admin manager init [--bundle-dir DIR] [--docker-context NAME] [--require-pairing]
+const projectUsageText = `  lensdock admin manager init [--bundle-dir DIR] [--docker-context NAME] [--require-pairing] [--local-auto-entry]
   lensdock admin manager policy [--memory-mib N] [--cpus N]
       [--require-project-authorization] [--require-explicit-start] [--require-stop-confirmation]
   lensdock admin manager stop
@@ -111,7 +111,8 @@ func (c *cli) managerInit(ctx context.Context, args []string) error {
 	pull := fs.String("pull", pullDefault, "first-start pull policy: always, missing, never (default $"+product.EnvPull+" or always)")
 	first := fs.Int("port-first", 19081, "first stable managed loopback port")
 	last := fs.Int("port-last", 19999, "last stable managed loopback port")
-	requirePairing := fs.Bool("require-pairing", false, "require browser pairing for new managed projects")
+	requirePairing := fs.Bool("require-pairing", false, "require browser pairing for new managed projects (the default; wins over --local-auto-entry)")
+	localAutoEntry := fs.Bool("local-auto-entry", false, "let local browsers open a human session in new managed projects without a token; any local process can do the same")
 	policy := hostmanager.DefaultPolicy()
 	finish := policyFlags(fs, &policy)
 	if _, err := parse(fs, args, 0, 0); err != nil {
@@ -207,6 +208,7 @@ func (c *cli) managerInit(ctx context.Context, args []string) error {
 	}
 	cfg := hostmanager.Config{Version: 1, Root: root, Executable: exe, DockerBinary: binary, DockerContext: selected, DockerHost: host, DockerConfig: dockerConfig, BundleDir: bundle.Root, RuntimeImage: *runtimeImage, GatewayImage: *gatewayImage, PullPolicy: *pull, PortFirst: *first, PortLast: *last, Policy: policy}
 	cfg.RequirePairing = *requirePairing
+	cfg.LocalAutoEntry = *localAutoEntry
 	inventory, err := hostmanager.InspectEngine(ctx, cfg)
 	if err != nil {
 		return err

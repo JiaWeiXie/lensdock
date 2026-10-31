@@ -136,7 +136,7 @@ lensdock update compose --deployment "$LENSDOCK_DEPLOYMENT" -- down
 
 The first compose argument must be one of `up`, `down`, `stop`, `start`, `restart`, `ps`, `logs` or `config`. Global Compose flags are refused because the deployment owns the project, files and env files. `down -v`, `--volumes`, `--rmi`, `up --build` and `up --pull` are also refused, because a generation runs images already verified by digest (`--pull=never` is accepted). `mise run product:up` and `mise run product:down` use the same command; `product:up` also runs the setup-only `config-init` step that prepares the credential volumes, which belongs to the first start. Restart a running deployment with `update compose`, not by repeating the first-start task.
 
-The Gateway keeps browser sessions in memory. After any Gateway restart (an update switch, a rollback, `restart gateway`, a host reboot) every browser session is gone. Default local access resumes automatically. If pairing is required, open the UI and pair again with the human or viewer token from the private product directory; never put the token in a URL. Control leases do not survive a Runtime restart either, so humans and Agents acquire new ones.
+The Gateway keeps browser sessions in memory. After any Gateway restart (an update switch, a rollback, `restart gateway`, a host reboot) every browser session is gone. Only a Gateway with automatic local entry opted in resumes by itself. Otherwise open the UI and pair again with the human or viewer token from the private product directory; never put the token in a URL. Control leases do not survive a Runtime restart either, so humans and Agents acquire new ones.
 
 ### Adding local browser discovery
 

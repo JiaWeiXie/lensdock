@@ -44,7 +44,8 @@ func run(args []string) error {
 	}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	path := fs.String("config", "", "private Gateway configuration")
-	pairingFlag := fs.Bool("require-pairing", false, "require a pairing token for local browser access (also LENSDOCK_REQUIRE_PAIRING)")
+	pairingFlag := fs.Bool("require-pairing", false, "require a pairing token for every browser session, even with local auto-entry (also LENSDOCK_REQUIRE_PAIRING)")
+	autoEntryFlag := fs.Bool("local-auto-entry", false, "let same-origin local browsers open a human session without a token; any local process can do the same (also LENSDOCK_LOCAL_AUTO_ENTRY)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -55,13 +56,20 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	c.RequirePairing, err = pairingRequired(c.RequirePairing, os.Getenv("LENSDOCK_REQUIRE_PAIRING"))
+	c.RequirePairing, err = boolSetting("LENSDOCK_REQUIRE_PAIRING", c.RequirePairing, os.Getenv("LENSDOCK_REQUIRE_PAIRING"))
+	if err != nil {
+		return err
+	}
+	c.LocalAutoEntry, err = boolSetting("LENSDOCK_LOCAL_AUTO_ENTRY", c.LocalAutoEntry, os.Getenv("LENSDOCK_LOCAL_AUTO_ENTRY"))
 	if err != nil {
 		return err
 	}
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "require-pairing" {
+		switch f.Name {
+		case "require-pairing":
 			c.RequirePairing = *pairingFlag
+		case "local-auto-entry":
+			c.LocalAutoEntry = *autoEntryFlag
 		}
 	})
 	g, err := gateway.New(c, gateway.Integrations{})
@@ -135,16 +143,16 @@ func run(args []string) error {
 	}
 }
 
-// pairingRequired applies an explicit environment setting over the config file.
-func pairingRequired(configured bool, env string) (bool, error) {
+// boolSetting applies an explicit environment setting over the config file.
+func boolSetting(name string, configured bool, env string) (bool, error) {
 	if env == "" {
 		return configured, nil
 	}
-	required, err := strconv.ParseBool(env)
+	value, err := strconv.ParseBool(env)
 	if err != nil {
-		return false, errors.New("LENSDOCK_REQUIRE_PAIRING must be a boolean")
+		return false, errors.New(name + " must be a boolean")
 	}
-	return required, nil
+	return value, nil
 }
 func healthcheck() error {
 	origin := os.Getenv("LENSDOCK_HEALTH_ORIGIN")

@@ -76,9 +76,10 @@ UI never substitutes 0 or a guess (`resources`, `lease`, `browserVersion`,
 
 ## Feature map
 
-- **Login & session**: a local, single-workspace Gateway automatically creates a
-  same-origin `local-human` browser session. `LENSDOCK_REQUIRE_PAIRING=1` opts
-  into token entry. Both use HttpOnly cookies and CSRF on mutations, with no
+- **Login & session**: every session needs a pairing token. A local,
+  single-workspace Gateway that opts in with `LENSDOCK_LOCAL_AUTO_ENTRY=1`
+  creates a same-origin `local-human` browser session without one;
+  `LENSDOCK_REQUIRE_PAIRING=1` always requires the token. Both use HttpOnly cookies and CSRF on mutations, with no
   credential in URL/storage. Session expiry and count caps are optional
   `sessionLimits` settings, disabled by default. Logout requires explicit
   re-entry. Workspace scope and control leases always remain enforced.

@@ -54,7 +54,7 @@ Mise's default [24-hour release-age policy](https://mise.jdx.dev/security.html#m
 
 ### Open the workspace
 
-Open **http://127.0.0.1:18081/**. A local, single-workspace browser enters automatically; no token entry is needed. If you enable required pairing, use the private `human-token` or `admin-token` under `~/.local/share/lensdock/product`. Never paste credentials into an issue, chat, URL, or screenshot.
+Open **http://127.0.0.1:18081/** and pair with the contents of the private `human-token` (or `admin-token`) file under `~/.local/share/lensdock/product`; `product-start` prints the path. Every browser session needs a token. Gateway restarts clear sessions, so pair again after one. Never paste credentials into an issue, chat, URL, or screenshot. To enter a local, single-workspace Gateway without a token, opt in explicitly (see [Optional access and quota settings](#optional-access-and-quota-settings)).
 
 The default workspace is `default`. Configuration and credentials live under `~/.local/share/lensdock`; the browser profile, downloads, database, and feedback images live in Docker volumes. Separate `human-token`, `viewer-token`, and `agent-token` files limit each role's access. The web UI, remote Chromium, and desktop default to English. The web UI also offers Traditional Chinese in Settings and preserves your saved choice.
 
@@ -84,7 +84,7 @@ The first project-bound command initializes the host manager, registers the dire
 
 The default manager directory is `~/.local/share/lensdock-manager`; set `LENSDOCK_MANAGER_DIR` consistently for a custom location. Initialization copies the host executable and bundle into that private directory and fixes the local Docker engine. It does not install a boot service or manage your application servers or databases. Image selection and initial pull policy use the same `LENSDOCK_RUNTIME_IMAGE`, `LENSDOCK_GATEWAY_IMAGE` and `LENSDOCK_PULL` settings as standalone initialization.
 
-`up` returns the verified API origin, workspace and Agent token-file location. Open that origin to enter without pairing. Sessions and local sign-out markers stay separate even when Gateways share a hostname. See [Agent integration](docs/AGENT-INTEGRATION.md#project-scoped-local-agents) for project-scoped MCP configurations.
+`up` returns the verified API origin, workspace and Agent token-file location. Open that origin and pair with the project's private `human-token` under its state directory (`lensdock admin project list --json` shows `stateDir`; the file is `<stateDir>/product/human-token`). Sessions and local sign-out markers stay separate even when Gateways share a hostname. See [Agent integration](docs/AGENT-INTEGRATION.md#project-scoped-local-agents) for project-scoped MCP configurations.
 
 Use **Project / Workspace** in the toolbar to switch between local browsers. Switching releases your current control lease and opens the selected workspace; it does not stop either browser, reload its pages or interrupt background downloads. A failed lease release keeps you in the current workspace. Each destination uses its own session and credentials.
 
@@ -123,7 +123,7 @@ Change modes in Settings. Pause Agent immediately revokes its control while you 
 
 ### Optional access and quota settings
 
-Local browser access is the default for a loopback, single-workspace Gateway. Use `--require-pairing` at initialization, or set `LENSDOCK_REQUIRE_PAIRING=1` in `product/compose.env` and restart the Gateway, to require a token. Remote and multi-workspace Gateways still require authenticated identities.
+Every browser session requires a pairing token, and every Gateway whose origin is not loopback, or that serves more than one workspace, can only be used that way. Automatic local entry is an opt-in for a loopback, single-workspace Gateway: pass `--local-auto-entry` at initialization (`admin product-init`, or `admin manager init` for managed projects), or set `LENSDOCK_LOCAL_AUTO_ENTRY=1` in `product/compose.env` and restart the Gateway. It trusts request headers, so any process on the host that can reach the Gateway, including a local proxy, can then open a human session without a token. Browser protections such as Sec-Fetch headers, origin checks and Local Network Access prompts apply to web pages only and do not stop such a process. Use it only on a single-user machine with no such software. `--require-pairing` or `LENSDOCK_REQUIRE_PAIRING=1` always wins over the opt-in. Automatic entries are recorded in the audit trail as `session.local`. A Gateway that was configured without either option now requires pairing after it is updated to this version.
 
 Sessions have no default application expiry or count cap. Feedback images, drafts, file transfers and clipboard text have no default product quotas, and drafts do not expire. Positive limits are opt-in; zero disables them. The [runbook](docs/UPDATE-RUNBOOK.md#resource-policy) lists the configuration surfaces. Available RAM, disk space and browser format limits still apply.
 
@@ -219,7 +219,7 @@ lensdock update compose -- down
 lensdock update compose -- up -d --wait
 ```
 
-`down` keeps data. Do not remove managed volumes, rerun initialization over an existing deployment, or change image tags to roll back. Gateway restarts clear browser sessions; local access resumes automatically, while required-pairing deployments need a new pairing. The browser profile remains.
+`down` keeps data. Do not remove managed volumes, rerun initialization over an existing deployment, or change image tags to roll back. Gateway restarts clear browser sessions; pair again afterwards (a Gateway with automatic local entry opted in resumes by itself). The browser profile remains.
 
 Updates and rollback must pair the images with compatible profile and database checkpoints. Follow the [update runbook](docs/UPDATE-RUNBOOK.md). Installing a newer CLI does not upgrade a running workspace. GitHub Release assets and OCI build attestations are separate from the updater's signed release-manifest approval.
 

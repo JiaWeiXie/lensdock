@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -48,12 +49,22 @@ func New(c Config, d Integrations) (*Gateway, error) {
 	identities.limits = c.SessionLimits
 	origin, _ := url.Parse(c.Origin)
 	local := origin.Hostname() == "127.0.0.1" || origin.Hostname() == "localhost" || origin.Hostname() == "::1"
-	if !c.RequirePairing && local && len(c.Runtimes) == 1 {
+	if c.LocalAutoEntry && !(local && len(c.Runtimes) == 1) {
+		return nil, errors.New("gateway: local auto-entry requires a loopback origin and exactly one workspace; every other Gateway requires pairing")
+	}
+	switch {
+	case c.LocalAutoEntry && c.RequirePairing:
+		slog.Warn("local auto-entry is configured but pairing is required; pairing wins")
+	case c.LocalAutoEntry:
 		if err := identities.enableLocalAccess(c.Runtimes[0].WorkspaceID); err != nil {
 			return nil, err
 		}
+		slog.Warn("local auto-entry is enabled: any process on this host that can reach the Gateway can open a human session without a token")
+	default:
+		slog.Info("pairing is required for every browser session")
 	}
 	g := &Gateway{config: c, identities: identities, runtimes: map[string]*runtimeEdge{}, leases: leaseRegistry{byToken: map[string]ownedLease{}}, integrations: d}
+	identities.audit = func(r *http.Request, p Identity, action string) { g.record(r.Context(), p, action) }
 	for _, rc := range c.Runtimes {
 		if rc.WorkspaceID == "" || strings.ContainsAny(rc.WorkspaceID, "/\\.\x00") || g.runtimes[rc.WorkspaceID] != nil {
 			return nil, errors.New("gateway: invalid or duplicate workspace")
