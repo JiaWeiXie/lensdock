@@ -129,7 +129,7 @@ Session 預設沒有應用程式層級的期限或數量上限。回饋圖片、
 
 ### 共用主機或伺服器
 
-預設值適合一個人在自己的電腦上使用。在共用主機、伺服器或雲端 VM，請用伺服器設定檔初始化：`lensdock admin product-init --profile server`（受管理專案用 `lensdock admin manager init --profile server`）。它會開啟 Chromium renderer sandbox、要求配對，並為 Runtime 與 Gateway 設定記憶體、CPU 與程序數上限。上限（Runtime 4 GiB、2 CPU、2048 個程序；Gateway 1 GiB、1 CPU、512 個程序）只是起點，請在實際主機量測後編輯 `product/compose.env`。設定檔只在建立 `runtime.env` 時寫入 `LENSDOCK_CHROMIUM_SANDBOX=true`；既有的狀態目錄請自行加上這行，否則初始化會停止。Sandbox 需要主機允許非特權 user namespace，否則 Runtime 會維持未就緒，不會退回無 sandbox。設定檔不限制網路出口：Runtime 仍可連到網際網路、主機服務、區網與 `169.254.169.254`，請加上主機防火牆規則（見 `docker/browser/README.md`），不要把 Agent 不該碰的帳號放進 Agent 可租用的 Profile，並考慮 `LENSDOCK_CDP_DENY=cookies`（[Agent 整合](docs/AGENT-INTEGRATION.md)）。
+預設值適合一個人在自己的電腦上使用。在共用主機、伺服器或雲端 VM，請用伺服器設定檔初始化：`lensdock admin product-init --profile server`（受管理專案用 `lensdock admin manager init --profile server`）。它會開啟 Chromium renderer sandbox、要求配對，並為 Runtime 與 Gateway 設定記憶體、CPU 與程序數上限。上限（Runtime 4 GiB、2 CPU、2048 個程序；Gateway 1 GiB、1 CPU、512 個程序）只是起點，請在實際主機量測。獨立部署可編輯 `product/compose.env`；受管理專案以 manager policy 為準，初始化的資源旗標會覆寫設定檔預設值，明確指定 `0` 代表不限，未指定的項目則保留伺服器預設值。後續可用 `lensdock admin manager policy` 調整新專案的預設值，用 `lensdock admin project limits` 調整已停止的既有專案；修改 compose.env 無法覆寫受管理的 resources.yaml。設定檔只在建立 `runtime.env` 時寫入 `LENSDOCK_CHROMIUM_SANDBOX=true`；既有的狀態目錄請自行加上這行，否則初始化會停止。伺服器設定檔只接受空白／註解行及單行 `KEY=plain-value`，sandbox 設定必須以標準格式出現一次；export、冒號分隔、引號、多行值及變數插值一律拒絕，也不會改寫檔案，請先整理格式再重試。Sandbox 需要主機允許非特權 user namespace，否則 Runtime 會維持未就緒，不會退回無 sandbox。設定檔不限制網路出口：Runtime 仍可連到網際網路、主機服務、區網與 `169.254.169.254`，請加上主機防火牆規則（見 `docker/browser/README.md`），不要把 Agent 不該碰的帳號放進 Agent 可租用的 Profile，並考慮 `LENSDOCK_CDP_DENY=cookies`（[Agent 整合](docs/AGENT-INTEGRATION.md)）。
 
 ## 設置 Agent
 

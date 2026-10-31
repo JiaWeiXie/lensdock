@@ -58,10 +58,17 @@ fi
 	for _, tc := range []struct {
 		name, profile  string
 		local, pairing bool
+		flags          []string
+		limits         hostmanager.Limits
 	}{
-		{"default", "", false, false},
-		{"server-local", "server", true, false},
-		{"server-pairing", "server", true, true},
+		{name: "default"},
+		{name: "server-local", profile: "server", local: true, limits: hostmanager.ServerPolicy().ProjectLimits},
+		{name: "server-pairing", profile: "server", local: true, pairing: true, limits: hostmanager.ServerPolicy().ProjectLimits},
+		{name: "server-zero", profile: "server", flags: []string{"--runtime-memory-mib=0", "--runtime-cpus=0", "--gateway-memory-mib=0", "--gateway-cpus=0"}},
+		{name: "server-partial", profile: "server", flags: []string{"--runtime-memory-mib=2048", "--gateway-cpus=0"}, limits: hostmanager.Limits{
+			Runtime: hostmanager.Resources{MemoryBytes: 2 << 30, NanoCPUs: 2_000_000_000},
+			Gateway: hostmanager.Resources{MemoryBytes: 1 << 30},
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := filepath.Join(base, tc.name)
@@ -75,6 +82,7 @@ fi
 			if tc.pairing {
 				args = append(args, "--require-pairing")
 			}
+			args = append(args, tc.flags...)
 			r := runCLIWith(t, filepath.Join(bundle, "lensdock"), nil, map[string]string{"LENSDOCK_MANAGER_DIR": root}, args...)
 			if r.code != 0 {
 				t.Fatalf("manager init failed: %s", r.stderr)
@@ -85,6 +93,9 @@ fi
 			}
 			if cfg.Profile != tc.profile || cfg.LocalAutoEntry != tc.local || cfg.RequirePairing != tc.pairing {
 				t.Error("profile and pairing flags did not survive manager configuration reload")
+			}
+			if cfg.Policy.ProjectLimits != tc.limits {
+				t.Errorf("persisted project limits = %+v, want %+v", cfg.Policy.ProjectLimits, tc.limits)
 			}
 		})
 	}

@@ -56,16 +56,29 @@ func linesText(lines []string) string {
 // profile's lines. An existing file is never rewritten, so a profile that cannot
 // be applied to it is an error instead of a silent downgrade.
 func (s profileSettings) checkRuntimeEnv(existing string) error {
+	// Only accept a deliberately small dotenv subset for server deployments:
+	// blank/comment lines and single-line KEY=plain-value assignments. Compose
+	// also supports export, colon, interpolation and quoted multiline forms;
+	// rejecting them throughout the file avoids mistaking quoted text for a
+	// protected assignment or missing an alternate spelling of its key.
+	lines := strings.Split(existing, "\n")
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || !envNamePattern.MatchString(key) || !plainEnvPattern.MatchString(value) {
+			return optionErrorf("server profile requires runtime.env to use single-line KEY=plain-value assignments; export, colon, quotes and interpolation are unsupported")
+		}
+	}
 	for _, required := range s.runtimeEnv {
 		key, _, _ := strings.Cut(required, "=")
 		count := 0
-		for _, line := range strings.Split(existing, "\n") {
+		for _, line := range lines {
 			line = strings.TrimSpace(line)
-			// Refuse duplicate or alternate assignments rather than accepting a
-			// matching line that a later env-file assignment could override.
-			assignment := strings.TrimSpace(strings.TrimPrefix(line, "export "))
-			candidate, _, _ := strings.Cut(assignment, "=")
-			if strings.TrimSpace(candidate) != key {
+			candidate, _, _ := strings.Cut(line, "=")
+			if candidate != key {
 				continue
 			}
 			count++

@@ -81,6 +81,18 @@ func DefaultRoot() (string, error) {
 // Initialize stores exactly the policy it is given.
 func DefaultPolicy() Policy { return Policy{AllowUnboundedExternal: true} }
 
+// ServerPolicy supplies opt-in defaults for newly authorized managed projects.
+// The manager's resources.yaml overrides base Compose values, so the caps must
+// live in this authoritative policy as well as the deployment profile's env.
+func ServerPolicy() Policy {
+	p := DefaultPolicy()
+	p.ProjectLimits = Limits{
+		Runtime: Resources{MemoryBytes: 4 * gib, NanoCPUs: 2_000_000_000},
+		Gateway: Resources{MemoryBytes: gib, NanoCPUs: 1_000_000_000},
+	}
+	return p
+}
+
 // AdminTokenFile is the human credential file of the manager at root.
 func AdminTokenFile(root string) string { return filepath.Join(root, adminTokenName) }
 

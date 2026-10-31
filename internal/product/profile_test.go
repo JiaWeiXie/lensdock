@@ -13,6 +13,12 @@ func TestServerProfileRejectsAmbiguousSandboxAssignments(t *testing.T) {
 		"LENSDOCK_CHROMIUM_SANDBOX=true\nLENSDOCK_CHROMIUM_SANDBOX=true\n",
 		"LENSDOCK_CHROMIUM_SANDBOX=true\nexport LENSDOCK_CHROMIUM_SANDBOX=false\n",
 		"LENSDOCK_CHROMIUM_SANDBOX=true\nLENSDOCK_CHROMIUM_SANDBOX = false\n",
+		"LENSDOCK_CHROMIUM_SANDBOX=true\nexport\tLENSDOCK_CHROMIUM_SANDBOX=false\n",
+		"LENSDOCK_CHROMIUM_SANDBOX=true\nLENSDOCK_CHROMIUM_SANDBOX: false\n",
+		"LENSDOCK_CHROMIUM_SANDBOX=true\nLENSDOCK_CHROMIUM_SANDBOX=\"false\"\n",
+		"OTHER='multiline\nLENSDOCK_CHROMIUM_SANDBOX=true\n'\n",
+		"LENSDOCK_CHROMIUM_SANDBOX=true\nOTHER=\"multiline\nLENSDOCK_CHROMIUM_SANDBOX=false\n\"\n",
+		"LENSDOCK_CHROMIUM_SANDBOX=${OVERRIDE:-true}\n",
 	} {
 		if err := settings.checkRuntimeEnv(text); err == nil {
 			t.Error("ambiguous sandbox configuration accepted")

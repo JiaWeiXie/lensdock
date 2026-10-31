@@ -125,6 +125,25 @@ func (c *cli) managerInit(ctx context.Context, args []string) error {
 	if err := finish(); err != nil {
 		return err
 	}
+	if *profile == product.ProfileServer {
+		// Parsed resource flags, including explicit zero, take precedence over
+		// profile defaults. Never reapply defaults at project start/reload.
+		defaults := hostmanager.ServerPolicy().ProjectLimits
+		given := map[string]bool{}
+		fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+		if !given["runtime-memory-mib"] {
+			policy.ProjectLimits.Runtime.MemoryBytes = defaults.Runtime.MemoryBytes
+		}
+		if !given["runtime-cpus"] {
+			policy.ProjectLimits.Runtime.NanoCPUs = defaults.Runtime.NanoCPUs
+		}
+		if !given["gateway-memory-mib"] {
+			policy.ProjectLimits.Gateway.MemoryBytes = defaults.Gateway.MemoryBytes
+		}
+		if !given["gateway-cpus"] {
+			policy.ProjectLimits.Gateway.NanoCPUs = defaults.Gateway.NanoCPUs
+		}
+	}
 	if *runtimeImage == "" {
 		*runtimeImage = product.ReleaseRuntimeImage
 	}
