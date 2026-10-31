@@ -4,14 +4,79 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"regexp"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
 // MethodPolicy is the set of CDP methods a proxied client may not call.
 type MethodPolicy struct {
-	deny map[string]struct{}
+	deny    map[string]struct{}
+	domains map[string]struct{} // whole domains such as "Storage"
+}
+
+// denyPresets name groups of CDP methods an operator can add to the default
+// policy (LENSDOCK_CDP_DENY). An entry ending in ".*" denies a whole domain.
+//
+//   - cookies: reading or changing the browser's cookies, including HttpOnly
+//     ones that page scripts cannot see.
+//   - storage: site storage (Storage, IndexedDB, CacheStorage, DOMStorage).
+//   - browser-control: ending the browser, changing where downloads go, and the
+//     Extensions domain.
+//
+// A denied method does not make a lease safe for a profile with valuable
+// logins: the holder still drives the browser as the signed-in user.
+var denyPresets = map[string][]string{
+	"cookies": {
+		"Network.getAllCookies", "Network.getCookies", "Network.setCookie", "Network.setCookies",
+		"Network.deleteCookies", "Network.clearBrowserCookies",
+		"Storage.getCookies", "Storage.setCookies", "Storage.clearCookies",
+		"Page.getCookies", "Page.deleteCookie",
+	},
+	"storage":         {"Storage.*", "IndexedDB.*", "CacheStorage.*", "DOMStorage.*"},
+	"browser-control": {"Browser.close", "Browser.setDownloadBehavior", "Extensions.*"},
+}
+
+// DenyPresetNames lists the preset names in a stable order.
+func DenyPresetNames() []string { return []string{"browser-control", "cookies", "storage"} }
+
+var methodPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*\.([A-Za-z][A-Za-z0-9]*|\*)$`)
+
+// PolicyWithDeny returns the default policy plus the given entries. An entry is a
+// preset name, a method such as "Network.getAllCookies", or a domain wildcard such
+// as "Storage.*". The default denials cannot be removed. Entries are case-sensitive
+// like Chromium's method names. Unknown preset names or malformed syntax fail;
+// well-formed custom names are not validated against Chromium's method catalog.
+func PolicyWithDeny(entries []string) (MethodPolicy, error) {
+	p := DefaultPolicy()
+	p.domains = map[string]struct{}{}
+	add := func(entry string) {
+		if domain, ok := strings.CutSuffix(entry, ".*"); ok {
+			p.domains[domain] = struct{}{}
+			return
+		}
+		p.deny[entry] = struct{}{}
+	}
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if methods, ok := denyPresets[entry]; ok {
+			for _, m := range methods {
+				add(m)
+			}
+			continue
+		}
+		if !methodPattern.MatchString(entry) {
+			return MethodPolicy{}, fmt.Errorf("cdp: unknown deny entry %q: use a preset (%s), a method such as Network.getAllCookies, or a domain such as Storage.*", entry, strings.Join(DenyPresetNames(), ", "))
+		}
+		add(entry)
+	}
+	return p, nil
 }
 
 // DefaultPolicy denies only what would leave the lease fence or fault the
@@ -43,7 +108,14 @@ func DefaultPolicy() MethodPolicy {
 // Denied reports whether method is denied. Methods are matched exactly, as
 // Chromium does.
 func (p MethodPolicy) Denied(method string) bool {
-	_, ok := p.deny[method]
+	if _, ok := p.deny[method]; ok {
+		return true
+	}
+	domain, _, found := strings.Cut(method, ".")
+	if !found {
+		return false
+	}
+	_, ok := p.domains[domain]
 	return ok
 }
 

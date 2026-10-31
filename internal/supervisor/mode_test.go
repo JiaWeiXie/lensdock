@@ -49,3 +49,25 @@ func TestLoadConfigAgentModeAndPolicyDir(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfigCDPDenyIsValidatedAndOptional(t *testing.T) {
+	const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	load := func(v string) (Config, error) {
+		env := map[string]string{EnvOperatorTokenSHA256: digest}
+		if v != "" {
+			env[EnvCDPDeny] = v
+		}
+		return LoadConfig(envMap(env))
+	}
+	cfg, err := load("")
+	if err != nil || len(cfg.CDPDeny) != 0 {
+		t.Fatalf("default: %v %v", cfg.CDPDeny, err)
+	}
+	cfg, err = load("cookies, storage ,Page.printToPDF")
+	if err != nil || len(cfg.CDPDeny) != 3 {
+		t.Fatalf("valid list: %v %v", cfg.CDPDeny, err)
+	}
+	if _, err = load("cookies,nonsense"); err == nil || !strings.Contains(err.Error(), EnvCDPDeny) {
+		t.Fatalf("invalid list: %v", err)
+	}
+}
