@@ -48,7 +48,8 @@ var methodPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*\.([A-Za-z][A-Za-z0
 // PolicyWithDeny returns the default policy plus the given entries. An entry is a
 // preset name, a method such as "Network.getAllCookies", or a domain wildcard such
 // as "Storage.*". The default denials cannot be removed. Entries are case-sensitive
-// like Chromium's method names; an unknown or malformed entry is an error.
+// like Chromium's method names. Unknown preset names or malformed syntax fail;
+// well-formed custom names are not validated against Chromium's method catalog.
 func PolicyWithDeny(entries []string) (MethodPolicy, error) {
 	p := DefaultPolicy()
 	p.domains = map[string]struct{}{}
