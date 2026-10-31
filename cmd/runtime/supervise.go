@@ -103,9 +103,14 @@ func superviseCommand(modeFlag string) error {
 	}, log, cfg.ChromiumSandbox)
 
 	cdpPrefix := "/api/v1/workspaces/" + cfg.WorkspaceID + "/cdp"
+	cdpPolicy, err := cdp.PolicyWithDeny(cfg.CDPDeny)
+	if err != nil {
+		return err
+	}
 	proxy, err := cdp.NewProxy(cdp.ProxyConfig{
 		Upstream:     chromiumDevToolsURL,
 		Auth:         leases,
+		Policy:       cdpPolicy,
 		Logger:       log,
 		PublicPrefix: func(*http.Request) string { return cdpPrefix },
 	})

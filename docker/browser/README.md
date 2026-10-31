@@ -111,6 +111,8 @@ A SUID `chrome-sandbox` would need `SYS_ADMIN` and `SYS_CHROOT`, no `no-new-priv
 
 **Capabilities.** Compose sets `read_only: true` and `no-new-privileges`, then `cap_drop: ALL` and adds back only `CHOWN SETUID SETGID SETPCAP KILL`. Only root's tini keeps `KILL`, to forward the stop signal. After the supervisor drops privileges it has only `SETUID SETGID`. Neither product container is privileged or mounts the Docker socket. The Runtime publishes no port and mounts its credentials read-only.
 
+**CDP deny list.** The built-in denials of the CDP proxy (`Browser.crash`, `Browser.crashGpuProcess`, `Target.exposeDevToolsProtocol`, `Target.sendMessageToTarget`) are fixed. `LENSDOCK_CDP_DENY` in `runtime.env` adds presets (`cookies`, `storage`, `browser-control`), exact methods or `Domain.*` entries; see [Agent integration](../../docs/AGENT-INTEGRATION.md). An invalid entry is a startup error.
+
 **Chromium flags.** The argv is fixed. The Runtime does not use `--remote-allow-origins`: the CDP proxy rejects requests that carry an `Origin`, and its upstream connection sends none. It does not disable the GPU by default.
 
 ## Network egress

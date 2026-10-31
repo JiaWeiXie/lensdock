@@ -21,6 +21,7 @@ import (
 
 	"github.com/JiaWeiXie/lensdock/internal/apiwire"
 	"github.com/JiaWeiXie/lensdock/internal/auth"
+	"github.com/JiaWeiXie/lensdock/internal/cdp"
 	"github.com/JiaWeiXie/lensdock/internal/netx"
 )
 
@@ -80,6 +81,12 @@ const (
 	// Chromium starts with --no-sandbox and the Docker container is the only
 	// isolation boundary.
 	EnvChromiumSandbox = "LENSDOCK_CHROMIUM_SANDBOX"
+
+	// EnvCDPDeny adds CDP methods that an Agent lease may not call, on top of the
+	// built-in denials: a comma-separated list of presets (cookies, storage,
+	// browser-control), methods (Network.getAllCookies) or domains (Storage.*).
+	// Unset or empty keeps only the built-in denials.
+	EnvCDPDeny = "LENSDOCK_CDP_DENY"
 )
 
 // DefaultPolicyDir is the default EnvPolicyDir.
@@ -140,6 +147,8 @@ type Config struct {
 	PolicyDir string
 	// ChromiumSandbox enables Chromium's own sandbox (default false).
 	ChromiumSandbox bool
+	// CDPDeny lists the extra denied CDP methods, presets and domains (EnvCDPDeny).
+	CDPDeny []string
 }
 
 // LoadConfig reads and validates the runtime environment. Every problem is
@@ -208,6 +217,14 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 			errs = append(errs, fmt.Errorf("%s must be a boolean (true or false)", EnvChromiumSandbox))
 		} else {
 			cfg.ChromiumSandbox = enabled
+		}
+	}
+	if v := getenv(EnvCDPDeny); strings.TrimSpace(v) != "" {
+		entries := strings.Split(v, ",")
+		if _, err := cdp.PolicyWithDeny(entries); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", EnvCDPDeny, err))
+		} else {
+			cfg.CDPDeny = entries
 		}
 	}
 	loadUsageLimits(getenv, &cfg, &errs)
