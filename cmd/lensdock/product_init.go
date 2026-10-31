@@ -35,6 +35,7 @@ func (c *cli) productInit(args []string) error {
 	gatewayImage := fs.String("gateway-image", c.getenv(product.EnvGatewayImage), "Gateway image (default $"+product.EnvGatewayImage+", else "+product.ReleaseGatewayImage+" for a release)")
 	bundleDir := fs.String("bundle-dir", "", "release bundle to copy the Compose file and helpers from (default: the bundle of the running executable)")
 	requirePairing := fs.Bool("require-pairing", false, "require a pairing token for every browser session (the default; wins over --local-auto-entry)")
+	profile := fs.String("profile", "", "deployment profile: server for a shared host or server (Chromium sandbox, required pairing, memory/CPU/process limits); default is the single-user laptop defaults")
 	localAutoEntry := fs.Bool("local-auto-entry", false, "let local browsers open a human session without a token; any process on this host that can reach the Gateway can do the same")
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
@@ -70,7 +71,7 @@ func (c *cli) productInit(args []string) error {
 	dep, err := product.Initialize(product.InitOptions{
 		StateDir: *state, Origin: *origin, WorkspaceID: *ws, Mode: *mode, Project: *project,
 		RuntimeImage: *runtimeImage, GatewayImage: *gatewayImage, SourceDir: cwd, Bundle: bundle,
-		RequirePairing: *requirePairing, LocalAutoEntry: *localAutoEntry, DestinationsDir: destinationsDir,
+		RequirePairing: *requirePairing, LocalAutoEntry: *localAutoEntry, Profile: *profile, DestinationsDir: destinationsDir,
 	})
 	if err != nil {
 		return productError(err)

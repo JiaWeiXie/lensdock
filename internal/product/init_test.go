@@ -438,3 +438,82 @@ func TestInitializeRequiresPairingUnlessLocalAutoEntryIsRequested(t *testing.T) 
 		t.Fatalf("opt-in was not written to the Gateway configuration:\n%s", cfg)
 	}
 }
+
+func TestServerProfileEnablesSandboxPairingAndLimits(t *testing.T) {
+	opts := releaseOptions(t, "")
+	opts.Profile = ProfileServer
+	dep, err := Initialize(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeEnv := readFile(t, filepath.Join(dep.StateDir, "..", RuntimeEnvFile))
+	if !strings.Contains(runtimeEnv, "LENSDOCK_CHROMIUM_SANDBOX=true\n") || !strings.HasPrefix(runtimeEnv, "LENSDOCK_OPERATOR_TOKEN_SHA256=") {
+		t.Fatalf("runtime.env:\n%s", runtimeEnv)
+	}
+	composeEnv := readFile(t, filepath.Join(dep.StateDir, "compose.env"))
+	for _, want := range []string{
+		"LENSDOCK_REQUIRE_PAIRING=1\n", "LENSDOCK_RUNTIME_MEMORY_LIMIT=4g\n", "LENSDOCK_RUNTIME_CPUS=2\n", "LENSDOCK_RUNTIME_PIDS_LIMIT=2048\n",
+		"LENSDOCK_GATEWAY_MEMORY_LIMIT=1g\n", "LENSDOCK_GATEWAY_CPUS=1\n", "LENSDOCK_GATEWAY_PIDS_LIMIT=512\n",
+	} {
+		if !strings.Contains(composeEnv, want) {
+			t.Errorf("compose.env lacks %q:\n%s", want, composeEnv)
+		}
+	}
+	// The values must be readable by the same parser that Compose invocations use.
+	env := map[string]string{}
+	for _, kv := range ComposeEnv(dep) {
+		k, v, _ := strings.Cut(kv, "=")
+		env[k] = v
+	}
+	if env["LENSDOCK_RUNTIME_MEMORY_LIMIT"] != "4g" || env["LENSDOCK_REQUIRE_PAIRING"] != "1" {
+		t.Fatalf("parsed compose env: %v", env)
+	}
+}
+
+func TestDefaultProfileAddsNothing(t *testing.T) {
+	dep, err := Initialize(releaseOptions(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := readFile(t, filepath.Join(dep.StateDir, "..", RuntimeEnvFile)) + readFile(t, filepath.Join(dep.StateDir, "compose.env"))
+	for _, forbidden := range []string{"CHROMIUM_SANDBOX", "MEMORY_LIMIT", "CPUS", "PIDS_LIMIT", "REQUIRE_PAIRING"} {
+		if strings.Contains(all, forbidden) {
+			t.Errorf("the default profile wrote %s", forbidden)
+		}
+	}
+}
+
+func TestUnknownProfileIsRejectedBeforeAnyStateExists(t *testing.T) {
+	opts := releaseOptions(t, "")
+	opts.Profile = "cloud"
+	if _, err := Initialize(opts); err == nil || !strings.Contains(err.Error(), "profile") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(opts.StateDir); !os.IsNotExist(err) {
+		t.Fatalf("state was created for an invalid profile: %v", err)
+	}
+}
+
+// An existing runtime.env is never rewritten: a profile that needs lines it lacks
+// is an error, one that already has them is fine (an interrupted init can resume).
+func TestServerProfileNeverRewritesAnExistingRuntimeEnv(t *testing.T) {
+	opts := releaseOptions(t, "")
+	if err := os.MkdirAll(opts.StateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureOperatorCredentials(opts.StateDir); err != nil {
+		t.Fatal(err)
+	}
+	before := readFile(t, filepath.Join(opts.StateDir, RuntimeEnvFile))
+	opts.Profile = ProfileServer
+	if _, err := Initialize(opts); err == nil || !strings.Contains(err.Error(), "LENSDOCK_CHROMIUM_SANDBOX=true") {
+		t.Fatalf("err = %v", err)
+	}
+	if after := readFile(t, filepath.Join(opts.StateDir, RuntimeEnvFile)); after != before {
+		t.Fatal("an existing runtime.env was modified")
+	}
+	writeFile(t, filepath.Join(opts.StateDir, RuntimeEnvFile), before+"LENSDOCK_CHROMIUM_SANDBOX=true\n", 0o600)
+	if _, err := Initialize(opts); err != nil {
+		t.Fatalf("profile with a prepared runtime.env: %v", err)
+	}
+}

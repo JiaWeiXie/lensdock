@@ -127,6 +127,10 @@ Every browser session requires a pairing token, and every Gateway whose origin i
 
 Sessions have no default application expiry or count cap. Feedback images, drafts, file transfers and clipboard text have no default product quotas, and drafts do not expire. Positive limits are opt-in; zero disables them. The [runbook](docs/UPDATE-RUNBOOK.md#resource-policy) lists the configuration surfaces. Available RAM, disk space and browser format limits still apply.
 
+### Shared host or server
+
+The defaults suit one person on their own computer. On a shared machine, a server or a cloud VM, initialize with the server profile: `lensdock admin product-init --profile server` (`lensdock admin manager init --profile server` for managed projects). It turns on Chromium's renderer sandbox, requires pairing and sets memory, CPU and process limits for the Runtime and Gateway. The limits (Runtime 4 GiB, 2 CPUs, 2048 processes; Gateway 1 GiB, 1 CPU, 512 processes) are starting points: measure on the real host and edit `product/compose.env`. The profile writes `LENSDOCK_CHROMIUM_SANDBOX=true` to `runtime.env` only when it creates that file; for an existing state directory add the line yourself, otherwise initialization stops. The sandbox needs a host that allows unprivileged user namespaces, and the Runtime stays not ready instead of falling back. The profile does not restrict network egress: the Runtime can still reach the internet, host services, the local network and `169.254.169.254`. Add host firewall rules (see `docker/browser/README.md`), keep profiles that an Agent can lease free of accounts it must not reach, and consider `LENSDOCK_CDP_DENY=cookies` ([Agent integration](docs/AGENT-INTEGRATION.md)).
+
 ## Set up an Agent
 
 LensDock works with an existing coding Agent. It does not run an LLM or require an Agent Skill.

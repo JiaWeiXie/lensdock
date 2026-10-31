@@ -33,7 +33,8 @@ const (
 	usageText  = `usage:
   lensdock admin init --state-dir DIR
   lensdock admin product-init [--state-dir DIR] [--origin http://127.0.0.1:18081] [--mode NOVNC|AGENT] [--project NAME]
-      [--runtime-image REF] [--gateway-image REF] [--bundle-dir DIR]
+      [--runtime-image REF] [--gateway-image REF] [--bundle-dir DIR] [--profile server]
+      [--require-pairing | --local-auto-entry]
   lensdock admin product-start [--state-dir DIR | --deployment FILE] [--pull always|missing|never]
   lensdock version
   lensdock lease acquire [<ws> | --project PATH] --mode agent|human [--ttl 30] [--api URL] [--operator-token-file F] --output LEASEFILE

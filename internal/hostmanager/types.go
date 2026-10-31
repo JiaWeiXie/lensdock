@@ -67,6 +67,9 @@ type Config struct {
 	// LocalAutoEntry records the opt-in to automatic local browser entry for new
 	// managed projects.
 	LocalAutoEntry bool `json:"localAutoEntry,omitempty"`
+	// Profile records the deployment profile (product.ProfileServer or empty)
+	// applied to new managed projects.
+	Profile string `json:"profile,omitempty"`
 	// DestinationsDir is the host directory where managed projects publish
 	// their browser destinations. Initialization records $LENSDOCK_DESTINATIONS_DIR
 	// or the per-user default; an older configuration without one makes each
