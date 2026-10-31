@@ -54,7 +54,7 @@ mise 預設的 [24 小時發布等待期](https://mise.jdx.dev/security.html#min
 
 ### 開啟工作站
 
-開啟 **http://127.0.0.1:18081/** 即可使用。本機單一 Workspace 預設不需輸入 Token。若主動開啟配對要求，請使用 `~/.local/share/lensdock/product` 下的私有 `human-token` 或 `admin-token`，不要把憑證貼進 Issue、聊天、網址或截圖。
+開啟 **http://127.0.0.1:18081/**，貼上 `~/.local/share/lensdock/product` 下私有 `human-token`（或 `admin-token`）檔案的內容完成配對；`product-start` 會印出檔案路徑。每個瀏覽器 Session 都需要 Token，Gateway 重新啟動會清除 Session，需再配對一次。不要把憑證貼進 Issue、聊天、網址或截圖。若要在 Loopback 單一 Workspace 的 Gateway 免 Token 進入，必須明確選用（見「選用配對與配額」）。
 
 預設 Workspace 為 `default`。設定與憑證存放在 `~/.local/share/lensdock`；瀏覽器 Profile、下載、資料庫與回饋圖片保存在 Docker Volume。另有 `human-token`、`viewer-token` 與 `agent-token`，分別限制各角色的權限。Web UI、遠端 Chromium 與桌面都預設英文。Web UI 可在設定切換繁體中文，並保留已儲存的選擇。
 
@@ -84,7 +84,7 @@ lensdock mcp serve --project "$HOME/code/site-a"
 
 Manager 預設放在 `~/.local/share/lensdock-manager`；若改用其他位置，各程序都要設定一致的 `LENSDOCK_MANAGER_DIR`。初始化會複製主機執行檔與 Bundle，並固定本機 Docker Engine；不會安裝開機服務，也不管理專案的應用程式伺服器或資料庫。首次初始化可用 `LENSDOCK_RUNTIME_IMAGE`、`LENSDOCK_GATEWAY_IMAGE`、`LENSDOCK_PULL` 選擇映像與拉取政策。
 
-`up` 回傳已驗證的 API Origin、Workspace 與 Agent Token 檔案位置。開啟該 Origin 即可使用，不需配對。不同 Gateway 即使用相同主機名稱，Session 與本機登出狀態也互不影響。MCP 請按專案設定，詳見 [Agent 整合](docs/AGENT-INTEGRATION.md#project-scoped-local-agents)。
+`up` 回傳已驗證的 API Origin、Workspace 與 Agent Token 檔案位置。開啟該 Origin，並用該專案狀態目錄下的私有 `human-token` 配對（`lensdock admin project list --json` 會回傳 `stateDir`，檔案為 `<stateDir>/product/human-token`）。不同 Gateway 即使用相同主機名稱，Session 與本機登出狀態也互不影響。MCP 請按專案設定，詳見 [Agent 整合](docs/AGENT-INTEGRATION.md#project-scoped-local-agents)。
 
 用工具列的「專案 / Workspace」切換本機瀏覽器。切換會先釋放目前的控制租約，再開啟選定的工作站；不會停止任一瀏覽器、重新載入頁面或中斷背景下載。釋放租約失敗時會留在原工作站。每個工作站各自使用自己的 Session 與憑證。
 
@@ -123,7 +123,7 @@ lensdock project stop --project "$HOME/code/site-a"
 
 ### 選用配對與配額
 
-Loopback 上的單一 Workspace 預設直接進入。需要配對時，可在初始化加上 `--require-pairing`，或在 `product/compose.env` 設定 `LENSDOCK_REQUIRE_PAIRING=1` 後重新啟動 Gateway。遠端與多 Workspace 的 Gateway 仍需驗證身分。
+所有瀏覽器 Session 預設都需要配對 Token；Origin 不是 Loopback 或服務多個 Workspace 的 Gateway 只能以此方式使用。免 Token 的本機自動進入需明確選用，僅限 Loopback 單一 Workspace 的 Gateway：初始化時加上 `--local-auto-entry`（`admin product-init`，受管理專案用 `admin manager init`），或在 `product/compose.env` 設定 `LENSDOCK_LOCAL_AUTO_ENTRY=1` 後重新啟動 Gateway。它信任請求標頭，因此主機上任何連得到 Gateway 的程序（包括本機 Proxy）都能不用 Token 開啟 human Session。Sec-Fetch 標頭、Origin 檢查與瀏覽器的 Local Network Access 提示只約束網頁，擋不住這類程序。只適合沒有這類軟體的單人電腦。`--require-pairing` 或 `LENSDOCK_REQUIRE_PAIRING=1` 永遠優先。自動進入會以 `session.local` 記錄在稽核紀錄。尚未設定任何一個選項的既有 Gateway，更新到此版本後即需配對。
 
 Session 預設沒有應用程式層級的期限或數量上限。回饋圖片、草稿、檔案傳輸與剪貼簿不設產品配額，草稿也不會到期。需要限制時才填入正值，`0` 表示停用。設定位置見 [Runbook](docs/UPDATE-RUNBOOK.md#resource-policy)。實際可用的記憶體、磁碟空間及瀏覽器格式限制仍適用。
 
@@ -219,7 +219,7 @@ lensdock update compose -- down
 lensdock update compose -- up -d --wait
 ```
 
-`down` 保留資料。不要刪除受管理的 Volume、對既有部署重跑初始化，或只改映像 Tag 回退。Gateway 重新啟動會清除 Session；本機使用會自動恢復，開啟配對要求的部署則需重新配對。瀏覽器 Profile 仍會保留。
+`down` 保留資料。不要刪除受管理的 Volume、對既有部署重跑初始化，或只改映像 Tag 回退。Gateway 重新啟動會清除 Session，需重新配對（已選用本機自動進入的 Gateway 會自行恢復）。瀏覽器 Profile 仍會保留。
 
 更新與回退必須讓映像搭配相容的 Profile 與資料庫 Checkpoint，操作方式見 [更新 Runbook](docs/UPDATE-RUNBOOK.md)。安裝新版 CLI 不會升級執行中的工作站。GitHub Release 資產與 OCI 建置證明，和更新器要求的已簽署 Release Manifest 是分開的機制。
 

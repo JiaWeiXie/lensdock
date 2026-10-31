@@ -416,3 +416,25 @@ func TestFailedInitializationLeavesNoStagingAndRetriesWithTheSameOperatorToken(t
 		t.Fatal("the retry replaced the operator token")
 	}
 }
+
+// Pairing is the default: the Gateway configuration carries neither option, and the
+// Gateway then requires a token. Automatic local entry is an explicit opt-in.
+func TestInitializeRequiresPairingUnlessLocalAutoEntryIsRequested(t *testing.T) {
+	dep, err := Initialize(releaseOptions(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := readFile(t, filepath.Join(dep.StateDir, "gateway.json"))
+	if strings.Contains(cfg, "localAutoEntry") || strings.Contains(cfg, "requirePairing") {
+		t.Fatalf("default Gateway configuration sets a pairing option:\n%s", cfg)
+	}
+	opts := releaseOptions(t, "")
+	opts.LocalAutoEntry = true
+	dep, err = Initialize(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg := readFile(t, filepath.Join(dep.StateDir, "gateway.json")); !strings.Contains(cfg, `"localAutoEntry": true`) {
+		t.Fatalf("opt-in was not written to the Gateway configuration:\n%s", cfg)
+	}
+}

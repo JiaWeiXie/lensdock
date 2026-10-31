@@ -60,9 +60,13 @@ type Config struct {
 	PortFirst     int    `json:"portFirst"`
 	PortLast      int    `json:"portLast"`
 	Policy        Policy `json:"policy"`
-	// RequirePairing records the opt-in pairing requirement chosen at
-	// initialization; the access-policy code interprets it.
+	// RequirePairing records the pairing requirement chosen at initialization;
+	// the access-policy code interprets it. Pairing is required unless
+	// LocalAutoEntry opts new managed projects out.
 	RequirePairing bool `json:"requirePairing"`
+	// LocalAutoEntry records the opt-in to automatic local browser entry for new
+	// managed projects.
+	LocalAutoEntry bool `json:"localAutoEntry,omitempty"`
 	// DestinationsDir is the host directory where managed projects publish
 	// their browser destinations. Initialization records $LENSDOCK_DESTINATIONS_DIR
 	// or the per-user default; an older configuration without one makes each

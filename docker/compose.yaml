@@ -79,7 +79,10 @@ services:
     pids_limit: ${LENSDOCK_GATEWAY_PIDS_LIMIT:-0}
     environment:
       LENSDOCK_HEALTH_ORIGIN: ${LENSDOCK_PUBLIC_ORIGIN:-http://127.0.0.1:18081}
-      # Local browsers enter automatically unless pairing is explicitly required.
+      # Every browser session needs a pairing token. Set LENSDOCK_LOCAL_AUTO_ENTRY=1
+      # to let same-origin local browsers enter without one (any local process can
+      # then also open a human session); LENSDOCK_REQUIRE_PAIRING=1 overrides it.
+      LENSDOCK_LOCAL_AUTO_ENTRY: ${LENSDOCK_LOCAL_AUTO_ENTRY:-}
       LENSDOCK_REQUIRE_PAIRING: ${LENSDOCK_REQUIRE_PAIRING:-}
       LENSDOCK_FEEDBACK_MAX_IMAGE_BYTES: ${LENSDOCK_FEEDBACK_MAX_IMAGE_BYTES:-}
       LENSDOCK_FEEDBACK_MAX_PIXELS: ${LENSDOCK_FEEDBACK_MAX_PIXELS:-}

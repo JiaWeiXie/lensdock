@@ -6,10 +6,11 @@ info:
     Core flow contract of the LensDock Gateway. The Gateway serves every
     operation in this file from one origin. The web UI authenticates with the
     sessionCookie scheme (pairing, login and logout at /api/v1/session are not
-    described here; see README.md#optional-access-and-quota-settings). By default,
-    a same-origin browser fetch of GET /api/v1/session starts a workspace-scoped
-    human session on a loopback, single-workspace Gateway; requirePairing disables
-    this automatic entry. The CLI, MCP server and Agents authenticate with
+    described here; see README.md#optional-access-and-quota-settings). Every
+    session needs a pairing token unless the Gateway opts in to automatic local
+    entry (localAutoEntry, loopback origin and one workspace only): then a
+    same-origin browser fetch of GET /api/v1/session starts a workspace-scoped
+    human session; requirePairing disables this automatic entry. The CLI, MCP server and Agents authenticate with
     bearerAuth. The Browser Runtime implements getWorkspace, acquireLease,
     renewLease and releaseLease itself and accepts bearer tokens only; in the
     full product only the Gateway reaches it, over mutual TLS. The Gateway

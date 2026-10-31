@@ -34,7 +34,8 @@ func (c *cli) productInit(args []string) error {
 	runtimeImage := fs.String("runtime-image", c.getenv(product.EnvRuntimeImage), "Runtime image (default $"+product.EnvRuntimeImage+", else "+product.ReleaseRuntimeImage+" for a release)")
 	gatewayImage := fs.String("gateway-image", c.getenv(product.EnvGatewayImage), "Gateway image (default $"+product.EnvGatewayImage+", else "+product.ReleaseGatewayImage+" for a release)")
 	bundleDir := fs.String("bundle-dir", "", "release bundle to copy the Compose file and helpers from (default: the bundle of the running executable)")
-	requirePairing := fs.Bool("require-pairing", false, "require a pairing token instead of automatic local browser access")
+	requirePairing := fs.Bool("require-pairing", false, "require a pairing token for every browser session (the default; wins over --local-auto-entry)")
+	localAutoEntry := fs.Bool("local-auto-entry", false, "let local browsers open a human session without a token; any process on this host that can reach the Gateway can do the same")
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
 	}
@@ -69,7 +70,7 @@ func (c *cli) productInit(args []string) error {
 	dep, err := product.Initialize(product.InitOptions{
 		StateDir: *state, Origin: *origin, WorkspaceID: *ws, Mode: *mode, Project: *project,
 		RuntimeImage: *runtimeImage, GatewayImage: *gatewayImage, SourceDir: cwd, Bundle: bundle,
-		RequirePairing: *requirePairing, DestinationsDir: destinationsDir,
+		RequirePairing: *requirePairing, LocalAutoEntry: *localAutoEntry, DestinationsDir: destinationsDir,
 	})
 	if err != nil {
 		return productError(err)

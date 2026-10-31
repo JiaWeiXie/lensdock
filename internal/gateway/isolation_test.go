@@ -44,7 +44,7 @@ func startIsolatedGateway(t *testing.T, deploymentID, workspace string, localAcc
 		Origin:         origin,
 		DeploymentID:   deploymentID,
 		WebDir:         dir,
-		RequirePairing: !localAccess,
+		LocalAutoEntry: localAccess,
 		Identities:     []Identity{{ID: "human-" + workspace, Role: "human", WorkspaceID: workspace, TokenSHA256: digest("pair-" + workspace)}},
 		Runtimes:       []RuntimeConfig{{WorkspaceID: workspace, URL: upstream.URL, OperatorTokenFile: tokenFile}},
 	}, Integrations{})

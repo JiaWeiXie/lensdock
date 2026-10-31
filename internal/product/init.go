@@ -115,7 +115,10 @@ type InitOptions struct {
 	// DeploymentID is the non-secret identity the Gateway exposes and mixes
 	// into its cookie names. Empty means a standalone deployment.
 	DeploymentID string
-	// RequirePairing disables automatic same-origin local browser entry.
+	// LocalAutoEntry opts into automatic same-origin local browser entry. Off by
+	// default: every browser session then needs a pairing token.
+	LocalAutoEntry bool
+	// RequirePairing requires pairing even when LocalAutoEntry is set.
 	RequirePairing bool
 	// Bundle is the release bundle copied into the private state directory. A
 	// release deployment never reads the bundle again, so removing or
@@ -156,6 +159,7 @@ type initPlan struct {
 	sourceDir          string
 	deploymentID       string
 	requirePairing     bool
+	localAutoEntry     bool
 	bundle             *Bundle
 	managedBy          *update.ManagedOwner
 	destinationsDir    string
@@ -177,7 +181,7 @@ func newPlan(opts InitOptions) (*initPlan, error) {
 	p := &initPlan{
 		workspace: opts.WorkspaceID, project: opts.Project,
 		runtimeImage: opts.RuntimeImage, gatewayImage: opts.GatewayImage,
-		deploymentID: opts.DeploymentID, requirePairing: opts.RequirePairing,
+		deploymentID: opts.DeploymentID, requirePairing: opts.RequirePairing, localAutoEntry: opts.LocalAutoEntry,
 	}
 	if opts.StateDir == "" {
 		return nil, optionErrorf("state directory is required")
@@ -276,8 +280,9 @@ func (p *initPlan) computeFingerprint() string {
 		BundleVersion                          string
 		ManagedBy                              *update.ManagedOwner
 		RequirePairing                         bool `json:",omitempty"`
+		LocalAutoEntry                         bool `json:",omitempty"`
 		DestinationsDir, DestinationName       string
-	}{p.root, p.origin, p.workspace, p.mode, p.project, p.runtimeImage, p.gatewayImage, p.sourceDir, p.deploymentID, "", p.managedBy, p.requirePairing, p.destinationsDir, p.destinationName}
+	}{p.root, p.origin, p.workspace, p.mode, p.project, p.runtimeImage, p.gatewayImage, p.sourceDir, p.deploymentID, "", p.managedBy, p.requirePairing, p.localAutoEntry, p.destinationsDir, p.destinationName}
 	if p.bundle != nil {
 		in.BundleVersion = p.bundle.Version
 	}
@@ -548,6 +553,7 @@ func (p *initPlan) build() (rec *pendingRecord, err error) {
 	}
 	cfg := gateway.Config{Listen: ":8080", Origin: p.origin, DeploymentID: p.deploymentID, DataDir: "/data", WebDir: "/app/web", Identities: identities, Runtimes: []gateway.RuntimeConfig{{WorkspaceID: p.workspace, URL: "https://runtime:8080", OperatorTokenFile: "/run/lensdock/operator-token", CAFile: "/run/lensdock/ca.crt", ClientCertFile: "/run/lensdock/gateway.crt", ClientKeyFile: "/run/lensdock/gateway.key"}}}
 	cfg.RequirePairing = p.requirePairing
+	cfg.LocalAutoEntry = p.localAutoEntry
 	cfg.DestinationName = p.destinationName
 	cfg.StatusFile = "/run/lensdock-status/deployment-status.json"
 	b, err := json.MarshalIndent(cfg, "", "  ")

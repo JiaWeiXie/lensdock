@@ -52,6 +52,8 @@ type identities struct {
 	localOffCookie string
 	localAccess    *Identity
 	limits         SessionLimits
+	// audit records security-relevant session events; nil in unit tests.
+	audit func(*http.Request, Identity, string)
 }
 
 func randomToken() (string, error) {
@@ -179,8 +181,12 @@ func (a *identities) enableLocalAccess(workspaceID string) error {
 }
 
 // localFetch accepts only a same-origin browser fetch()/XHR to the configured
-// Host. Browsers cannot forge Sec-Fetch-*; cross-site pages, subresource loads,
-// navigations and non-browser clients all fail it.
+// Host. Browsers cannot forge Sec-Fetch-*, so cross-site pages, subresource loads
+// and navigations fail it. It does not authenticate the caller: any non-browser
+// client, such as a local program or a client of a local proxy, can send these
+// headers. Browser protections (Sec-Fetch-*, Origin checks, Local Network Access
+// prompts) bind web pages only and are no defence against such clients. This is
+// why local entry is an explicit opt-in (Config.LocalAutoEntry).
 func (a *identities) localFetch(r *http.Request) bool {
 	h := r.Header
 	if r.Host != a.host || h.Get("Sec-Fetch-Site") != "same-origin" || h.Get("Sec-Fetch-Mode") != "cors" || h.Get("Sec-Fetch-Dest") != "empty" {
@@ -247,7 +253,7 @@ func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 				fail(w, 403, "FORBIDDEN", "origin rejected")
 				return
 			}
-			a.issue(w, *a.localAccess, true)
+			a.issue(w, r, *a.localAccess, true)
 			return
 		}
 		actor, ok := a.bearer(in.Token)
@@ -255,7 +261,7 @@ func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 			fail(w, 401, "UNAUTHENTICATED", "human or viewer pairing token required")
 			return
 		}
-		a.issue(w, actor, false)
+		a.issue(w, r, actor, false)
 	case "GET":
 		s, ok := a.lookup(r)
 		if ok && a.sameOrigin(r) {
@@ -272,7 +278,7 @@ func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 				fail(w, 401, "LOCAL_SIGNED_OUT", "local sign-in is available")
 				return
 			}
-			a.issue(w, *a.localAccess, true)
+			a.issue(w, r, *a.localAccess, true)
 			return
 		}
 		fail(w, 401, "UNAUTHENTICATED", "session required")
@@ -298,7 +304,7 @@ func (a *identities) serveSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // issue creates a browser session, applying only explicitly configured limits.
-func (a *identities) issue(w http.ResponseWriter, actor Identity, localAccess bool) {
+func (a *identities) issue(w http.ResponseWriter, r *http.Request, actor Identity, localAccess bool) {
 	token, err := randomToken()
 	if err != nil {
 		fail(w, 500, "INTERNAL", "session creation failed")
@@ -329,6 +335,9 @@ func (a *identities) issue(w http.ResponseWriter, actor Identity, localAccess bo
 	}
 	a.sessions[digest(token)] = s
 	a.mu.Unlock()
+	if localAccess && a.audit != nil {
+		a.audit(r, actor, "session.local")
+	}
 	cookie := &http.Cookie{Name: a.sessionCookie, Value: token, Path: "/", HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode}
 	if a.limits.TTLSeconds > 0 {
 		cookie.MaxAge = int(a.limits.TTLSeconds)

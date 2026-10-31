@@ -69,9 +69,9 @@ Standalone Compose accepts `LENSDOCK_RUNTIME_MEMORY_LIMIT`, `LENSDOCK_RUNTIME_CP
 
 ### Optional access and content limits
 
-The loopback, single-workspace Gateway lets a browser enter automatically. Initialization's `--require-pairing`, Gateway JSON `requirePairing`, or `LENSDOCK_REQUIRE_PAIRING=1` opts into token pairing. An explicitly supplied Gateway flag wins over the environment, which wins over JSON; an empty environment value preserves JSON. Remote and multi-workspace access still needs authentication. Logout stays logged out until explicit re-entry.
+Every browser session needs a pairing token. Any Gateway whose origin is not loopback, or that serves more than one workspace, requires pairing and refuses to start with automatic local entry configured. Automatic local entry for a loopback, single-workspace Gateway is an explicit opt-in: initialization's `--local-auto-entry`, Gateway JSON `localAutoEntry`, or `LENSDOCK_LOCAL_AUTO_ENTRY=1`. It trusts request headers, so any process on the host that can reach the Gateway (another user, a local proxy) can obtain a human session; browser protections (Sec-Fetch headers, origin checks, Local Network Access prompts) bind web pages only and do not stop such a process; the Gateway logs a warning at startup and records each entry as the audit action `session.local`. Initialization's `--require-pairing`, Gateway JSON `requirePairing`, or `LENSDOCK_REQUIRE_PAIRING=1` always wins over the opt-in. For each setting an explicitly supplied Gateway flag wins over the environment, which wins over JSON; an empty environment value preserves JSON. With the opt-in, logout stays logged out until explicit re-entry. A Gateway whose configuration sets neither option requires pairing from this version on, so an update changes the behavior of existing deployments; opt back in with `LENSDOCK_LOCAL_AUTO_ENTRY=1` in `product/compose.env`.
 
-Gateway JSON `sessionLimits` accepts `ttlSeconds` and `maxSessions`; both default to zero. A positive count cap refuses new sessions instead of evicting another browser. Sessions remain process-local and disappear on restart; local access resumes automatically.
+Gateway JSON `sessionLimits` accepts `ttlSeconds` and `maxSessions`; both default to zero. A positive count cap refuses new sessions instead of evicting another browser. Sessions remain process-local and disappear on restart; pair again, or enter again where automatic local entry is opted in.
 
 Feedback defaults have no quota or draft expiry. Use the Gateway's `feedbackLimits` object or these `product/compose.env` variables; positive integers enforce limits, zero disables them, and empty values preserve JSON:
 
@@ -120,7 +120,7 @@ Reauthorizing a revoked directory must pass the same overlap check as a new gran
 | 08 | Run the Gateway migration on the cloned database in a container with no network, then start the candidate Runtime and run sandbox (when enabled), font, CDP and UTF-8/PNG fixture smoke checks | Do not switch. Keep the results |
 | 09 | Keep the candidate off the network. Test only local fixtures | Tests with real accounts need explicit human authorization to avoid duplicate requests |
 | 10 | After approval, switch to the new images and candidate volumes as a new generation | Keep the old checkpoint for a paired rollback |
-| 11 | Re-check health. Control leases are gone: the UI acquires control again on the next deliberate desktop gesture and an Agent obtains a new lease. Browser sessions are gone after a Gateway restart; local entry resumes automatically, while required-pairing deployments need pairing again | Never resume the last destructive action automatically |
+| 11 | Re-check health. Control leases are gone: the UI acquires control again on the next deliberate desktop gesture and an Agent obtains a new lease. Browser sessions are gone after a Gateway restart; pair again (a Gateway with automatic local entry opted in resumes by itself) | Never resume the last destructive action automatically |
 
 Feedback artifacts live in a retained volume and are not rolled back. After a rollback, the restored database has no feedback created after the checkpoint, so reading it returns 404 while its files remain.
 
@@ -454,6 +454,6 @@ Limits of everything above:
 - No real account was used. Profile persistence was proven with `tests/fixtures/handoff.html` markers.
 - No exercised release changed the Chromium version, so a rollback after a Chromium upgrade has not been demonstrated, although the Profile is restored from the checkpoint either way.
 - Runtime mutual-TLS certificates written by `product-init` expire after 365 days. No rotation procedure is documented or exercised.
-- Gateway browser sessions are process-local. Required-pairing deployments need pairing again after a restart; default local access resumes automatically.
+- Gateway browser sessions are process-local. Deployments need pairing again after a restart; only a Gateway with automatic local entry opted in resumes by itself.
 - Do not overwrite a local image tag that a deployment pinned by digest. The old digest then stops resolving locally and a restart fails at `config-init`. Use a unique tag for each local build, and rely on the `lensdock-keep-*` tags for retained generations.
 - Measured memory and capacity numbers from earlier synthetic workloads are not a capacity guarantee. Default managed projects set no CPU, memory or process caps; see [Resource policy](#resource-policy).
