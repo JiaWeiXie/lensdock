@@ -599,7 +599,7 @@ func (b DockerBackend) Execute(ctx context.Context, cfg Config, p Project, op Op
 		if berr != nil {
 			return berr
 		}
-		dep, err = product.Initialize(product.InitOptions{StateDir: p.StateDir, Origin: p.Origin, WorkspaceID: p.Workspace, Mode: "AGENT", Project: p.ComposeProject, RuntimeImage: cfg.RuntimeImage, GatewayImage: cfg.GatewayImage, Bundle: bundle, DeploymentID: p.ID, RequirePairing: cfg.RequirePairing, LocalAutoEntry: cfg.LocalAutoEntry, DestinationsDir: cfg.DestinationsDir, DestinationName: destinationName(p.Root), ManagedBy: &update.ManagedOwner{ManagerID: cfg.ID, ProjectID: p.ID, ManagerRoot: cfg.Root}})
+		dep, err = product.Initialize(product.InitOptions{StateDir: p.StateDir, Origin: p.Origin, WorkspaceID: p.Workspace, Mode: "AGENT", Project: p.ComposeProject, RuntimeImage: cfg.RuntimeImage, GatewayImage: cfg.GatewayImage, Bundle: bundle, DeploymentID: p.ID, RequirePairing: cfg.RequirePairing, LocalAutoEntry: cfg.LocalAutoEntry, Profile: cfg.Profile, DestinationsDir: cfg.DestinationsDir, DestinationName: destinationName(p.Root), ManagedBy: &update.ManagedOwner{ManagerID: cfg.ID, ProjectID: p.ID, ManagerRoot: cfg.Root}})
 	}
 	if err != nil {
 		if op.Kind == "stop" && errors.Is(err, os.ErrNotExist) {

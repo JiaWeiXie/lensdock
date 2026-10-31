@@ -120,6 +120,9 @@ type InitOptions struct {
 	LocalAutoEntry bool
 	// RequirePairing requires pairing even when LocalAutoEntry is set.
 	RequirePairing bool
+	// Profile selects deployment defaults: empty for the single-user laptop
+	// defaults, ProfileServer for a shared host or server.
+	Profile string
 	// Bundle is the release bundle copied into the private state directory. A
 	// release deployment never reads the bundle again, so removing or
 	// upgrading it cannot break the deployment.
@@ -160,6 +163,7 @@ type initPlan struct {
 	deploymentID       string
 	requirePairing     bool
 	localAutoEntry     bool
+	profile            string
 	bundle             *Bundle
 	managedBy          *update.ManagedOwner
 	destinationsDir    string
@@ -181,7 +185,10 @@ func newPlan(opts InitOptions) (*initPlan, error) {
 	p := &initPlan{
 		workspace: opts.WorkspaceID, project: opts.Project,
 		runtimeImage: opts.RuntimeImage, gatewayImage: opts.GatewayImage,
-		deploymentID: opts.DeploymentID, requirePairing: opts.RequirePairing, localAutoEntry: opts.LocalAutoEntry,
+		deploymentID: opts.DeploymentID, requirePairing: opts.RequirePairing, localAutoEntry: opts.LocalAutoEntry, profile: opts.Profile,
+	}
+	if _, err := profileFor(opts.Profile); err != nil {
+		return nil, err
 	}
 	if opts.StateDir == "" {
 		return nil, optionErrorf("state directory is required")
@@ -279,10 +286,11 @@ func (p *initPlan) computeFingerprint() string {
 		SourceDir, DeploymentID                string
 		BundleVersion                          string
 		ManagedBy                              *update.ManagedOwner
-		RequirePairing                         bool `json:",omitempty"`
-		LocalAutoEntry                         bool `json:",omitempty"`
+		RequirePairing                         bool   `json:",omitempty"`
+		LocalAutoEntry                         bool   `json:",omitempty"`
+		Profile                                string `json:",omitempty"`
 		DestinationsDir, DestinationName       string
-	}{p.root, p.origin, p.workspace, p.mode, p.project, p.runtimeImage, p.gatewayImage, p.sourceDir, p.deploymentID, "", p.managedBy, p.requirePairing, p.localAutoEntry, p.destinationsDir, p.destinationName}
+	}{p.root, p.origin, p.workspace, p.mode, p.project, p.runtimeImage, p.gatewayImage, p.sourceDir, p.deploymentID, "", p.managedBy, p.requirePairing, p.localAutoEntry, p.profile, p.destinationsDir, p.destinationName}
 	if p.bundle != nil {
 		in.BundleVersion = p.bundle.Version
 	}
@@ -441,6 +449,13 @@ func (p *initPlan) recoverStaging() (*pendingRecord, error) {
 // existing token is reused (a runtime.env that an interruption left missing is
 // recreated from it); nothing that exists is replaced.
 func EnsureOperatorCredentials(dir string) ([]byte, error) {
+	return ensureOperatorCredentials(dir, profileSettings{})
+}
+
+// ensureOperatorCredentials is EnsureOperatorCredentials for a deployment with a
+// profile: a runtime.env that it creates also carries the profile's lines, and an
+// existing one must already hold them.
+func ensureOperatorCredentials(dir string, profile profileSettings) ([]byte, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create state dir: %w", err)
 	}
@@ -465,12 +480,21 @@ func EnsureOperatorCredentials(dir string) ([]byte, error) {
 		return nil, err
 	}
 	if _, err := os.Lstat(envPath); errors.Is(err, os.ErrNotExist) {
-		line := "LENSDOCK_OPERATOR_TOKEN_SHA256=" + auth.DigestOf(strings.TrimSpace(string(token))).Hex() + "\n"
+		line := "LENSDOCK_OPERATOR_TOKEN_SHA256=" + auth.DigestOf(strings.TrimSpace(string(token))).Hex() + "\n" + profile.runtimeEnvText()
 		if err := publishNew(envPath, []byte(line), 0o600); err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, fmt.Errorf("write runtime.env: %w", err)
 		}
 	} else if err != nil {
 		return nil, err
+	}
+	if len(profile.runtimeEnv) > 0 {
+		existing, err := os.ReadFile(envPath)
+		if err != nil {
+			return nil, fmt.Errorf("read runtime.env: %w", err)
+		}
+		if err := profile.checkRuntimeEnv(string(existing)); err != nil {
+			return nil, err
+		}
 	}
 	return token, nil
 }
@@ -508,7 +532,11 @@ func (p *initPlan) deployment() update.Deployment {
 // returns its pending record. The staging directory is removed again on
 // failure; once the record is durable it is kept for the next call.
 func (p *initPlan) build() (rec *pendingRecord, err error) {
-	op, err := EnsureOperatorCredentials(p.root)
+	profile, err := profileFor(p.profile)
+	if err != nil {
+		return nil, err
+	}
+	op, err := ensureOperatorCredentials(p.root, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -579,6 +607,7 @@ func (p *initPlan) build() (rec *pendingRecord, err error) {
 		}
 	}
 	env := fmt.Sprintf("LENSDOCK_WORKSPACE_ID=%s\nLENSDOCK_MODE=%s\nLENSDOCK_STATE_DIR=%s\nLENSDOCK_HOST_PORT=%s\nLENSDOCK_PUBLIC_ORIGIN=%s\n%s=%s\n%s=%s\n%s=%s\n", p.workspace, p.mode, composeEnvValue(p.root), p.port, composeEnvValue(p.origin), EnvRuntimeImage, composeEnvValue(p.runtimeImage), EnvGatewayImage, composeEnvValue(p.gatewayImage), EnvDestinationsDir, composeEnvValue(p.destinationsDir))
+	env += profile.composeEnvText()
 	if err := writeNew(filepath.Join(sd, "compose.env"), []byte(env), 0o600); err != nil {
 		return nil, err
 	}

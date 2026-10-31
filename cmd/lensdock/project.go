@@ -20,7 +20,7 @@ import (
 	"github.com/JiaWeiXie/lensdock/internal/update"
 )
 
-const projectUsageText = `  lensdock admin manager init [--bundle-dir DIR] [--docker-context NAME] [--require-pairing] [--local-auto-entry]
+const projectUsageText = `  lensdock admin manager init [--bundle-dir DIR] [--docker-context NAME] [--require-pairing] [--local-auto-entry] [--profile server]
   lensdock admin manager policy [--memory-mib N] [--cpus N]
       [--require-project-authorization] [--require-explicit-start] [--require-stop-confirmation]
   lensdock admin manager stop
@@ -112,14 +112,37 @@ func (c *cli) managerInit(ctx context.Context, args []string) error {
 	first := fs.Int("port-first", 19081, "first stable managed loopback port")
 	last := fs.Int("port-last", 19999, "last stable managed loopback port")
 	requirePairing := fs.Bool("require-pairing", false, "require browser pairing for new managed projects (the default; wins over --local-auto-entry)")
+	profile := fs.String("profile", "", "deployment profile for new managed projects: server for a shared host or server (Chromium sandbox, required pairing, resource limits)")
 	localAutoEntry := fs.Bool("local-auto-entry", false, "let local browsers open a human session in new managed projects without a token; any local process can do the same")
 	policy := hostmanager.DefaultPolicy()
 	finish := policyFlags(fs, &policy)
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
 	}
+	if *profile != "" && *profile != product.ProfileServer {
+		return usageErrorf("unknown profile %q: the only profile is %q", *profile, product.ProfileServer)
+	}
 	if err := finish(); err != nil {
 		return err
+	}
+	if *profile == product.ProfileServer {
+		// Parsed resource flags, including explicit zero, take precedence over
+		// profile defaults. Never reapply defaults at project start/reload.
+		defaults := hostmanager.ServerPolicy().ProjectLimits
+		given := map[string]bool{}
+		fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+		if !given["runtime-memory-mib"] {
+			policy.ProjectLimits.Runtime.MemoryBytes = defaults.Runtime.MemoryBytes
+		}
+		if !given["runtime-cpus"] {
+			policy.ProjectLimits.Runtime.NanoCPUs = defaults.Runtime.NanoCPUs
+		}
+		if !given["gateway-memory-mib"] {
+			policy.ProjectLimits.Gateway.MemoryBytes = defaults.Gateway.MemoryBytes
+		}
+		if !given["gateway-cpus"] {
+			policy.ProjectLimits.Gateway.NanoCPUs = defaults.Gateway.NanoCPUs
+		}
 	}
 	if *runtimeImage == "" {
 		*runtimeImage = product.ReleaseRuntimeImage
@@ -209,6 +232,7 @@ func (c *cli) managerInit(ctx context.Context, args []string) error {
 	cfg := hostmanager.Config{Version: 1, Root: root, Executable: exe, DockerBinary: binary, DockerContext: selected, DockerHost: host, DockerConfig: dockerConfig, BundleDir: bundle.Root, RuntimeImage: *runtimeImage, GatewayImage: *gatewayImage, PullPolicy: *pull, PortFirst: *first, PortLast: *last, Policy: policy}
 	cfg.RequirePairing = *requirePairing
 	cfg.LocalAutoEntry = *localAutoEntry
+	cfg.Profile = *profile
 	inventory, err := hostmanager.InspectEngine(ctx, cfg)
 	if err != nil {
 		return err
