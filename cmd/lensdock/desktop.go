@@ -291,17 +291,40 @@ func (c *cli) runDesktop(ctx context.Context, df *desktopFlags, steps []desktopS
 	defer dcancel(nil)
 	d := &desktopSession{rc: rc, lease: l, msgs: make(chan rfb.Message, 64)}
 	defer closeDesktop(rc, conn)
-	go d.read(dctx, dcancel)
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		d.read(dctx, dcancel)
+	}()
 
 	result, err := d.run(dctx, df, steps)
 	if err != nil {
-		if cause := context.Cause(dctx); cause != nil && !errors.Is(cause, context.Canceled) {
-			err = cause
-		}
-		return l.explain(err)
+		return l.explain(desktopFailure(dctx, readerDone, err))
 	}
 	result["leaseId"] = l.lf.Lease.LeaseID
 	return c.writeJSONLine(result)
+}
+
+// desktopFailure lets the sole reader publish the peer's close reason before a
+// concurrent write's generic net.ErrClosed wins. A lease close frame can shut
+// down the WebSocket while its reader is still returning that frame. Do not
+// infer a lease failure from net.ErrClosed itself: absent a classified peer
+// reason, keep the original transport error. The wait is bounded even if the
+// reader cannot finish (for example, its message queue is full).
+func desktopFailure(ctx context.Context, readerDone <-chan struct{}, err error) error {
+	if errors.Is(err, net.ErrClosed) && context.Cause(ctx) == nil {
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+		select {
+		case <-readerDone:
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+	}
+	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
+		return cause
+	}
+	return err
 }
 
 // run executes the steps and the optional screenshot on the connected desktop.
