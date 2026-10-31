@@ -19,5 +19,7 @@ dist/
 bin/
 tests/e2e/out/
 mise.local.*
-.mise/
+# mise caches stay local, but the lockfile sidecars that mise.lock points at must be committed
+.mise/*
+!.mise/locks/
 .DS_Store
