@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Verify that the Go version pin agrees across mise.toml, go.mod and docker/browser/Dockerfile,
 # that both final images share one digest-pinned Debian base, and that they enforce the
-# minimum apt version required by the image vulnerability gate.
+# minimum apt version required by the image vulnerability gate, and that every CI
+# mise-action invocation verifies the same pinned mise binary.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -9,6 +10,7 @@ mise_file="$root/mise.toml"
 mod_file="$root/go.mod"
 runtime_docker_file="$root/docker/browser/Dockerfile"
 gateway_docker_file="$root/docker/gateway/Dockerfile"
+ci_file="$root/.github/workflows/ci.yml"
 
 fail=0
 err() {
@@ -28,7 +30,7 @@ first_match() {
   return 0
 }
 
-for f in "$mise_file" "$mod_file" "$runtime_docker_file" "$gateway_docker_file"; do
+for f in "$mise_file" "$mod_file" "$runtime_docker_file" "$gateway_docker_file" "$ci_file"; do
   [[ -f $f ]] || err "missing file: ${f#"$root"/}"
 done
 ((fail == 0)) || exit 1
@@ -86,6 +88,18 @@ for f in "$runtime_docker_file" "$gateway_docker_file"; do
     err "${f#"$root"/}: must not reference jlesage"
   fi
 done
+
+mise_action_ref='jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b'
+mise_binary_sha='c72477ae6c3a8e7d817a322f43da70e4643e75ee5c21265f1c19c894273b7428'
+mise_action_count=$(grep -Fc "uses: $mise_action_ref" "$ci_file" || true)
+mise_version_count=$(grep -Ec '^[[:space:]]+version: 2026\.10\.8[[:space:]]*$' "$ci_file" || true)
+mise_sha_count=$(grep -Ec "^[[:space:]]+sha256: ${mise_binary_sha}[[:space:]]*$" "$ci_file" || true)
+
+[[ $mise_action_count -eq 3 ]] || err "ci.yml: expected 3 pinned mise-action steps, got $mise_action_count"
+[[ $mise_version_count -eq $mise_action_count ]] ||
+  err "ci.yml: every mise-action step must pin version 2026.10.8"
+[[ $mise_sha_count -eq $mise_action_count ]] ||
+  err "ci.yml: every mise-action step must verify mise binary sha256 $mise_binary_sha"
 
 ((fail == 0)) || exit 1
 echo "check-pins: ok (go $mise_go, base $runtime_base_digest, apt >= $runtime_apt_min)"
