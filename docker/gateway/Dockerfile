@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 ARG NODE_IMAGE=node:24.22.1-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea
 ARG GO_IMAGE=golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4
-ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
+ARG BASE_DIGEST=sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+ARG DEBIAN_IMAGE=debian:trixie-slim@${BASE_DIGEST}
+ARG APT_MIN_VERSION=3.0.4
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS webbuild
 RUN npm install --global pnpm@11.28.8
 WORKDIR /src
@@ -23,13 +25,20 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build -trimpath -ldflags="-s -w" -o /out/lensdock-gateway ./cmd/gateway
 
 FROM ${DEBIAN_IMAGE}
+ARG BASE_DIGEST
+ARG APT_MIN_VERSION
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="lensdock-gateway" \
       org.opencontainers.image.base.name="debian:trixie-slim" \
-      org.opencontainers.image.base.digest="sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad" \
+      org.opencontainers.image.base.digest="${BASE_DIGEST}" \
       org.opencontainers.image.revision="${REVISION}"
-RUN groupadd --gid 10000 lensdock && \
-    useradd --uid 10000 --gid 10000 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin lensdock && \
+RUN set -eux; \
+    for package in apt libapt-pkg7.0; do \
+      version="$(dpkg-query -W -f='${Version}' "$package")"; \
+      dpkg --compare-versions "$version" ge "$APT_MIN_VERSION"; \
+    done; \
+    groupadd --gid 10000 lensdock; \
+    useradd --uid 10000 --gid 10000 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin lensdock; \
     install -d -m 0700 -o 10000 -g 10000 /data/db /data/private /data/artifacts
 COPY --from=gobuild --chmod=0755 /out/lensdock-gateway /usr/local/bin/lensdock-gateway
 COPY --from=webbuild /src/dist /app/web
