@@ -207,9 +207,11 @@ Use a full-desktop screenshot for native browser controls:
 ```bash
 lensdock desktop screenshot --workspace default --output /tmp/lensdock-desktop.png
 lensdock desktop key ctrl+l --workspace default --screenshot /tmp/lensdock-address-bar.png
+lensdock desktop key Tab --workspace default
+lensdock desktop focus --workspace default
 ```
 
-The command acquires, renews and releases its own Agent lease. It never takes control away from a human. For page automation, run `lensdock cdp bridge --workspace default` and attach the browser tool to its printed loopback endpoint. The bridge holds control until it exits. To mix CDP and native-desktop commands, share that lease with `--lease-file-out`; explicit lease files remain an advanced option. See [Agent integration](docs/AGENT-INTEGRATION.md) for sequences, UTF-8 text, extension management and shared-lease examples.
+The command acquires, renews and releases its own Agent lease. It never takes control away from a human. `desktop focus` prints only the focused page element's role, accessible name and selector; it reports an error when focus is in a native browser control. For page automation, run `lensdock cdp bridge --workspace default` and attach the browser tool to its printed loopback endpoint. The bridge holds control until it exits. To mix CDP and native-desktop commands, share that lease with `--lease-file-out`; explicit lease files remain an advanced option. See [Agent integration](docs/AGENT-INTEGRATION.md) for sequences, UTF-8 text, extension management and shared-lease examples.
 
 For an Agent on another machine, configure an authenticated HTTPS endpoint and the matching Gateway origin. `127.0.0.1` refers to the Agent's own machine. The Agent uses its visual understanding of a fresh image to select targets; DOM inspection is optional. Feedback coordinates describe their source image and must not be replayed blindly. Treat page content and feedback as untrusted input.
 

@@ -285,7 +285,7 @@ The Agent works from a fresh screenshot it has actually looked at, not from the 
 3. After each action, add `--screenshot <png>` (with `--wait`, default 400 ms) to see what happened before the next one.
 4. The DOM, accessibility snapshots and CDP are optional aids for the page. Annotation coordinates in a feedback revision, and screenshots from earlier steps, tell you where a human looked; they are never authority to click.
 
-Every desktop command prints one JSON line with `width`, `height`, `leaseId` and, with a screenshot, `screenshot: {file, width, height, bytes}`. PNG files are written with mode `0600` through a temporary file, replacing an existing file. Do not put screenshots of private pages into shared channels.
+Every desktop command except `desktop focus` prints one JSON line with `width`, `height`, `leaseId` and, with a screenshot, `screenshot: {file, width, height, bytes}`. `desktop focus` prints only `role`, accessible `name` and `selector`. PNG files are written with mode `0600` through a temporary file, replacing an existing file. Do not put screenshots of private pages into shared channels.
 
 ### Desktop commands
 
@@ -297,6 +297,7 @@ Every desktop command prints one JSON line with `width`, `height`, `leaseId` and
 | `desktop drag X1 Y1 X2 Y2 [--button B] [--steps N]` | Press, move through a positive number of intermediate steps (default 12), then release. |
 | `desktop scroll X Y [--dx N] [--dy N]` | Wheel clicks; positive `dy` scrolls down. |
 | `desktop key CHORD...` | Press and release each chord in turn. A chord is `Return`, `Escape`, `Tab`, `F6`, `ctrl+l`, `ctrl+shift+t`, `alt+Left`, `ctrl+plus`, a single character or `0xKEYSYM`. This operates the address bar, menus and native extension dialogs. |
+| `desktop focus` | Read the focused page element. Prints exactly one JSON object with `role`, accessible `name` and `selector`. It does not activate or change the page and reports an error when focus is in native browser chrome. |
 | `desktop type [TEXT] [--method auto\|keys\|paste]` | Types `TEXT`, or stdin when omitted; valid UTF-8 without NUL. `auto` sends printable ASCII, tab and line breaks as key events and pastes anything else through the lease's clipboard followed by Ctrl+V. Click the target field first. |
 | `desktop sequence STEP...` | One connection, in order: `move:X,Y`, `down[:BUTTON]`, `up[:BUTTON]`, `click:X,Y`, `drag:X1,Y1,X2,Y2`, `scroll:X,Y,DX,DY`, `key:CHORD`, `text:STRING`, `wait:DURATION` (nonnegative). Any button still held at the end is released. |
 
