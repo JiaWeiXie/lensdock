@@ -40,6 +40,7 @@ const (
 // desktopGateway plays the Gateway: AGENT lease endpoints, the lease-fenced
 // control socket with an RFB server behind it, the clipboard and CDP discovery.
 type desktopGateway struct {
+	t   *testing.T
 	srv *httptest.Server
 
 	mu        sync.Mutex
@@ -66,7 +67,7 @@ type desktopGateway struct {
 
 func newDesktopGateway(t *testing.T) *desktopGateway {
 	t.Helper()
-	f := &desktopGateway{}
+	f := &desktopGateway{t: t}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -143,6 +144,22 @@ func (f *desktopGateway) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"Browser":"Chrome/1","webSocketDebuggerUrl":"ws://runtime.invalid/api/v1/workspaces/default/cdp/devtools/browser/abc-123"}`)
+	case r.Method == http.MethodGet && r.URL.Path == ws+"/cdp/json/list":
+		if bearer != "Bearer "+fakeLeaseToken || r.Header.Get("X-LensDock-Lease-Epoch") != "7" || r.Header.Get("X-LensDock-Runtime-Generation") != fakeGeneration {
+			apiJSONError(w, 401, apiwire.CodeUnauthenticated)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"id":"page-0","type":"page"},{"id":"page-1","type":"page"}]`)
+	case r.Method == http.MethodGet && (r.URL.Path == ws+"/cdp/devtools/page/page-0" || r.URL.Path == ws+"/cdp/devtools/page/page-1"):
+		if bearer != "Bearer "+fakeLeaseToken || r.Header.Get("X-LensDock-Lease-Epoch") != "7" || r.Header.Get("X-LensDock-Runtime-Generation") != fakeGeneration {
+			apiJSONError(w, 401, apiwire.CodeUnauthenticated)
+			return
+		}
+		if r.Header.Get("Origin") != "" {
+			f.t.Errorf("focus WebSocket sent Origin %q", r.Header.Get("Origin"))
+		}
+		f.focusSocket(w, r, filepath.Base(r.URL.Path))
 	case r.Method == http.MethodGet && r.URL.Path == ws+"/vnc/control":
 		q := r.URL.Query()
 		if bearer != "Bearer "+fakeLeaseToken || q.Get("epoch") != "7" || q.Get("generation") != fakeGeneration {
@@ -153,6 +170,95 @@ func (f *desktopGateway) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		apiJSONError(w, 404, apiwire.CodeNotFound)
 	}
+}
+
+func (f *desktopGateway) focusSocket(w http.ResponseWriter, r *http.Request, targetID string) {
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+	if err != nil {
+		return
+	}
+	f.log("cdp-open:" + targetID)
+	defer f.log("cdp-closed:" + targetID)
+	defer c.CloseNow()
+	for {
+		_, data, err := c.Read(r.Context())
+		if err != nil {
+			return
+		}
+		var req struct {
+			ID     int64           `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if json.Unmarshal(data, &req) != nil {
+			return
+		}
+		result := any(map[string]any{})
+		switch req.Method {
+		case "Runtime.evaluate":
+			var params struct {
+				Expression    string `json:"expression"`
+				ReturnByValue bool   `json:"returnByValue"`
+			}
+			_ = json.Unmarshal(req.Params, &params)
+			switch params.Expression {
+			case "document.hasFocus()":
+				if !params.ReturnByValue {
+					f.t.Error("document.hasFocus() did not request returnByValue")
+				}
+				_, _, keys, _ := f.snapshot()
+				focused := targetID == "page-1" && slices.Contains(keys, "down:0xff09")
+				result = map[string]any{"result": map[string]any{"type": "boolean", "value": focused}}
+			case "document.activeElement":
+				result = map[string]any{"result": map[string]any{"type": "object", "subtype": "node", "objectId": "focused-1"}}
+			default:
+				return
+			}
+		case "DOM.describeNode":
+			var params struct {
+				ObjectID string `json:"objectId"`
+			}
+			_ = json.Unmarshal(req.Params, &params)
+			if params.ObjectID != "focused-1" {
+				f.t.Errorf("DOM.describeNode objectId = %q", params.ObjectID)
+			}
+			result = map[string]any{"node": map[string]any{
+				"nodeName": "BUTTON", "backendNodeId": 42,
+				"attributes": []string{"id", "run-configs-tab"},
+			}}
+		case "Accessibility.getPartialAXTree":
+			var params struct {
+				BackendNodeID  int64 `json:"backendNodeId"`
+				FetchRelatives bool  `json:"fetchRelatives"`
+			}
+			_ = json.Unmarshal(req.Params, &params)
+			if params.BackendNodeID != 42 || params.FetchRelatives {
+				f.t.Errorf("Accessibility.getPartialAXTree params = %+v", params)
+			}
+			result = map[string]any{"nodes": []any{
+				map[string]any{"backendDOMNodeId": 11, "ignored": false, "role": map[string]any{"value": "generic"}},
+				map[string]any{
+					"backendDOMNodeId": 42,
+					"ignored":          false,
+					"role":             map[string]any{"type": "role", "value": "tab"},
+					"name":             map[string]any{"type": "computedString", "value": "Run Configs"},
+				},
+			}}
+		default:
+			return
+		}
+		if err := c.Write(r.Context(), websocket.MessageText, mustJSON(map[string]any{"id": req.ID, "result": result})); err != nil {
+			return
+		}
+	}
+}
+
+func mustJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 func (f *desktopGateway) controlSocket(w http.ResponseWriter, r *http.Request) {
@@ -329,6 +435,78 @@ func TestDesktopClickAcquiresItsOwnAgentLeaseAndReleasesIt(t *testing.T) {
 	}
 	if want := [][3]int{{0, 10, 20}, {1, 10, 20}, {0, 10, 20}}; !slices.Equal(pointers, want) {
 		t.Errorf("pointer events = %v, want %v", pointers, want)
+	}
+}
+
+func TestDesktopFocusReadsTheElementReachedByTab(t *testing.T) {
+	f := newDesktopGateway(t)
+	key := runCLI(t, context.Background(), "", nil, append([]string{"desktop", "key", "Tab"}, f.agentArgs(t)...)...)
+	if key.code != 0 {
+		t.Fatalf("Tab exit %d: %s", key.code, key.stderr)
+	}
+
+	focus := runCLI(t, context.Background(), "", nil, append([]string{"desktop", "focus"}, f.agentArgs(t)...)...)
+	if focus.code != 0 {
+		t.Fatalf("focus exit %d: %s", focus.code, focus.stderr)
+	}
+	want := `{"role":"tab","name":"Run Configs","selector":"[id=\"run-configs-tab\"]"}` + "\n"
+	if focus.stdout != want || focus.stderr != "" {
+		t.Fatalf("focus stdout %q stderr %q, want exactly %q and no stderr", focus.stdout, focus.stderr, want)
+	}
+	if strings.Contains(focus.stdout+focus.stderr, fakeAgentIdentity) || strings.Contains(focus.stdout+focus.stderr, fakeLeaseToken) {
+		t.Fatal("focus output contains a credential")
+	}
+	for _, forbidden := range []string{fakeLeaseID, "page-1", f.srv.URL, "ws://", "http://"} {
+		if strings.Contains(focus.stdout+focus.stderr, forbidden) {
+			t.Fatalf("focus output contains internal value %q", forbidden)
+		}
+	}
+	if got := f.acquires.Load(); got != 2 {
+		t.Fatalf("acquires = %d, want 2", got)
+	}
+	if got := f.releases.Load(); got != 2 {
+		t.Fatalf("releases = %d, want 2", got)
+	}
+	events, _, _, _ := f.snapshot()
+	if strings.Count(strings.Join(events, "\n"), "ws-open") != 1 {
+		t.Fatalf("focus unexpectedly opened RFB: events = %v", events)
+	}
+	lastRelease := -1
+	for i, event := range events {
+		if event == "release" {
+			lastRelease = i
+		}
+	}
+	if slices.Index(events, "cdp-closed:page-1") > lastRelease {
+		t.Fatalf("focus released its lease before closing CDP: events = %v", events)
+	}
+}
+
+func TestDesktopFocusTerminalHTTPPreservesLeaseExit(t *testing.T) {
+	for _, stage := range []string{"discovery", "handshake"} {
+		t.Run(stage, func(t *testing.T) {
+			f := newDesktopGateway(t)
+			f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reject := stage == "discovery" && strings.HasSuffix(r.URL.Path, "/cdp/json/list")
+				reject = reject || (stage == "handshake" && strings.Contains(r.URL.Path, "/cdp/devtools/page/"))
+				if reject {
+					apiJSONError(w, http.StatusConflict, apiwire.CodeLeaseEnded)
+					return
+				}
+				f.serve(w, r)
+			})
+
+			result := runCLI(t, context.Background(), "", nil, append([]string{"desktop", "focus"}, f.agentArgs(t)...)...)
+			if result.stdout != "" {
+				t.Fatalf("unexpected stdout: %q", result.stdout)
+			}
+			if result.code != exitLease {
+				t.Fatalf("exit = %d, want %d; stderr = %q", result.code, exitLease, result.stderr)
+			}
+			if got := f.releases.Load(); got != 1 {
+				t.Fatalf("release count = %d, want 1", got)
+			}
+		})
 	}
 }
 

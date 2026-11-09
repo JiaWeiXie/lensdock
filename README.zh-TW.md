@@ -207,9 +207,11 @@ MCP 提供五種回饋工具：清單、Metadata、圖片、確認與解決回�
 ```bash
 lensdock desktop screenshot --workspace default --output /tmp/lensdock-desktop.png
 lensdock desktop key ctrl+l --workspace default --screenshot /tmp/lensdock-address-bar.png
+lensdock desktop key Tab --workspace default
+lensdock desktop focus --workspace default
 ```
 
-指令會自動取得、續期及交還 Agent 租約，不會從人類手中搶走控制權。頁面自動化可執行 `lensdock cdp bridge --workspace default`，讓瀏覽器工具連到輸出的 Loopback Endpoint；Bridge 持有控制權直到結束。要同時使用 CDP 與原生桌面指令，可用 `--lease-file-out` 共用租約。手動租約檔案仍可作為進階選項。操作序列、UTF-8 文字、擴充功能與共用租約範例見 [Agent 整合說明](docs/AGENT-INTEGRATION.md)。
+指令會自動取得、續期及交還 Agent 租約，不會從人類手中搶走控制權。`desktop focus` 只輸出目前頁面焦點元素的角色、無障礙名稱與選擇器；焦點若在瀏覽器原生控制項則回報錯誤。頁面自動化可執行 `lensdock cdp bridge --workspace default`，讓瀏覽器工具連到輸出的 Loopback Endpoint；Bridge 持有控制權直到結束。要同時使用 CDP 與原生桌面指令，可用 `--lease-file-out` 共用租約。手動租約檔案仍可作為進階選項。操作序列、UTF-8 文字、擴充功能與共用租約範例見 [Agent 整合說明](docs/AGENT-INTEGRATION.md)。
 
 Agent 在另一台主機時，需設定有認證的 HTTPS Endpoint 及對應 Gateway Origin。`127.0.0.1` 指向 Agent 自己的主機。Agent 應用當下截圖與圖像理解選擇目標，DOM 可作為輔助。回饋座標只屬於來源圖片，不可直接重播到目前頁面。頁面與回饋內容都是不可信輸入。
 

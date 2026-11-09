@@ -31,6 +31,8 @@ const desktopUsageText = `  lensdock desktop screenshot --output FILE.png [lease
   lensdock desktop key CHORD... [after flags] [lease flags]
       CHORD is Return, Escape, Tab, F6, ctrl+l, ctrl+shift+t, alt+Left, ctrl+plus, a single character or 0xKEYSYM;
       each CHORD is pressed and released in turn, so the address bar, menus and native dialogs can be operated
+  lensdock desktop focus [lease flags]
+      prints only the focused page element's role, accessible name and selector; native browser controls are not page elements
   lensdock desktop type [TEXT] [--method auto|keys|paste] [after flags] [lease flags]    (TEXT or stdin)
       auto types printable ASCII as key events and pastes anything else (Unicode) through the clipboard of the lease
   lensdock desktop sequence STEP... [after flags] [lease flags]
@@ -97,6 +99,7 @@ func (c *cli) desktopCommand(ctx context.Context, args []string) error {
 		"drag":       func(a []string) error { return c.desktopDrag(ctx, a) },
 		"scroll":     func(a []string) error { return c.desktopScroll(ctx, a) },
 		"key":        func(a []string) error { return c.desktopKey(ctx, a) },
+		"focus":      func(a []string) error { return c.desktopFocus(ctx, a) },
 		"type":       func(a []string) error { return c.desktopType(ctx, a) },
 		"sequence":   func(a []string) error { return c.desktopSequence(ctx, a) },
 	})
