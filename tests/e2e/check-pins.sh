@@ -18,6 +18,72 @@ err() {
   fail=1
 }
 
+mise_action_ref='jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b'
+mise_version='2026.10.8'
+mise_binary_sha='c72477ae6c3a8e7d817a322f43da70e4643e75ee5c21265f1c19c894273b7428'
+
+check_mise_actions() {
+  local file=$1 line step_indent property_indent ref
+  local action_count=0 version_count=0 sha_count=0 mise_fail=0 in_mise_step=0
+
+  finish_mise_step() {
+    ((in_mise_step == 1)) || return 0
+    [[ $ref == "$mise_action_ref" ]] || {
+      echo "ci.yml: mise-action step must use $mise_action_ref (got $ref)" >&2
+      mise_fail=1
+    }
+    [[ $version_count -eq 1 ]] || {
+      echo "ci.yml: mise-action step must set exactly one version: $mise_version" >&2
+      mise_fail=1
+    }
+    [[ $sha_count -eq 1 ]] || {
+      echo "ci.yml: mise-action step must set exactly one sha256: $mise_binary_sha" >&2
+      mise_fail=1
+    }
+    in_mise_step=0
+  }
+
+  while IFS= read -r line || [[ -n $line ]]; do
+    if ((in_mise_step == 1)) && [[ $line == "$step_indent- "* ]]; then
+      finish_mise_step
+    fi
+
+    if [[ $line =~ ^([[:space:]]*)-[[:space:]]+uses:[[:space:]]+(jdx/mise-action@[^[:space:]#]+) ]]; then
+      step_indent=${BASH_REMATCH[1]}
+      property_indent="${step_indent}    "
+      ref=${BASH_REMATCH[2]}
+      action_count=$((action_count + 1))
+      version_count=0
+      sha_count=0
+      in_mise_step=1
+      continue
+    fi
+
+    if ((in_mise_step == 1)); then
+      [[ $line == "${property_indent}version: ${mise_version}" ]] &&
+        version_count=$((version_count + 1))
+      [[ $line == "${property_indent}sha256: ${mise_binary_sha}" ]] &&
+        sha_count=$((sha_count + 1))
+    fi
+  done <"$file"
+  finish_mise_step
+
+  [[ $action_count -eq 3 ]] || {
+    echo "ci.yml: expected exactly 3 mise-action steps, got $action_count" >&2
+    mise_fail=1
+  }
+  return "$mise_fail"
+}
+
+if [[ ${1:-} == --check-mise-actions ]]; then
+  [[ $# -eq 2 ]] || {
+    echo "usage: $0 --check-mise-actions FILE" >&2
+    exit 2
+  }
+  check_mise_actions "$2"
+  exit $?
+fi
+
 # first_match FILE ERE -> prints capture group 1 of the first matching line, or nothing.
 first_match() {
   local file=$1 pattern=$2 line
@@ -89,17 +155,8 @@ for f in "$runtime_docker_file" "$gateway_docker_file"; do
   fi
 done
 
-mise_action_ref='jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b'
-mise_binary_sha='c72477ae6c3a8e7d817a322f43da70e4643e75ee5c21265f1c19c894273b7428'
-mise_action_count=$(grep -Fc "uses: $mise_action_ref" "$ci_file" || true)
-mise_version_count=$(grep -Ec '^[[:space:]]+version: 2026\.10\.8[[:space:]]*$' "$ci_file" || true)
-mise_sha_count=$(grep -Ec "^[[:space:]]+sha256: ${mise_binary_sha}[[:space:]]*$" "$ci_file" || true)
-
-[[ $mise_action_count -eq 3 ]] || err "ci.yml: expected 3 pinned mise-action steps, got $mise_action_count"
-[[ $mise_version_count -eq $mise_action_count ]] ||
-  err "ci.yml: every mise-action step must pin version 2026.10.8"
-[[ $mise_sha_count -eq $mise_action_count ]] ||
-  err "ci.yml: every mise-action step must verify mise binary sha256 $mise_binary_sha"
+check_mise_actions "$ci_file" || fail=1
+"$root/tests/e2e/check-pins_test.sh" || fail=1
 
 ((fail == 0)) || exit 1
 echo "check-pins: ok (go $mise_go, base $runtime_base_digest, apt >= $runtime_apt_min)"
