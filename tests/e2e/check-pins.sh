@@ -109,6 +109,7 @@ runtime_base_digest=$(first_match "$runtime_docker_file" '^ARG[[:space:]]+BASE_D
 gateway_base_digest=$(first_match "$gateway_docker_file" '^ARG[[:space:]]+BASE_DIGEST=(sha256:[0-9a-f]{64})[[:space:]]*$')
 runtime_apt_min=$(first_match "$runtime_docker_file" '^ARG[[:space:]]+APT_MIN_VERSION=([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$')
 gateway_apt_min=$(first_match "$gateway_docker_file" '^ARG[[:space:]]+APT_MIN_VERSION=([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$')
+gateway_zlib_min=$(first_match "$gateway_docker_file" '^ARG[[:space:]]+ZLIB_MIN_VERSION=([^[:space:]]+)[[:space:]]*$')
 
 [[ -n $mise_go ]] || err "mise.toml: no 'go = \"x.y.z\"' entry"
 [[ -n $mod_toolchain ]] || err "go.mod: no 'toolchain goX.Y.Z' line"
@@ -118,6 +119,7 @@ gateway_apt_min=$(first_match "$gateway_docker_file" '^ARG[[:space:]]+APT_MIN_VE
 [[ -n $gateway_base_digest ]] || err "gateway Dockerfile: no 'ARG BASE_DIGEST=sha256:<digest>' line"
 [[ -n $runtime_apt_min ]] || err "runtime Dockerfile: no 'ARG APT_MIN_VERSION=x.y.z' line"
 [[ -n $gateway_apt_min ]] || err "gateway Dockerfile: no 'ARG APT_MIN_VERSION=x.y.z' line"
+[[ -n $gateway_zlib_min ]] || err "gateway Dockerfile: no 'ARG ZLIB_MIN_VERSION=<version>' line"
 ((fail == 0)) || exit 1
 
 [[ $mise_go == "$mod_toolchain" ]] || err "mise.toml go=$mise_go but go.mod toolchain=go$mod_toolchain"
@@ -129,8 +131,14 @@ gateway_apt_min=$(first_match "$gateway_docker_file" '^ARG[[:space:]]+APT_MIN_VE
 [[ $runtime_apt_min == "$gateway_apt_min" ]] ||
   err "runtime apt floor $runtime_apt_min does not match gateway floor $gateway_apt_min"
 [[ $runtime_apt_min == 3.0.4 ]] || err "apt floor must be 3.0.4 (got $runtime_apt_min)"
+[[ $gateway_zlib_min == '1:1.3.dfsg+really1.3.1-1+deb13u1' ]] ||
+  err "gateway zlib floor must be 1:1.3.dfsg+really1.3.1-1+deb13u1 (got $gateway_zlib_min)"
 grep -Fq "org.opencontainers.image.base.digest=\"\${BASE_DIGEST}\"" "$gateway_docker_file" ||
   err "gateway Dockerfile: base digest label must use \${BASE_DIGEST}"
+grep -Fq "apt-get install --yes --no-install-recommends \"zlib1g=\${ZLIB_MIN_VERSION}\"" "$gateway_docker_file" ||
+  err "gateway Dockerfile: zlib1g is not installed at \${ZLIB_MIN_VERSION}"
+grep -Eq 'dpkg --compare-versions .*ZLIB_MIN_VERSION' "$gateway_docker_file" ||
+  err "gateway Dockerfile: zlib version floor is not enforced"
 for f in "$runtime_docker_file" "$gateway_docker_file"; do
   grep -Eq 'dpkg --compare-versions .*APT_MIN_VERSION' "$f" ||
     err "${f#"$root"/}: apt version floor is not enforced"
