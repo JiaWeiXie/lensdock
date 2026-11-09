@@ -7,8 +7,9 @@
 # mise.toml / go.mod (see docs/UPDATE-RUNBOOK.md); tests/e2e/check-pins.sh guards the Go pin.
 
 ARG GO_IMAGE=golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4
-ARG BASE_DIGEST=sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
+ARG BASE_DIGEST=sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 ARG DEBIAN_IMAGE=debian:trixie-slim@${BASE_DIGEST}
+ARG APT_MIN_VERSION=3.0.4
 
 # ---------------------------------------------------------------------------
 # gobuild: static runtime binary, cross-compiled natively for the target platform.
@@ -35,6 +36,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # `--target os-base` builds only the OS layer.
 # ---------------------------------------------------------------------------
 FROM ${DEBIAN_IMAGE} AS os-base
+ARG APT_MIN_VERSION
 
 RUN --mount=type=bind,source=docker/browser/packages.txt,target=/run/lensdock-packages.txt \
     set -eux; \
@@ -42,6 +44,10 @@ RUN --mount=type=bind,source=docker/browser/packages.txt,target=/run/lensdock-pa
     apt-get update; \
     grep -Ev '^[[:space:]]*(#|$)' /run/lensdock-packages.txt \
       | xargs apt-get install -y --no-install-recommends; \
+    for package in apt libapt-pkg7.0; do \
+      version="$(dpkg-query -W -f='${Version}' "$package")"; \
+      dpkg --compare-versions "$version" ge "$APT_MIN_VERSION"; \
+    done; \
     mkdir -p /usr/share/lensdock; \
     dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' > /usr/share/lensdock/dpkg-manifest.tsv; \
     rm -rf /var/lib/apt/lists/*; \
